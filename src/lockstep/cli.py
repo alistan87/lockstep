@@ -255,11 +255,14 @@ def cmd_verify(ns) -> int:
     repo_root = Path(ns.repo_root).resolve()
     try:
         tg, _ = _load(ns.flow)
+    except FlowError as e:
+        return _fail(str(e), EXIT_VERIFY)
+    try:
         # Static only; runtime flags never consulted (SPEC §6) — but personas/
         # and lockstep.toml are part of the static surface.
         config = load_config(repo_root / "lockstep.toml")
-    except (FlowError, ConfigError) as e:
-        return _fail(str(e), EXIT_VERIFY)
+    except ConfigError as e:
+        return _fail(str(e), EXIT_CONFIG)  # §3: 7 = executor/config error, not 5
     code, _ = _do_verify(tg, config, repo_root)
     if code == EXIT_OK:
         print(f"ok: {tg.name} ({len(tg.nodes)} nodes)")

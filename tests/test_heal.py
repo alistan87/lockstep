@@ -182,3 +182,31 @@ def test_map_target_heal_clears_items(tmp_path, git_repo):
     h = build(tmp_path, f, git_repo)
     assert h.engine.run() == 0
     assert len(calls_of(h, "m")) == 4, "2 items x 2 rounds — all items re-run on heal"
+
+
+def test_cascade_clears_descendant_map_items(tmp_path, git_repo):
+    # A3.5: the cascade clears item records of invalidated DESCENDANT maps too.
+    # impl's re-run output is identical, so without the clear the items would
+    # hash-match and wrongly skip.
+    f = {
+        "name": "cascade-map",
+        "nodes": [
+            {"id": "src", "kind": "fake", "spec": {"outputs": ['{"files": ["p", "q"], "notes": ""}'], "readonly": True}, "output": "json", "contract": "PathManifest"},
+            {"id": "impl", "kind": "fake", "spec": {"outputs": ["same output every round"]}},
+            {
+                "id": "m", "role": "map", "kind": "fake", "depends_on": ["src", "impl"],
+                "over": "{steps.src.json.files}", "concurrency": 1,
+                "spec": {"task": "handle {item} given {steps.impl.output}", "outputs": ["r"]},
+            },
+            {
+                "id": "gate", "role": "gate", "kind": "fake", "depends_on": ["m"],
+                "spec": {"outputs": [BLOCK, PASS], "readonly": True},
+                "output": "json", "contract": "Verdict",
+                "heal": {"max_rounds": 1, "targets": ["impl"], "rollback": False},
+            },
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    assert len(calls_of(h, "impl")) == 2
+    assert len(calls_of(h, "m")) == 4, "descendant map items cleared: 2 items x 2 rounds"

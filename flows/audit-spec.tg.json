@@ -1,0 +1,80 @@
+{
+  "format_version": "1.0",
+  "name": "audit-spec",
+  "description": "Dogfood: audit the lockstep spec (docs/SPEC.md + docs/AMENDMENTS-r4.md) against the current implementation. Three adversarial reviewers on different Claude models fan out read-only in parallel; an arbiter gate adjudicates their findings into a Verdict; a report node summarizes on pass.",
+  "max_interp_chars": 60000,
+  "budget": { "max_agent_spawns": 20, "max_run_minutes": 60 },
+  "nodes": [
+    {
+      "id": "rev-format",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "executor": "claude-opus",
+        "persona": "reviewer",
+        "readonly": true,
+        "task": "You are one of three adversarial reviewers auditing the `lockstep` implementation against its frozen spec. Your dimension: THE FORMAT AND VERIFICATION SURFACE.\n\nRead docs/SPEC.md and docs/AMENDMENTS-r4.md (the adopted delta; it wins wherever the two disagree). Then audit, against SPEC sections 3 (CLI contract, frozen exit codes), 4 (taskgraph models), 5 (output contracts), and 6 (static verification rules 1-11):\n- src/lockstep/taskgraph.py\n- src/lockstep/contracts.py\n- src/lockstep/cli.py\n- src/lockstep/__init__.py\n\nHunt for REAL discrepancies only: a MUST not implemented, an exit code wrong or missing, a verification rule absent or weaker than specified, a model field diverging from the spec, defaults that differ. Check docs/DEVIATIONS.md first — a logged deviation is not a finding unless the log misstates it. Ignore style, naming, and anything the amendments explicitly changed.\n\nReport each discrepancy as a Finding object with EXACTLY these fields: severity (one of \"blocker\", \"major\", \"minor\", \"nit\"), category (string, e.g. \"spec-mismatch\"), file (repo-relative path), line (integer or null), claim (one sentence), evidence (quote the spec text AND the code that diverges), fix_hint (string, may be empty).\n\nYour result MUST be ONLY a JSON array of Finding objects — an empty array if the implementation is faithful. You cannot write files; print the JSON array as the final content of your response."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "rev-engine",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "executor": "claude-sonnet",
+        "persona": "reviewer",
+        "readonly": true,
+        "task": "You are one of three adversarial reviewers auditing the `lockstep` implementation against its frozen spec. Your dimension: THE ENGINE.\n\nRead docs/SPEC.md and docs/AMENDMENTS-r4.md (the adopted delta; it wins wherever the two disagree). Then audit, against SPEC sections 7 (interpolation, fencing, spill, skip propagation), 9 (scheduling and exclusion, hashing and resume, roles, heal rounds with rollback, budgets) and amendments A2, A3, A4, M3, M4:\n- src/lockstep/interpolate.py\n- src/lockstep/roles.py\n- src/lockstep/workspace.py\n\nHunt for REAL discrepancies only: heal or rollback semantics diverging from 9.4 (proactive snapshot, preserve-then-restore, cascade invalidation, valid-block-only healing), hashing that omits a specified fingerprint input, skip/when semantics diverging from section 7 as amended by A2, retry counts diverging from 9.3/M4, budget accounting diverging from 9.5. Check docs/DEVIATIONS.md first — a logged deviation is not a finding unless the log misstates it. Ignore style and performance.\n\nReport each discrepancy as a Finding object with EXACTLY these fields: severity (one of \"blocker\", \"major\", \"minor\", \"nit\"), category (string, e.g. \"spec-mismatch\"), file (repo-relative path), line (integer or null), claim (one sentence), evidence (quote the spec text AND the code that diverges), fix_hint (string, may be empty).\n\nYour result MUST be ONLY a JSON array of Finding objects — an empty array if the implementation is faithful. You cannot write files; print the JSON array as the final content of your response."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "rev-surface",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "executor": "claude-haiku",
+        "persona": "reviewer",
+        "readonly": true,
+        "task": "You are one of three adversarial reviewers auditing the `lockstep` implementation against its frozen spec. Your dimension: EXECUTORS, STATE, AND SECURITY.\n\nRead docs/SPEC.md and docs/AMENDMENTS-r4.md (the adopted delta; it wins wherever the two disagree). Then audit, against SPEC sections 8 (executors, config, result channel, personas, process handling, doctor), 10 (run state on disk, locking, events), and 11 (security posture):\n- src/lockstep/executors/harness.py, shell.py, proc.py, fake.py\n- src/lockstep/registry.py\n- src/lockstep/state.py\n- src/lockstep/store.py\n- src/lockstep/doctor.py\n\nHunt for REAL discrepancies only: shell=True anywhere, a result-channel order diverging from 8.3, missing kill-the-whole-tree handling, lock semantics diverging from 10.3 (same-host-only staleness), path containment missing, run-dir layout diverging from 10.1. Check docs/DEVIATIONS.md first — a logged deviation is not a finding unless the log misstates it. Ignore style.\n\nReport each discrepancy as a Finding object with EXACTLY these fields: severity (one of \"blocker\", \"major\", \"minor\", \"nit\"), category (string, e.g. \"spec-mismatch\"), file (repo-relative path), line (integer or null), claim (one sentence), evidence (quote the spec text AND the code that diverges), fix_hint (string, may be empty).\n\nYour result MUST be ONLY a JSON array of Finding objects — an empty array if the implementation is faithful. You cannot write files; print the JSON array as the final content of your response."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "arbiter",
+      "role": "gate",
+      "kind": "harness",
+      "depends_on": ["rev-format", "rev-engine", "rev-surface"],
+      "spec": {
+        "executor": "claude-opus",
+        "persona": "arbiter",
+        "readonly": true,
+        "task": "Three adversarial reviewers (different models, different dimensions) audited the lockstep implementation against docs/SPEC.md + docs/AMENDMENTS-r4.md. Their raw findings follow as data.\n\nFindings from the format/verification reviewer (Opus):\n{steps.rev-format.json}\n\nFindings from the engine reviewer (Sonnet):\n{steps.rev-engine.json}\n\nFindings from the executors/state/security reviewer (Haiku):\n{steps.rev-surface.json}\n\nAdjudicate: deduplicate overlapping findings; discard claims that are unfounded, already logged in docs/DEVIATIONS.md, or superseded by the amendments — you may read the repository files to check any claim before keeping it. Then emit one Verdict: verdict \"block\" if any upheld finding is a blocker, or if upheld majors show the implementation violates a stated MUST, frozen exit code, or stated guarantee; otherwise \"pass\". Put ONLY the findings you uphold into the Verdict findings array (same Finding shape the reviewers used), and a one-sentence reason.\n\nYour result MUST be ONLY the Verdict JSON object: fields findings (array), verdict (\"pass\" or \"block\"), reason (string). You cannot write files; print the JSON as the final content of your response."
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 900
+    },
+    {
+      "id": "report",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": ["arbiter"],
+      "spec": {
+        "executor": "claude-sonnet",
+        "readonly": true,
+        "task": "The spec-vs-implementation audit gate PASSED with this verdict:\n{steps.arbiter.json}\n\nWrite a concise markdown audit report: the verdict and reason, a table of upheld findings (severity, file, claim), and a short recommended-actions list (empty if no findings). Plain markdown text as your final response; nothing else."
+      },
+      "output": "text",
+      "timeout_s": 600,
+      "final": true
+    }
+  ]
+}

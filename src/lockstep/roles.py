@@ -513,15 +513,27 @@ class Engine:
                 continue
             return raw
 
-    def _corrective_prompt(self, node: Node, error: str) -> str:
-        """Output-only corrective re-spawn wording (SPEC §9.3): a readonly
-        reviewer must NOT be told "your files are already written" — that
-        invites it to imagine work it never did."""
+    def _corrective_prompt(self, node: Node, work: PlannedWork, previous_text: str | None, error: str) -> str:
+        """Output-only corrective re-spawn (SPEC §9.3). A headless harness spawn
+        is STATELESS — without the original task and the invalid output, the
+        re-spawn has nothing to correct (found by the audit-spec dogfood run).
+        "Output-only" constrains side effects, not context. Wording differs by
+        mode: a readonly reviewer must NOT be told "your files are already
+        written" — that invites it to imagine work it never did."""
+        original = str(work.render) if isinstance(work.render, str) else json.dumps(work.render)
+        previous = fence_block("previous.invalid.output", previous_text or "(empty — no result was produced)")
         if node.spec.get("readonly"):
-            return f"Emit only the corrected JSON for your previous analysis: {error}"
+            instruction = f"Emit only the corrected JSON for your previous analysis: {error}"
+        else:
+            instruction = (
+                "Your files are already written. Do NOT modify, create, or delete any "
+                f"file. Emit only the corrected JSON describing what you already did: {error}"
+            )
         return (
-            "Your files are already written. Do NOT modify, create, or delete any "
-            f"file. Emit only the corrected JSON describing what you already did: {error}"
+            f"{original}\n\n---\n"
+            "A previous attempt at this task produced output that failed contract "
+            f"validation. The invalid output was:\n{previous}\n\n"
+            f"{instruction}"
         )
 
     def _validate_with_respawn(
@@ -542,7 +554,7 @@ class Engine:
             return None
         corrective = work.model_copy(
             update={
-                "render": self._corrective_prompt(node, first_error),
+                "render": self._corrective_prompt(node, work, raw.result_text, first_error),
                 "meta": {**work.meta, "corrective": True},
             }
         )
@@ -689,8 +701,12 @@ class Engine:
             if nrec.status in ("done", "skipped", "failed", "blocked") or nid in gate.heal.targets:
                 nrec.status = "pending"
                 nrec.error = None
-                # A3/§9.4.6: a map target re-runs ALL items in v1 (cost documented).
-                if self.tg.node(nid).role == "map" and (nid in gate.heal.targets):
+                # A3.4/A3.5: heal invalidation clears item records — for map
+                # TARGETS (all items re-run, §9.4.6) and equally for invalidated
+                # DESCENDANT maps: after a rollback, a descendant item whose
+                # prompt doesn't reference the restored content could hash-match
+                # and wrongly skip. (Caught by the audit-spec arbiter gate.)
+                if self.tg.node(nid).role == "map":
                     nrec.items = {}
                 self.store.record(nrec)
                 self.needs_check.discard(nid)
@@ -808,7 +824,7 @@ class Engine:
                     if getattr(executor, "supports_corrective_respawn", False):
                         corrective = work.model_copy(
                             update={
-                                "render": self._corrective_prompt(node, str(e)),
+                                "render": self._corrective_prompt(node, work, text, str(e)),
                                 "meta": {**work.meta, "corrective": True},
                             }
                         )

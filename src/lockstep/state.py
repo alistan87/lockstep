@@ -121,10 +121,20 @@ def emit_span(record: PhaseRecord) -> None:
 # --- state.json ----------------------------------------------------------------
 
 def write_state(run_dir: Path, state: RunState) -> None:
-    """Atomic: temp + os.replace."""
+    """Atomic: temp + os.replace. Retried: on Windows, AV/indexer scans can hold
+    the target briefly and fail the replace with a transient PermissionError."""
     tmp = run_dir / "state.json.tmp"
     tmp.write_text(state.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(tmp, run_dir / "state.json")
+    import time
+
+    for attempt in range(5):
+        try:
+            os.replace(tmp, run_dir / "state.json")
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def load_state(run_dir: Path) -> RunState:

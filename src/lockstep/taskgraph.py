@@ -304,7 +304,10 @@ def verify_flow(
                         err("item-outside-map", f"node {n.id!r} {where} uses {{{ref}}} but role is not \"map\"")
     for arg in tg.args:
         if arg not in referenced_args:
-            warn("unused-arg", f"declared arg {arg!r} is never referenced")
+            # §6.4 is an error, not lint — only rule 9 is designated a warning.
+            # (Silently downgraded to a warning at first; caught by the
+            # audit-spec arbiter gate.)
+            err("unused-arg", f"declared arg {arg!r} is never referenced")
 
     # 5. role/kind cross-checks
     for n in tg.nodes:

@@ -82,8 +82,9 @@ def test_arg_rules(tmp_path):
         tmp_path,
     )
     assert "undeclared-arg" in got
+    # §6.4 is an error, not lint (audit-caught downgrade).
     assert "unused-arg" in codes(
-        flow([{"id": "a", **FAKE, "final": True}], args={"unused": "x"}), tmp_path, level="warning"
+        flow([{"id": "a", **FAKE, "final": True}], args={"unused": "x"}), tmp_path, level="error"
     )
 
 

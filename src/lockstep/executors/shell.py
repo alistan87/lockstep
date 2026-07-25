@@ -67,7 +67,7 @@ class ShellExecutor:
             fingerprint_parts=[f"argv:{json.dumps(argv, ensure_ascii=False)}"],
             costs_tokens=False,
             exclusive=[],
-            meta={"cwd": str(cwd)},
+            meta={"cwd": str(cwd), "output": node.output},
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
@@ -97,7 +97,15 @@ class ShellExecutor:
         if result_text is None:
             stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
             if stdout.strip():
-                result_text = stdout
+                # §8.3 fallback: for JSON output, the LAST balanced top-level
+                # JSON value in stdout — a chatty script (warnings before the
+                # verdict) must still yield its JSON.
+                if work.meta.get("output") == "json":
+                    from .harness import extract_last_json
+
+                    result_text = extract_last_json(stdout) or stdout
+                else:
+                    result_text = stdout
                 source = "stdout"
         return RawResult(
             exit_code=exit_code,

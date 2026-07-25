@@ -114,6 +114,51 @@ def test_second_schema_failure_fails_node(tmp_path, git_repo):
     assert "twice" in rec.error
 
 
+PROSE_THEN_FENCED_JSON = (
+    "import json; "
+    "inner = 'Based on my audit, everything checks out.\\n\\n```json\\n"
+    '[{\\"severity\\": \\"nit\\", \\"category\\": \\"c\\", \\"file\\": \\"f\\", '
+    '\\"claim\\": \\"x\\", \\"evidence\\": \\"e\\"}]\\n```'
+    "'; "
+    "print(json.dumps({'result': inner}))"
+)
+
+
+def test_json_extracted_from_unwrapped_prose(tmp_path, git_repo):
+    # §8.3: last balanced JSON AFTER json_field unwrapping — a model that
+    # narrates and ends with a fenced JSON block still yields its JSON.
+    config = make_config(x=ExecutorStanza(argv=[PY, "-c", PROSE_THEN_FENCED_JSON], json_field="result"))
+    f = {
+        "name": "prose",
+        "nodes": [
+            {"id": "n", "kind": "harness", "spec": {"task": "audit"},
+             "output": "json", "contract": "Finding[]", "final": True}
+        ],
+    }
+    h = build(tmp_path, f, git_repo, config=config)
+    assert h.engine.run() == 0
+    result = json.loads(open(load_state(h.run_dir).nodes["n"].result_path, encoding="utf-8").read())
+    assert result[0]["severity"] == "nit"
+
+
+def test_shell_json_extracted_from_chatty_stdout(tmp_path, git_repo):
+    script = (
+        "import json; print('warning: something benign'); "
+        "print(json.dumps({'command': 'x', 'exit_code': 0, 'summary': 'ok'}))"
+    )
+    f = {
+        "name": "chatty",
+        "nodes": [
+            {"id": "s", "kind": "shell", "spec": {"cmd": [PY, "-c", script]},
+             "output": "json", "contract": "CheckResult", "final": True}
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    result = json.loads(open(load_state(h.run_dir).nodes["s"].result_path, encoding="utf-8").read())
+    assert result["summary"] == "ok"
+
+
 def test_empty_result_gets_one_automatic_retry(tmp_path, git_repo):
     f = {
         "name": "empty",
