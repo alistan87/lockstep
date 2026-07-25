@@ -1,0 +1,23 @@
+# lockstep executor config (SPEC §8.2). An executor entry is an argv template:
+# a new harness or a renamed flag is a config edit, never a code change.
+# VERIFY flag names against your installed harness (`claude --help` etc.) and
+# pin here; `lockstep doctor` checks each stanza actually runs. Run doctor after
+# any harness upgrade and on a weekly cadence.
+
+default = "claude-code"
+
+[executors.claude-code]                    # personal machine, Claude subscription
+argv = ["claude", "-p", "{prompt}", "--output-format", "json"]
+prompt_via = "argv"                        # "argv" | "stdin"
+json_field = "result"                      # unwrap this envelope field; omit for raw
+persona_flag = []                          # empty => prepend persona body to the prompt
+readonly_argv = ["--disallowed-tools", "Edit,Write"]   # appended for spec.readonly nodes;
+                                           # absent => readonly nodes error at verify
+
+[executors.pi]                             # work machine: pi carries the Copilot login
+argv = ["pi", "--print", "--json", "{prompt}"]
+prompt_via = "argv"
+
+[executors.copilot-cli]
+argv = ["copilot", "-p", "{prompt}"]
+prompt_via = "argv"

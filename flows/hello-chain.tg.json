@@ -1,0 +1,24 @@
+{
+  "format_version": "1.0",
+  "name": "hello-chain",
+  "description": "Two chained harness nodes; the second consumes {previous.output}.",
+  "args": { "topic": "the moon" },
+  "nodes": [
+    {
+      "id": "greet",
+      "role": "work",
+      "kind": "harness",
+      "spec": { "task": "Write a two-sentence friendly note about {args.topic}." },
+      "output": "text"
+    },
+    {
+      "id": "elaborate",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": ["greet"],
+      "spec": { "task": "Rewrite the following note as a limerick:\n{previous.output}" },
+      "output": "text",
+      "final": true
+    }
+  ]
+}
