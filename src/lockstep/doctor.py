@@ -59,7 +59,7 @@ def _probe_once(
     # Accept EITHER result channel: a probe this trivial may not write
     # result.json — doctor tests the plumbing, not the convention (SPEC §8.5).
     answer = None
-    for fname in ("result.txt", "result.json"):
+    for fname in ("result.json", "result.txt"):  # §8.3 order, matching the executors
         p = phase_dir / fname
         if p.exists():
             answer = p.read_text(encoding="utf-8")

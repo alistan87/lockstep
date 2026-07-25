@@ -694,7 +694,10 @@ class Engine:
             discard = gate_phase / f"discarded-{round_n}"
             self.workspace.restore(baseline, scope, discard)
             for p in scope:
-                append_event(self.store.run_dir, {"node": gate.id, "status": "restored", "path": p})
+                # Label faithfully: created-since-baseline paths were MOVED
+                # aside, not restored (audit r5 finding).
+                label = "discarded" if (discard / p).exists() else "restored"
+                append_event(self.store.run_dir, {"node": gate.id, "status": label, "path": p})
         # Invalidation cascades to ALL completed descendants of the targets —
         # restoring the tree under a passed sibling would silently orphan its
         # outputs (SPEC §9.4.5, revision-3 loop C).

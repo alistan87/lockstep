@@ -115,6 +115,45 @@ class TestProviderDiagnosis:
         assert any("lockstep resume" in line for line in h.logs)
 
 
+def test_rename_paths_not_corrupted_in_fingerprint(git_repo):
+    # porcelain -z rename entries carry the bare old path in the NEXT field;
+    # naive [3:] slicing chopped real path prefixes (audit r5 finding).
+    from conftest import git
+    from lockstep.workspace import GitWorkspace
+
+    git(git_repo, "mv", "a.txt", "renamed.txt")
+    _, detail = GitWorkspace(git_repo).fingerprint_detail()
+    assert "renamed.txt" in detail
+    assert "a.txt" in detail, "original path present, un-mangled"
+    assert "xt" not in {k for k in detail if len(k) <= 3}, "no chopped fragments"
+
+
+def test_dead_heal_targets_still_validated(tmp_path):
+    # Declared targets are checked even at max_rounds == 0 (audit r5 finding).
+    from test_verify import codes, flow
+
+    f = flow([
+        {"id": "impl", "kind": "fake", "spec": {}},
+        {
+            "id": "g", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+            "output": "json", "contract": "Verdict", "spec": {},
+            "heal": {"max_rounds": 0, "targets": ["nonexistent"]},
+        },
+    ])
+    assert "heal-target-unknown" in codes(f, tmp_path)
+
+
+def test_heal_events_label_discarded_paths(tmp_path, git_repo):
+    from test_heal import BLOCK, PASS, heal_flow
+    from lockstep.state import read_events
+
+    h = build(tmp_path, heal_flow([BLOCK, PASS]), git_repo)
+    assert h.engine.run() == 0
+    events = read_events(h.run_dir)
+    labels = {e["path"]: e["status"] for e in events if e.get("path")}
+    assert labels.get("gen.txt") == "discarded", "created-since-baseline paths are moved, not restored"
+
+
 def test_shell_attempts_rotate(tmp_path, git_repo):
     f = {
         "name": "r5-rotate",

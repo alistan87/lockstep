@@ -26,8 +26,9 @@ A headless harness spawn is stateless: the bare Revision 3 corrective wording
 reached a fresh session with nothing to correct (observed: "I don't see any
 previous analysis in our conversation history"). Adopted: the corrective
 prompt is the original rendered prompt, then the invalid output fenced as data
-(`previous.invalid.output`), then the validation error, then the §9.3
-mode-specific instruction. **"Output-only" constrains side effects, not
+(`previous.invalid.output`), then the §9.3 mode-specific instruction — whose
+frozen wording already carries the validation error ("… : `<validation
+error>`"), so the error is not repeated as a separate segment. **"Output-only" constrains side effects, not
 context.** The one-re-spawn limit and the readonly/writing wording fork are
 unchanged.
 

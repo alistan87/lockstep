@@ -428,11 +428,13 @@ def verify_flow(
     # 10. heal targets
     target_owner: dict[str, str] = {}
     for n in tg.nodes:
-        if n.role != "gate" or n.heal.max_rounds <= 0:
+        if n.role != "gate":
             continue
-        if not n.heal.targets:
+        if n.heal.max_rounds > 0 and not n.heal.targets:
             err("heal-targets-required", f"gate {n.id!r} has heal.max_rounds > 0 but empty heal.targets")
             continue
+        # Declared targets are validated even at max_rounds == 0 — dead config
+        # should not hide a bogus target id (audit r5 finding).
         ancestors = _ancestors(tg, n.id)
         for t in n.heal.targets:
             if t not in idset:

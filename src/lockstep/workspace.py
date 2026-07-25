@@ -68,10 +68,23 @@ class GitWorkspace:
 
     def _dirty_paths(self) -> list[str]:
         out = self._git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+        # -z format: `XY <path>` NUL-terminated; for renames/copies (X in R/C)
+        # the NEXT NUL field is the bare ORIGINAL path with no XY prefix —
+        # naive [3:] slicing would corrupt it (audit r5 finding).
         paths: list[str] = []
-        for entry in out.split("\0"):
-            if len(entry) > 3:
-                paths.append(entry[3:])
+        fields = out.split("\0")
+        i = 0
+        while i < len(fields):
+            entry = fields[i]
+            i += 1
+            if len(entry) < 4:
+                continue
+            xy = entry[:2]
+            paths.append(entry[3:])
+            if xy[0] in "RC":
+                if i < len(fields) and fields[i]:
+                    paths.append(fields[i])
+                i += 1
         return paths
 
     def fingerprint_detail(self) -> tuple[str, dict[str, str]]:
