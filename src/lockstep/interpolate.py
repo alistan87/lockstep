@@ -225,7 +225,11 @@ def fence_context_file(
     Returns (prompt_block, hash_block) — hash gets the full content (see Rendered)."""
     ref = f"file:{rel_path}"
     hash_block = fence_block(ref, content)
-    if len(content) > max_interp_chars and spill_dir is not None:
+    if len(content) > max_interp_chars:
+        if spill_dir is None:
+            # Mirror render_template: never silently embed an over-cap value
+            # (audit finding — the branch is latent, but consistency matters).
+            raise InterpolationError(f"context file {rel_path!r} exceeds cap and no spill dir given")
         stub, _ = _spill(ref, content, spill_dir)
         return fence_block(ref, stub), hash_block
     return hash_block, hash_block

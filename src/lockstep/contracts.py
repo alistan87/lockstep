@@ -97,15 +97,23 @@ class ContractRef:
 
 
 def _load_module(spec: str):
-    """Import `spec` as a module: dotted path via importlib, *.py via file location."""
-    if spec.endswith(".py") or "/" in spec or "\\" in spec:
-        modspec = importlib.util.spec_from_file_location("lockstep_contracts_ext", spec)
-        if modspec is None or modspec.loader is None:
-            raise ContractError(f"cannot load contracts module from file: {spec!r}")
-        mod = importlib.util.module_from_spec(modspec)
-        modspec.loader.exec_module(mod)
-        return mod
-    return importlib.import_module(spec)
+    """Import `spec` as a module: dotted path via importlib, *.py via file
+    location. ANY failure — including a SyntaxError or an exception raised by
+    the module body — becomes a ContractError, so `lockstep verify` reports a
+    §6 finding (exit 5) instead of crashing with a traceback (audit finding)."""
+    try:
+        if spec.endswith(".py") or "/" in spec or "\\" in spec:
+            modspec = importlib.util.spec_from_file_location("lockstep_contracts_ext", spec)
+            if modspec is None or modspec.loader is None:
+                raise ContractError(f"cannot load contracts module from file: {spec!r}")
+            mod = importlib.util.module_from_spec(modspec)
+            modspec.loader.exec_module(mod)
+            return mod
+        return importlib.import_module(spec)
+    except ContractError:
+        raise
+    except Exception as e:
+        raise ContractError(f"contracts module {spec!r} failed to load: {type(e).__name__}: {e}")
 
 
 def resolve_contract(name: str, contracts_module: str | None = None) -> ContractRef:

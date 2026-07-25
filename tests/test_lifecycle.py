@@ -279,6 +279,26 @@ def test_kill_between_nodes_is_resumable_via_cli(tmp_path, git_repo, monkeypatch
     assert load_state(run_dir).nodes["b"].status == "done"
 
 
+def test_audit_findings_regressions(tmp_path):
+    # Three minors upheld by the audit-spec arbiter gate (2026-07-25).
+    from lockstep.cli import main
+    from lockstep.contracts import ContractError, resolve_contract
+    from lockstep.interpolate import InterpolationError, fence_context_file
+
+    # 1. Usage errors exit 7 (config), never 2 (frozen: gate BLOCK).
+    with pytest.raises(SystemExit) as exc:
+        main(["no-such-command"])
+    assert exc.value.code == 7
+    # 2. A broken contracts module is a ContractError, not a crash.
+    bad = tmp_path / "bad_contracts.py"
+    bad.write_text("this is not python ((((", encoding="utf-8")
+    with pytest.raises(ContractError, match="failed to load"):
+        resolve_contract(f"{bad}:Whatever")
+    # 3. Over-cap context file with no spill dir errors, mirroring render_template.
+    with pytest.raises(InterpolationError, match="exceeds cap"):
+        fence_context_file("big.py", "x" * 200, max_interp_chars=100, spill_dir=None)
+
+
 def test_cli_verify_and_dry_run_and_render(tmp_path, git_repo, monkeypatch, capsys):
     from lockstep.cli import main
 

@@ -349,8 +349,19 @@ def cmd_reserved(ns) -> int:
     return EXIT_CONFIG
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 7 (executor/config error), not argparse's default 2 —
+    SPEC §3 freezes 2 to mean gate BLOCK, and a mistyped invocation must not be
+    indistinguishable from a quality gate blocking the run (audit finding)."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"lockstep: {message}", file=sys.stderr)
+        raise SystemExit(EXIT_CONFIG)
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="lockstep",
         description=f"lockstep {__version__} — taskgraph driver (format {FORMAT_VERSION}). "
         "Note: wall clock may exceed budget.max_run_minutes by up to the largest "

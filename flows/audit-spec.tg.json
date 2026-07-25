@@ -3,7 +3,7 @@
   "name": "audit-spec",
   "description": "Dogfood: audit the lockstep spec (docs/SPEC.md + docs/AMENDMENTS-r4.md) against the current implementation. Three adversarial reviewers on different Claude models fan out read-only in parallel; an arbiter gate adjudicates their findings into a Verdict; a report node summarizes on pass.",
   "max_interp_chars": 60000,
-  "budget": { "max_agent_spawns": 20, "max_run_minutes": 60 },
+  "budget": { "max_agent_spawns": 40, "max_run_minutes": 60 },
   "nodes": [
     {
       "id": "rev-format",
