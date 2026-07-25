@@ -8,6 +8,7 @@ request — model access is whatever credential the spawned harness carries.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -17,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from ..interpolate import fence_context_file, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
-from ..taskgraph import Node
+from ..taskgraph import Node, RetrySpec
 from .proc import resolve_inside, spawn, wait_or_kill
 from .shell import resolve_ctx_of
 
@@ -107,11 +108,51 @@ def extract_last_json(text: str) -> str | None:
     return last
 
 
+def stanza_digest(name: str, stanza: ExecutorStanza) -> str:
+    """Per-stanza digest (AMENDMENTS-r5 B1): a node's fingerprint covers only
+    the stanza it RESOLVES, so editing an unrelated stanza (e.g. repointing a
+    broken model during an outage) invalidates nothing it shouldn't."""
+    canonical = json.dumps(stanza.model_dump(), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(f"{name}\x00{canonical}".encode("utf-8")).hexdigest()
+
+
+# Provider-limit/overload signals recognized in a failed spawn's envelope
+# (AMENDMENTS-r5 B3 — diagnosis only; never affects scheduling or hashing).
+_PROVIDER_LIMIT_STATUSES = {429, 529}
+_PROVIDER_LIMIT_MARKERS = ("session limit", "overloaded", "rate limit")
+
+
+def diagnose_provider_error(stdout: str) -> str | None:
+    """Best-effort: read a harness stdout envelope for a limit/overload signal.
+    Returns a human-facing error string, or None."""
+    candidate = extract_last_json(stdout)
+    if candidate is None:
+        return None
+    try:
+        env = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(env, dict):
+        return None
+    status = env.get("api_error_status")
+    text = env.get("result") if isinstance(env.get("result"), str) else ""
+    limited = status in _PROVIDER_LIMIT_STATUSES or any(
+        m in text.lower() for m in _PROVIDER_LIMIT_MARKERS
+    )
+    if not limited:
+        return None
+    return f"provider limit/overload ({status or 'n/a'}): {text[:160]}"
+
+
 class HarnessExecutor:
     kind = "harness"
     cacheable = True
     supports_corrective_respawn = True
     SpecModel = HarnessSpec
+    # AMENDMENTS-r5 B2: transient provider errors (429/529) surface as nonzero
+    # exits; minute-scale backoff outlives most incidents. A node that sets
+    # `retry` in the flow file overrides this entirely.
+    default_retry = RetrySpec(max=2, backoff_ms=60000, factor=2.0)
 
     def __init__(self, config: LockstepConfig, repo_root: Path):
         self.config = config
@@ -190,7 +231,8 @@ class HarnessExecutor:
                 f"prompt:{hash_prompt}",
                 f"persona:{persona_body}",
                 f"argv:{json.dumps(argv_template, ensure_ascii=False)}",
-                f"config:{ctx.config_digest}",
+                # r5 B1: the RESOLVED stanza's digest, not the whole config file.
+                f"config:{stanza_digest(stanza_name, stanza)}",
             ],
             costs_tokens=True,
             exclusive=[] if spec.readonly else ["tree"],
@@ -246,6 +288,14 @@ class HarnessExecutor:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")
         exit_code, timed_out = wait_or_kill(proc, timeout_s, stdin_text=stdin_text)
 
+        stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+        # r5 B3 (diagnosis only): name a provider limit/overload on failure so
+        # the operator sees "wait, then resume" instead of a bare exit code.
+        err: str | None = None
+        if timed_out:
+            err = "timeout"
+        elif exit_code != 0:
+            err = diagnose_provider_error(stdout)
         # Result channel (SPEC §8.3): file first — harness-independent, robust to
         # chatty output, debuggable after the fact.
         for name in ("result.json", "result.txt"):
@@ -258,14 +308,13 @@ class HarnessExecutor:
                     stdout_path=str(stdout_path),
                     stderr_path=str(stderr_path),
                     timed_out=timed_out,
-                    error="timeout" if timed_out else None,
+                    error=err,
                 )
         # Fallback (SPEC §8.3): the last balanced top-level JSON value in stdout,
         # AFTER json_field unwrapping — unwrap the harness envelope first, THEN
         # extract from the unwrapped text. A model that narrates and ends with a
         # fenced JSON block still yields its JSON (found by the audit-spec run:
         # extracting before unwrapping returned the prose and failed validation).
-        stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
         result_text: str | None = None
         candidate = extract_last_json(stdout)
         if candidate is not None:
@@ -293,5 +342,5 @@ class HarnessExecutor:
             stdout_path=str(stdout_path),
             stderr_path=str(stderr_path),
             timed_out=timed_out,
-            error="timeout" if timed_out else None,
+            error=err,
         )

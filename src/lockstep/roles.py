@@ -487,13 +487,24 @@ class Engine:
                     {"node": gate_id, "status": "snapshot", "error": None, "ref": self.snapshots[gate_id].ref},
                 )
 
+    @staticmethod
+    def _effective_retry(node: Node, executor):
+        """AMENDMENTS-r5 B2: a node that sets `retry` in the flow file (field
+        present, even {"max": 0}) uses it verbatim; otherwise the executor's
+        kind-level default_retry (harness: 2 × minute-scale backoff for
+        transient 429/529s); otherwise the model default."""
+        if "retry" in node.model_fields_set:
+            return node.retry
+        return getattr(executor, "default_retry", None) or node.retry
+
     def _execute_with_retries(self, node: Node, executor, work: PlannedWork, phase_dir: Path) -> RawResult:
         """RetrySpec covers nonzero exits and timeouts with backoff; PLUS one
         automatic retry on timeout or empty result, additive, even when
         retry.max == 0 (SPEC §9.3, AMENDMENTS M4)."""
         rec = self._rec(node.id)
-        retries_left = node.retry.max
-        backoff_s = node.retry.backoff_ms / 1000.0
+        retry = self._effective_retry(node, executor)
+        retries_left = retry.max
+        backoff_s = retry.backoff_ms / 1000.0
         auto_used = False
         while True:
             self._spend_spawn(work)
@@ -509,7 +520,7 @@ class Engine:
             if retries_left > 0 and (raw.exit_code != 0 or raw.timed_out):
                 retries_left -= 1
                 time.sleep(backoff_s)
-                backoff_s *= node.retry.factor
+                backoff_s *= retry.factor
                 continue
             return raw
 
@@ -575,6 +586,12 @@ class Engine:
         rec = self._rec(node.id)
         if raw.timed_out or raw.exit_code != 0 or raw.result_text is None:
             reason = raw.error or f"exit code {raw.exit_code}" + (" (no result emitted)" if raw.result_text is None else "")
+            if raw.error and "provider limit/overload" in raw.error:
+                # r5 B3: diagnosis only — tell the operator what to do.
+                self.log(
+                    f"[{node.id}] {raw.error}\n"
+                    f"  wait for the limit/incident to clear, then: lockstep resume {self.store.run_dir}"
+                )
             if node.role == "gate":
                 # Fail-closed for termination, never a healing trigger (§9.4.3).
                 self._queue_gate_outcome(node, None, "no valid verdict emitted")
@@ -884,8 +901,9 @@ class Engine:
         self._set_status(node.id, "done")
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path, irec: ItemRecord) -> RawResult | None:
-        retries_left = node.retry.max
-        backoff_s = node.retry.backoff_ms / 1000.0
+        retry = self._effective_retry(node, executor)
+        retries_left = retry.max
+        backoff_s = retry.backoff_ms / 1000.0
         auto_used = False
         while True:
             self._spend_spawn(work)
@@ -900,7 +918,7 @@ class Engine:
             if retries_left > 0 and (raw.exit_code != 0 or raw.timed_out):
                 retries_left -= 1
                 time.sleep(backoff_s)
-                backoff_s *= node.retry.factor
+                backoff_s *= retry.factor
                 continue
             return raw
 

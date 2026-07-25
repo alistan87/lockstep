@@ -1,8 +1,14 @@
 # Deviations log
 
 What / why / date, per the SPEC §14 working agreement. Amendments in
-`AMENDMENTS-r4.md` are adopted spec, not deviations; this file records
-implementation-level departures below that bar.
+`AMENDMENTS-r4.md` / `AMENDMENTS-r5.md` are adopted spec, not deviations; this
+file records implementation-level departures below that bar.
+
+> **Revision 5 note (2026-07-25):** the entries below for the flow-file copy,
+> blocked-on-resume, reserved-command exit code, fake-as-harness-kind, readonly
+> footer, corrective-respawn context, and per-attempt rotation were formalized
+> into spec text by `AMENDMENTS-r5.md` (A1–A5). They remain here as the
+> historical record of when and why each departure happened.
 
 - **2026-07-25 — `kind: "fake"` is treated as harness-like in verification and
   scheduling** (contributes `tree` unless readonly; allowed as a heal target;

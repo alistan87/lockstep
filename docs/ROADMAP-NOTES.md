@@ -1,7 +1,13 @@
-# Roadmap notes from dogfooding (candidates for a revision-5 amendment)
+# Roadmap notes from dogfooding
 
-Observations from live multi-model runs on 2026-07-25 that suggest spec-level
-refinements. None are v1 deviations; v1 behavior follows the spec as amended.
+> **Status: all four items below were adopted in `AMENDMENTS-r5.md`**
+> (2026-07-25: B1 per-stanza digests, B2 default harness retry, A3 resume
+> wording, A1 readonly footer) and are implemented. Kept for provenance.
+> Remaining future work lives in SPEC §16 (v2 roadmap): structured progress
+> (16.1) and steer/cancel (16.2) are the recommended next items.
+
+Observations from live multi-model runs on 2026-07-25 that suggested
+spec-level refinements:
 
 - **Per-stanza executor-config digests.** §8.2 hashes the WHOLE lockstep.toml
   into every harness node's fingerprint. During a sustained Haiku 529 outage

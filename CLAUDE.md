@@ -5,10 +5,11 @@ Harness-agnostic driver for headless coding agents: executes a taskgraph
 subprocesses. The driver never calls a model and never holds a credential.
 
 **The spec is authoritative:** `docs/SPEC.md` (revision 3) as amended by
-`docs/AMENDMENTS-r4.md` (adopted; wins wherever the two disagree).
-Implementation-level departures are logged in `docs/DEVIATIONS.md` — check it
-before reporting a spec mismatch. Last full adversarial audit:
-`docs/AUDIT-2026-07-25.md`.
+`docs/AMENDMENTS-r4.md` and `docs/AMENDMENTS-r5.md` (both adopted; the LATER
+revision wins wherever documents disagree: r5 > r4 > SPEC). Implementation-
+level departures are logged in `docs/DEVIATIONS.md` — check it before
+reporting a spec mismatch. Last full adversarial audits:
+`docs/AUDIT-2026-07-25.md` (code), `docs/AUDIT-DOCS-2026-07-25.md` (docs).
 
 ## Commands
 

@@ -66,12 +66,14 @@ strings: `== true`, `== "foo"` (quotes required), `== null` (also matches a
 skipped upstream — `when` is exempt from transitive skip, AMENDMENTS A2).
 No numerics beyond exact serialization: `5` ≠ `5.0`.
 
-## Retry — set it BEFORE the first run
+## Retry
 
-Give harness nodes `"retry": { "max": 2, "backoff_ms": 60000 }`: transient API
-errors (529 Overloaded, 5xx) surface as nonzero exits, and the built-in
-automatic retry covers only timeouts and empty results. Bake this in up
-front — editing the flow later changes `flow_hash` and starts a new lineage,
+Harness nodes DEFAULT to `retry: { max: 2, backoff_ms: 60000 }` (AMENDMENTS-r5
+B2) — transient provider errors (429/529) surface as nonzero exits and the
+minute-scale backoff absorbs them. Setting `retry` explicitly in the flow file
+(even `{"max": 0}`) overrides the default entirely; shell nodes stay at
+`max: 0`. If you do need a custom retry, bake it in BEFORE the first run —
+editing the flow later changes `flow_hash` and starts a new lineage,
 re-running (and re-billing) every completed node.
 
 ## Budget & executors

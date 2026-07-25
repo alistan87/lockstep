@@ -74,6 +74,17 @@ class ShellExecutor:
         argv = list(work.render)  # type: ignore[arg-type]
         stdout_path = phase_dir / "stdout.log"
         stderr_path = phase_dir / "stderr.log"
+        # r5 A4: rotate prior-attempt logs (best-effort) — shell retries were
+        # overwriting the evidence, unlike harness attempts.
+        for p in (stdout_path, stderr_path):
+            if p.exists():
+                n = 1
+                while (phase_dir / f"{p.stem}-attempt{n}{p.suffix}").exists():
+                    n += 1
+                try:
+                    p.rename(phase_dir / f"{p.stem}-attempt{n}{p.suffix}")
+                except OSError:
+                    pass
         try:
             proc = spawn(
                 argv,

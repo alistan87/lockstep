@@ -40,11 +40,12 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
   driver falls back to the LAST balanced top-level JSON value in stdout,
   markdown fences stripped — it need not be final, but if there is none,
   tighten the task prompt).
-- `exit code 1` with envelope `api_error_status: 529` ("Overloaded") — a
-  transient server-side incident; wait minutes-to-tens-of-minutes and
-  `resume`. A `retry` spec on the node would have absorbed it (see
-  /flow-authoring) — but adding one now edits the flow and starts a new
-  lineage, so prefer waiting.
+- `provider limit/overload (429|529)` in the node error (the driver names it
+  and prints a resume hint, AMENDMENTS-r5 B3) — a transient provider
+  incident. Harness nodes already retry 2× with minute-scale backoff by
+  default (r5 B2); if it still failed, the incident outlasted the backoff:
+  wait, then `resume <run_dir>`. A node that set `retry: {"max": 0}`
+  explicitly opted out of the default.
 - Exit 7 "not git-managed" — a healing gate (`heal.max_rounds > 0`) with
   `rollback: true` on a non-git tree: init git or set `rollback: false`.
 - Exit 8 — read `<run_dir>/lock` (pid/hostname). Same-host dead pid clears
