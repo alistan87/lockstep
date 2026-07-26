@@ -242,6 +242,7 @@ def verify_flow(
     registry: Any = None,  # registry.Registry; Any to avoid an import cycle
     config: Any = None,  # registry.LockstepConfig | None
     repo_root: Path | None = None,
+    policy: Any = None,  # Policy; §8.1: consulted at verify time AND pre-execute
 ) -> list[VerifyIssue]:
     """All §6 findings at once. Errors ⇒ exit 5."""
     issues: list[VerifyIssue] = []
@@ -388,6 +389,15 @@ def verify_flow(
         if n.over is not None and not _OVER_RE.match(n.over):
             err("over-not-json", f"node {n.id!r}: `over` must be a {{steps.X.json...}} reference, got {n.over!r}")
 
+    # §8.1: the Policy seam is consulted at verify time too (audit r6.2 nit).
+    if policy is not None:
+        for n in tg.nodes:
+            if n.role == "approval":
+                continue
+            decision = policy.allows(n, "local-user")
+            if not getattr(decision, "allowed", True):
+                err("policy-denied", f"policy denies node {n.id!r}: {getattr(decision, 'reason', '')}")
+
     # 8. when grammar
     for n in tg.nodes:
         if n.when is not None:
@@ -404,6 +414,8 @@ def verify_flow(
     for depth, layer in by_depth.items():
         held: dict[str, list[str]] = {}
         for n in layer:
+            if n.role == "approval":
+                continue  # core-handled, no executor, holds nothing (audit r6.2)
             eff = list(n.exclusive)
             if n.kind in ("harness", "fake") and not n.spec.get("readonly"):
                 eff.append("tree")

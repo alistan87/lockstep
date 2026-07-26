@@ -536,6 +536,7 @@ class Engine:
             # No new spawns; this node goes back to pending; in-flight peers finish.
             rec = self._rec(node.id)
             rec.status = "pending"
+            rec.error = None  # e.g. a mid-corrective trip must not leave stale error text
             self.store.record(rec)
         except WorkspaceError as e:
             self._set_status(node.id, "failed", error=str(e))
@@ -696,6 +697,9 @@ class Engine:
             raise
         raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
         rec.attempts += 1
+        if (phase_dir / "CANCELLED").exists():
+            rec.error = "cancelled"  # r6 C3 also covers corrective re-spawns
+            return None
         try:
             return validate_result(raw2.result_text or "", ref), raw2.result_text or ""
         except ContractError as e2:
@@ -726,7 +730,9 @@ class Engine:
         if node.output == "json":
             validated = self._validate_with_respawn(node, executor, work, phase_dir, raw)
             if validated is None:
-                if node.role == "gate":
+                if rec.error == "cancelled":
+                    self._set_status(node.id, "failed", error="cancelled")
+                elif node.role == "gate":
                     self._queue_gate_outcome(node, None, "no valid verdict emitted")
                 else:
                     self._set_status(node.id, "failed", error=rec.error)
@@ -832,6 +838,11 @@ class Engine:
                 # aside, not restored (audit r5 finding).
                 label = "discarded" if (discard / p).exists() else "restored"
                 append_event(self.store.run_dir, {"node": gate.id, "status": label, "path": p})
+            # Refresh the lineage head AFTER the restore mutated the tree, so a
+            # crash-then-resume here doesn't misread the rollback as external
+            # edits (audit r6.2: fail-safe but noisy).
+            _, detail = self.workspace.fingerprint_detail()
+            self.store.mutate(lambda st: setattr(st, "fingerprint_detail", detail))
         # Invalidation cascades to ALL completed descendants of the targets —
         # restoring the tree under a passed sibling would silently orphan its
         # outputs (SPEC §9.4.5, revision-3 loop C).
@@ -985,6 +996,11 @@ class Engine:
                         self._spend_spawn(corrective)
                         raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
                         irec.attempts += 1
+                        if (phase_dir / "CANCELLED").exists():
+                            irec.status = "failed"
+                            irec.error = errors[i] = "cancelled"
+                            self.store.record(rec)
+                            return
                         try:
                             validate_result(raw2.result_text or "", contract_ref)
                             text = raw2.result_text or ""

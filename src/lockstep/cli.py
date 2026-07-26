@@ -67,7 +67,13 @@ def _workspace_for(repo_root: Path):
 
 
 def _do_verify(tg: TaskGraph, config: LockstepConfig, repo_root: Path) -> tuple[int, bool]:
-    issues = verify_flow(tg, registry=_registry_for(config, repo_root), config=config, repo_root=repo_root)
+    issues = verify_flow(
+        tg,
+        registry=_registry_for(config, repo_root),
+        config=config,
+        repo_root=repo_root,
+        policy=AllowAllPolicy(),
+    )
     for issue in issues:
         print(issue, file=sys.stderr if issue.level == "error" else sys.stdout)
     has_errors = any(i.level == "error" for i in issues)
@@ -117,10 +123,10 @@ def _print_plan(tg: TaskGraph, config: LockstepConfig) -> None:
         print(f"  wave {d}:")
         held: dict[str, list[str]] = {}
         for n in by_depth[d]:
-            eff = list(n.exclusive)
-            if n.kind in ("harness", "fake") and not n.spec.get("readonly"):
-                eff.append("tree")
-            for t in eff:
+            eff = set(n.exclusive)  # dedupe: explicit ["tree"] + default must not double-count
+            if n.role != "approval" and n.kind in ("harness", "fake") and not n.spec.get("readonly"):
+                eff.add("tree")
+            for t in sorted(eff):
                 held.setdefault(t, []).append(n.id)
             extras = []
             if n.kind == "harness":
