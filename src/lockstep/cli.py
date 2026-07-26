@@ -287,7 +287,13 @@ def cmd_status(ns) -> int:
     print(f"flow: {state.flow_name}   started: {state.started_at}   token spawns: {state.token_spawns}")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
-    events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
+    try:
+        events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
+    except Exception as e:
+        # Mid-file corruption is beyond the §10.3 guarantee; status still
+        # renders rather than dying with an unfrozen exit code (audit r6 nit).
+        print(f"warning: events.jsonl unreadable ({e}); continuing without events")
+        events = []
     # r6 C1: latest progress per node — advisory display only.
     progress: dict[str, dict] = {}
     for ev in events:

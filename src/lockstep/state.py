@@ -78,6 +78,11 @@ class RunState(BaseModel):
     # so the resume warning can NAME externally-changed paths, not just a digest.
     fingerprint_detail: dict[str, str] = {}
     workspace_kind: str = "git"  # "git" | "null" (M6: null ⇒ detection off)
+    # Proactive heal baselines (§9.4.2), gate_id -> git tree sha — PERSISTED so
+    # a resumed process restores to the true pre-attempt state instead of
+    # snapshotting a tree that already contains the blocked attempt (audit r6
+    # blocker). Cleared when the gate passes.
+    heal_baselines: dict[str, str] = {}
 
 
 # --- events.jsonl --------------------------------------------------------------

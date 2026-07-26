@@ -159,6 +159,57 @@ def test_rollback_on_nongit_tree_refuses_exit7(tmp_path, plain_repo):
         h.engine.run()
 
 
+def test_heal_baseline_survives_resume(tmp_path, git_repo):
+    # Audit r6 blocker: the baseline must be PERSISTED. Session 1: the target
+    # executes (baseline snapshotted pre-attempt, persisted), the gate emits
+    # garbage => terminal block, tree still holds the attempt's gen.txt.
+    # Session 2 (a fresh process = no in-memory snapshots): the gate blocks
+    # validly => heal must restore to session 1's pre-attempt baseline. If a
+    # block-time snapshot were taken instead, gen.txt would be IN the baseline
+    # and discarded-1/ would stay empty.
+    from conftest import rebuild
+    from lockstep.state import load_state
+
+    f1 = heal_flow(["garbage"])
+    h1 = build(tmp_path, f1, git_repo)
+    assert h1.engine.run() == 2
+    st1 = load_state(h1.run_dir)
+    assert st1.heal_baselines.get("gate"), "baseline persisted at snapshot time"
+    assert (git_repo / "gen.txt").exists()
+
+    # Same flow shape; only outputs differ (not a fingerprint input for fake).
+    f2 = heal_flow([BLOCK, PASS])
+    h2 = rebuild(tmp_path, f2, git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert (h1.run_dir / "phases" / "gate" / "discarded-1" / "gen.txt").exists(), (
+        "restore used the TRUE pre-attempt baseline from session 1"
+    )
+    assert load_state(h1.run_dir).heal_baselines == {}, "baseline cleared on gate pass"
+
+
+def test_missing_baseline_fails_closed(tmp_path, git_repo):
+    # A rollback heal whose target hash-skipped (so no fresh snapshot fires)
+    # and whose lineage has no persisted baseline must terminal-block — never
+    # snapshot at block time (§9.4.2). Simulates a pre-persistence lineage.
+    from conftest import rebuild
+    from lockstep.state import load_state, write_state
+
+    h1 = build(tmp_path, heal_flow(["garbage"]), git_repo)
+    assert h1.engine.run() == 2  # terminal invalid-verdict block; impl ran once, no heal_text
+    st = load_state(h1.run_dir)
+    st.heal_baselines = {}
+    write_state(h1.run_dir, st)
+    h2 = rebuild(tmp_path, heal_flow([BLOCK, PASS]), git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 2
+    rec = load_state(h1.run_dir).nodes["gate"]
+    assert "baseline missing" in rec.error
+    assert h2.fake.calls and all(c.node_id == "gate" for c in h2.fake.calls), (
+        "impl hash-skipped (so no new snapshot); only the gate re-ran"
+    )
+
+
 def test_map_target_heal_clears_items(tmp_path, git_repo):
     # A3/§9.4.6: a map heal target re-runs ALL items.
     f = {

@@ -184,6 +184,11 @@ class Engine:
                 self.snapshots[n.id] = None
                 for t in n.heal.targets:
                     self.target_gate[t] = n.id
+        # Reload persisted baselines: a resumed process must restore to the
+        # SAME pre-attempt tree the original session snapshotted (§9.4.2).
+        for gate_id, ref in store.state.heal_baselines.items():
+            if gate_id in self.snapshots:
+                self.snapshots[gate_id] = SnapshotRef(ref=ref)
 
         self._dependents: dict[str, list[str]] = {n.id: [] for n in tg.nodes}
         for n in tg.nodes:
@@ -377,7 +382,13 @@ class Engine:
                         rec.status == "done"
                         and ex is not None
                         and getattr(ex, "cacheable", False)
-                        and any(st.nodes[d].status != "done" for d in self._dependents[node.id])
+                        # "Not yet consumed downstream" (§9.2): a LEAF node has
+                        # no consumers at all, so it always re-runs — it is the
+                        # flow's user-visible artifact (audit r6 major).
+                        and (
+                            not self._dependents[node.id]
+                            or any(st.nodes[d].status != "done" for d in self._dependents[node.id])
+                        )
                     ):
                         rec.status = "pending"
                         self.needs_check.discard(node.id)
@@ -577,10 +588,14 @@ class Engine:
             return
         with self._snapshot_guard:
             if self.snapshots.get(gate_id) is None:
-                self.snapshots[gate_id] = self.workspace.snapshot()
+                ref = self.workspace.snapshot()
+                self.snapshots[gate_id] = ref
+                # Persist BEFORE the target executes: a later crash + resume
+                # must find this baseline, not re-snapshot a mutated tree.
+                self.store.mutate(lambda st: st.heal_baselines.__setitem__(gate_id, ref.ref))
                 append_event(
                     self.store.run_dir,
-                    {"node": gate_id, "status": "snapshot", "error": None, "ref": self.snapshots[gate_id].ref},
+                    {"node": gate_id, "status": "snapshot", "error": None, "ref": ref.ref},
                 )
 
     @staticmethod
@@ -753,6 +768,11 @@ class Engine:
             outcomes, self._gate_outcomes = self._gate_outcomes, []
         for oc in outcomes:
             if oc.verdict is not None and oc.verdict.verdict == "pass":
+                # The heal cycle is over; a future re-run of the targets is a
+                # NEW pre-attempt state — drop the old baseline.
+                if oc.node.id in self.snapshots:
+                    self.snapshots[oc.node.id] = None
+                    self.store.mutate(lambda st: st.heal_baselines.pop(oc.node.id, None))
                 continue
             gate = oc.node
             rec = self._rec(gate.id)
@@ -792,10 +812,14 @@ class Engine:
         if gate.heal.rollback:
             baseline = self.snapshots.get(gate.id)
             if baseline is None:
-                # Targets all hash-skipped this session; the current tree IS the
-                # pre-attempt state for the coming round.
-                baseline = self.workspace.snapshot()
-                self.snapshots[gate.id] = baseline
+                # With persisted baselines (heal_baselines in RunState) this is
+                # unreachable in any lineage whose targets ever executed — a
+                # block-time snapshot would bless the bad attempt (§9.4.2), so
+                # FAIL CLOSED rather than roll back to a wrong tree.
+                self._terminal_block(
+                    gate, "heal baseline missing — refusing a block-time snapshot (§9.4.2)"
+                )
+                return
             # Preserve the attempt, THEN restore (§9.4.4): the failed work stays
             # inspectable; scope is git-derived, never StepResult.files_written.
             patch = self.workspace.diff_patch(baseline)

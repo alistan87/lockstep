@@ -39,6 +39,11 @@ file records implementation-level departures below that bar.
   nothing to correct. The corrective prompt now includes the original rendered
   prompt, the invalid output (fenced as data), and the validation error.
   "Output-only" constrains side effects, not context.
+- **2026-07-26 — map item_hash includes the array index** as an extra
+  fingerprint part beyond AMENDMENTS-r4 A3.1's list. Why: results are
+  positional (collected in array order); two identical items at different
+  indices must not share a cache slot. Inserting an item therefore re-runs
+  the shifted tail — correct, since slots moved.
 - **2026-07-25 — per-attempt artifacts are rotated**, not overwritten
   (`stdout-attempt1.log`, …): attempt 1's output was undiagnosable after the
   corrective attempt overwrote it. §10.1's `stdout.log`/`prompt.txt` names

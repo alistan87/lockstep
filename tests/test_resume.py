@@ -100,6 +100,21 @@ def test_external_edit_warns_and_reruns_unconsumed(tmp_path, git_repo):
     assert [c.node_id for c in h2.fake.calls] == ["a", "b"]
 
 
+def test_external_edit_reruns_leaf_even_when_all_done(tmp_path, git_repo):
+    # Audit r6 major: a LEAF node has no consumers, so it is trivially "not
+    # yet consumed downstream" and must re-run on an external edit — it is
+    # the flow's user-visible artifact. Its upstream, consumed by the leaf's
+    # completed run at re-mark time, stays cached.
+    f = chain_flow()
+    h1 = build(tmp_path, f, git_repo)
+    assert h1.engine.run() == 0
+    (git_repo / "a.txt").write_text("edited externally\n", encoding="utf-8")
+    h2 = rebuild(tmp_path, f, git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert [c.node_id for c in h2.fake.calls] == ["b"], "leaf re-runs; consumed upstream does not"
+
+
 def test_match_means_no_warning(tmp_path, git_repo):
     f = chain_flow()
     h1 = build(tmp_path, f, git_repo)
