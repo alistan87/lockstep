@@ -168,6 +168,29 @@ def test_cancel_kills_running_node_no_retries(tmp_path, git_repo):
     assert (h.run_dir / "phases" / "slow" / "CANCELLED").exists()
 
 
+def test_readonly_footer_has_no_phase_dir_pointer(tmp_path):
+    # Self-contamination fix: a re-spawned readonly node must not be handed the
+    # path to its own rotated prior-attempt output.
+    from conftest import make_config
+    from lockstep.executors.harness import FOOTER_READONLY, HarnessExecutor
+    from lockstep.protocols import RenderCtx
+    from lockstep.registry import ExecutorStanza
+    from lockstep.taskgraph import Node
+
+    assert "{phase_dir}" not in FOOTER_READONLY
+    assert "fresh" in FOOTER_READONLY.lower()
+    config = make_config(ro=ExecutorStanza(argv=[PY, "-c", "pass", "{prompt}"], readonly_argv=["--x"]))
+    ex = HarnessExecutor(config=config, repo_root=tmp_path)
+    node = Node(id="r", kind="harness", spec={"task": "review", "readonly": True}, output="json", contract="Verdict")
+    ctx = RenderCtx(
+        args={}, outputs={}, json_results={}, skipped=set(), deps=[],
+        repo_root=tmp_path, personas_dir=tmp_path / "p", phase_dir=tmp_path / "ph",
+        max_interp_chars=20000, config_digest="d", executor_default="ro",
+    )
+    work = ex.plan(node, ctx)
+    assert str((tmp_path / "ph").resolve()) not in str(work.render)
+
+
 def test_cancel_without_live_pid_exits_7(tmp_path, git_repo):
     from lockstep.cli import cmd_cancel
     from types import SimpleNamespace

@@ -6,6 +6,17 @@
 > Remaining future work lives in SPEC §16 (v2 roadmap): structured progress
 > (16.1) and steer/cancel (16.2) are the recommended next items.
 
+**New r7 candidate (2026-07-26) — re-run isolation.** A resumed audit's
+re-spawned readonly reviewers found their own rotated prior-attempt output
+(via the phase-dir pointer in the readonly footer) and RECYCLED their stale
+findings — verbatim old code quotes against a fixed tree — instead of
+re-deriving them. Mitigated in v0.2.x (readonly footer drops the phase-dir
+pointer and asserts fresh execution; audit prompts add a fresh-review guard),
+but the general principle deserves spec text: prior-attempt artifacts should
+not be discoverable by a re-executing agent, or must be explicitly marked as
+non-input. Related: run dirs under the repo root are visible to agents with
+read tools; consider defaulting `--runs-dir` outside the audited tree.
+
 Observations from live multi-model runs on 2026-07-25 that suggested
 spec-level refinements:
 
