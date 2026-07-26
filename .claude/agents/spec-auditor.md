@@ -1,6 +1,6 @@
 ---
 name: spec-auditor
-description: Read-only auditor that checks the lockstep implementation against docs/SPEC.md + docs/AMENDMENTS-r4.md. Use PROACTIVELY after any behavior change in src/lockstep/, before tagging a release, or when a spec question is disputed. Returns Finding-style discrepancies with evidence, or a clean bill.
+description: Read-only auditor that checks the lockstep implementation against docs/SPEC.md and ALL adopted amendments (docs/AMENDMENTS-r*.md; latest revision wins). Use PROACTIVELY after any behavior change in src/lockstep/, before tagging a release, or when a spec question is disputed. Returns Finding-style discrepancies with evidence, or a clean bill.
 tools: Read, Grep, Glob
 ---
 

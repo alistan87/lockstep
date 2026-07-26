@@ -20,8 +20,8 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
 - **Harness nodes**: `prompt.txt`, `argv.json`, `stdout.log`, `stderr.log` —
   LATEST attempt; prior attempts rotated to `*-attempt1.*`, `*-attempt2.*`, …
   Read the rotated ones: attempt 1 usually explains attempt 2. **Shell nodes**
-  write only `stdout.log`/`stderr.log`, overwritten in place on retry — their
-  missing `prompt.txt` is normal, not corruption.
+  write only `stdout.log`/`stderr.log` (rotated on retry too, per r5 A4) —
+  their missing `prompt.txt` is normal, not corruption.
 - `result.json` / `result.txt` — the validated result the driver stored.
 - `stdout.log` for a claude harness node is a JSON envelope: check
   `is_error`, `api_error_status`, and `result` (the model's final text).

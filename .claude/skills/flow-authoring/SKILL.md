@@ -5,7 +5,8 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 
 # Authoring a taskgraph
 
-Full grammar: `docs/SPEC.md` §4–§7 as amended by `docs/AMENDMENTS-r4.md`.
+Full grammar: `docs/SPEC.md` §4–§7 as amended by `docs/AMENDMENTS-r4.md`,
+`-r5.md`, and `-r6.md` (the latest adopted revision wins).
 Always finish with `.venv\Scripts\lockstep.exe verify <flow>` (exit 5 = errors,
 all reported at once with named codes) and `run <flow> --dry-run` to see waves.
 
@@ -30,10 +31,10 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   (`unlisted-step-ref`); every `{args.K}` must be declared AND every declared
   arg referenced (`undeclared-arg` / `unused-arg` — both errors).
 - `output: "json"` requires a resolvable `contract` (built-ins:
-  `CheckResult`, `StepResult`, `Finding`, `Verdict`, `PathManifest`, plus
-  `ProgressEvent`/`SteerMessage` — reserved for v2 but resolvable; `"X[]"` =
-  array of; `module:Name`; or a bare name resolved via the flow-level
-  `contracts_module` field).
+  `CheckResult`, `StepResult`, `Finding`, `Verdict`, `PathManifest`,
+  `ProgressEvent`, `SteerMessage` — the last two live since r6 adopted
+  progress and steering; `"X[]"` = array of; `module:Name`; or a bare name
+  resolved via the flow-level `contracts_module` field).
 - **Gates**: `role: "gate"` requires `output: "json"` + a contract resolving to
   `Verdict`. Prefer `kind: "shell"` gates (deterministic) whenever the check is
   machine-decidable — see `flows/gated-build.tg.json`.

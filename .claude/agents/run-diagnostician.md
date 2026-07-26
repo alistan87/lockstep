@@ -1,6 +1,6 @@
 ---
 name: run-diagnostician
-description: Triages a failed or stuck lockstep run directory and reports the root cause plus the correct recovery command (resume / --force-unlock / --fresh / wait-for-reset). Use when a run exits nonzero, a node fails repeatedly, or a run dir needs a post-mortem.
+description: Triages a failed or stuck lockstep run directory and reports the root cause plus exactly one recovery recommendation (resume, resume --force-unlock, run/run --fresh, or wait out a provider limit then resume). Use when a run exits nonzero, a node fails repeatedly, or a run dir needs a post-mortem.
 tools: Read, Grep, Glob, Bash
 ---
 
