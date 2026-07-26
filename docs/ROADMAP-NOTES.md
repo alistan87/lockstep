@@ -6,6 +6,12 @@
 > Remaining future work lives in SPEC §16 (v2 roadmap): structured progress
 > (16.1) and steer/cancel (16.2) are the recommended next items.
 
+**r7 candidates from ADDENDUM-A adoption (2026-07-26):** a dedicated
+per-node write-scope field (`LOCKSTEP_WORKSPACE_SCOPE` currently carries the
+resolved `spec.cwd`); and reconciling §6.11 with extension-based readonly
+enforcement (an argv-visible flag that loads the enforcing hook), which would
+finally allow `spec.readonly` nodes on pi.
+
 **New r7 candidate (2026-07-26) — re-run isolation.** A resumed audit's
 re-spawned readonly reviewers found their own rotated prior-attempt output
 (via the phase-dir pointer in the readonly footer) and RECYCLED their stale

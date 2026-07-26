@@ -20,7 +20,7 @@ from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
 from ..taskgraph import Node, RetrySpec
 from .proc import resolve_inside, spawn, wait_or_kill
-from .shell import resolve_ctx_of
+from .shell import node_env, resolve_ctx_of
 
 
 class HarnessSpec(BaseModel):
@@ -252,6 +252,7 @@ class HarnessExecutor:
                 "output": node.output,
                 "cwd": str(cwd),
                 "node_id": node.id,
+                "role": node.role,
             },
         )
 
@@ -275,7 +276,13 @@ class HarnessExecutor:
         for part in work.meta["argv_template"]:
             if work.meta["prompt_via"] == "stdin" and part == "{prompt}":
                 continue
-            argv.append(part.replace("{prompt}", prompt))
+            # {phase_dir} (ADDENDUM-A A.3.4, e.g. pi --session-dir into the
+            # phase dir): expanded at spawn, left intact in the fingerprint —
+            # run-specific paths are excluded from input_hash, same rule as
+            # spill stubs and the footer placeholder.
+            argv.append(
+                part.replace("{prompt}", prompt).replace("{phase_dir}", str(phase_dir.resolve()))
+            )
         if work.meta["prompt_via"] == "stdin":
             stdin_text = prompt
         (phase_dir / "argv.json").write_text(
@@ -291,7 +298,7 @@ class HarnessExecutor:
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
                 stdin_text=stdin_text,
-                extra_env={"LOCKSTEP_PHASE_DIR": str(phase_dir.resolve())},
+                extra_env=node_env(work, phase_dir),
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")

@@ -347,7 +347,13 @@ readonly_argv = ["--disallowed-tools", "Edit,Write"]   # appended for spec.reado
                                            # absent => readonly nodes error at verify
 
 [executors.pi]                             # work machine: pi carries the Copilot login
-argv = ["pi", "--print", "--json", "{prompt}"]
+# pi >= 0.81: JSON output is `--mode json`. `--no-session` keeps doctor probes
+# out of the session store; for audit-lineage capture (ADDENDUM-A A.3.4) use
+# `"--session-dir", "{phase_dir}"` instead — {phase_dir} expands at spawn and
+# stays out of input_hash. Every spawn also exports LOCKSTEP_NODE_ID / _ROLE /
+# _WORKSPACE_SCOPE / _VERDICT_FILE / _PHASE_DIR for in-harness enforcement
+# extensions (contrib/pi-extension/lockstep-guard.ts).
+argv = ["pi", "-p", "--mode", "json", "--no-session", "{prompt}"]
 prompt_via = "argv"
 
 [executors.copilot-cli]

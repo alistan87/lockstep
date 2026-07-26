@@ -18,6 +18,20 @@ from ..taskgraph import Node
 from .proc import resolve_inside, spawn, wait_or_kill
 
 
+def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
+    """Node identity for the spawned session (ADDENDUM-A A.3.1 / A.7.1): lets
+    an in-harness enforcement layer (e.g. a pi extension) select its manifest
+    and write deterministic verdicts — enforce, never enable. WORKSPACE_SCOPE
+    carries the resolved cwd until a dedicated scope field exists (r7)."""
+    return {
+        "LOCKSTEP_PHASE_DIR": str(phase_dir.resolve()),
+        "LOCKSTEP_NODE_ID": str(work.meta.get("node_id", "")),
+        "LOCKSTEP_ROLE": str(work.meta.get("role", "")),
+        "LOCKSTEP_WORKSPACE_SCOPE": str(work.meta.get("cwd", "")),
+        "LOCKSTEP_VERDICT_FILE": str((phase_dir / "verdicts.jsonl").resolve()),
+    }
+
+
 class ShellSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cmd: list[str]
@@ -67,7 +81,7 @@ class ShellExecutor:
             fingerprint_parts=[f"argv:{json.dumps(argv, ensure_ascii=False)}"],
             costs_tokens=False,
             exclusive=[],
-            meta={"cwd": str(cwd), "output": node.output},
+            meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role},
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
@@ -91,7 +105,7 @@ class ShellExecutor:
                 cwd=Path(work.meta["cwd"]),
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
-                extra_env={"LOCKSTEP_PHASE_DIR": str(phase_dir.resolve())},
+                extra_env=node_env(work, phase_dir),
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")

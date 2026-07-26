@@ -36,6 +36,9 @@ class FakeSpec(BaseModel):
     sleep_s: float = 0.0
     empty_result: bool = False  # emit no result at all (tests the auto-retry)
     progress: list[dict] = []  # ProgressEvent dicts appended to progress.jsonl (r6 C1)
+    write_phase_files: dict[str, str] = {}  # rel path -> content, written into the
+    # PHASE dir on execute — e.g. a verdicts.jsonl, simulating an in-harness
+    # enforcement layer's deterministic BLOCK records (ADDENDUM-A A.7.5)
 
 
 @dataclass
@@ -111,6 +114,10 @@ class FakeExecutor:
             time.sleep(spec.sleep_s)
         for rel, content in spec.write_files.items():
             target = Path(self.repo_root) / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        for rel, content in spec.write_phase_files.items():
+            target = phase_dir / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
         call.ended = time.monotonic()
