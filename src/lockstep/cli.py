@@ -287,14 +287,23 @@ def cmd_status(ns) -> int:
     print(f"flow: {state.flow_name}   started: {state.started_at}   token spawns: {state.token_spawns}")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
+    events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
+    # r6 C1: latest progress per node — advisory display only.
+    progress: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("kind") == "progress" and ev.get("node"):
+            progress[ev["node"]] = ev
     print(f"{'node':<24} {'status':<9} {'attempts':<8} {'heal':<5} ended")
     for rec in state.nodes.values():
         print(f"{rec.node_id:<24} {rec.status:<9} {rec.attempts:<8} {rec.heal_round:<5} {rec.ended_at or ''}")
+        p = progress.get(rec.node_id)
+        if p:
+            pct = f" {p['pct']}%" if p.get("pct") is not None else ""
+            print(f"  progress: {p.get('step', '')}{pct} {p.get('note', '')}".rstrip())
         for idx, irec in sorted(rec.items.items(), key=lambda kv: int(kv[0])):
             print(f"  [{idx}] {irec.status} (attempts {irec.attempts})")
     for gate, verdict in state.verdicts.items():
         print(f"verdict {gate}: {verdict}")
-    events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
     if events:
         print(f"events: {len(events)} (last: {events[-1].get('node')} -> {events[-1].get('status')})")
     return EXIT_OK
@@ -344,9 +353,53 @@ def cmd_init(ns) -> int:
     return EXIT_OK
 
 
-def cmd_reserved(ns) -> int:
-    print(f"{ns.cmd_name}: reserved for v2")
-    return EXIT_CONFIG
+def cmd_steer(ns) -> int:
+    """r6 C2: append a SteerMessage; consumed at defined checkpoints only."""
+    from .state import append_steer
+
+    run_dir = Path(ns.run_dir)
+    if not (run_dir / "state.json").exists():
+        return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
+    state = load_state(run_dir)
+    if ns.node_id not in state.nodes:
+        return _fail(f"unknown node {ns.node_id!r} (nodes: {sorted(state.nodes)})", EXIT_CONFIG)
+    append_steer(run_dir, ns.node_id, ns.message)
+    status = state.nodes[ns.node_id].status
+    print(f"steered {ns.node_id} (currently {status})")
+    if status == "done":
+        print(f"done node: will re-run on next `lockstep resume {run_dir}`")
+    else:
+        print("consumed at the next checkpoint: node spawn, heal round, or map item (concurrency 1)")
+    return EXIT_OK
+
+
+def cmd_cancel(ns) -> int:
+    """r6 C3: kill the node's recorded process tree; the driver marks it
+    failed(cancelled) with no retries."""
+    from .executors.proc import kill_pid_tree
+    from .state import utcnow
+
+    run_dir = Path(ns.run_dir)
+    if not (run_dir / "state.json").exists():
+        return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
+    state = load_state(run_dir)
+    if ns.node_id not in state.nodes:
+        return _fail(f"unknown node {ns.node_id!r} (nodes: {sorted(state.nodes)})", EXIT_CONFIG)
+    phase = run_dir / "phases" / ns.node_id
+    pid_file = phase / "pid.txt"
+    if not pid_file.exists():
+        return _fail(f"node {ns.node_id!r} has no recorded pid (never spawned?)", EXIT_CONFIG)
+    marker = phase / "CANCELLED"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(utcnow(), encoding="utf-8")
+    pid = int(pid_file.read_text(encoding="utf-8").strip())
+    if not kill_pid_tree(pid):
+        marker.unlink(missing_ok=True)  # nothing was killed; don't poison the next spawn
+        return _fail(f"no live process tree at pid {pid} (node already finished?)", EXIT_CONFIG)
+    print(f"cancelled {ns.node_id} (pid {pid}); it restarts from a known input, not mid-thought")
+    print(f"  steer it first:  lockstep steer {run_dir} {ns.node_id} \"...\"")
+    print(f"  then:            lockstep resume {run_dir}")
+    return EXIT_OK
 
 
 class _Parser(argparse.ArgumentParser):
@@ -410,10 +463,16 @@ def main(argv: list[str] | None = None) -> int:
     pi = sub.add_parser("init", help="write lockstep.toml.example to ./lockstep.toml")
     pi.set_defaults(fn=cmd_init)
 
-    for reserved in ("steer", "cancel"):
-        prv = sub.add_parser(reserved)
-        prv.add_argument("rest", nargs="*")
-        prv.set_defaults(fn=cmd_reserved, cmd_name=reserved)
+    psteer = sub.add_parser("steer", help="append a steering message for a node (r6 C2)")
+    psteer.add_argument("run_dir")
+    psteer.add_argument("node_id")
+    psteer.add_argument("message")
+    psteer.set_defaults(fn=cmd_steer)
+
+    pcan = sub.add_parser("cancel", help="kill a running node's process tree (r6 C3)")
+    pcan.add_argument("run_dir")
+    pcan.add_argument("node_id")
+    pcan.set_defaults(fn=cmd_cancel)
 
     ns = p.parse_args(argv)
     return ns.fn(ns)

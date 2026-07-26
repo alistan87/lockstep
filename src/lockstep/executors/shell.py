@@ -95,6 +95,8 @@ class ShellExecutor:
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")
+        # r6 C3: record the child pid so `lockstep cancel` can kill the tree.
+        (phase_dir / "pid.txt").write_text(str(proc.pid), encoding="utf-8")
         exit_code, timed_out = wait_or_kill(proc, timeout_s)
         # Result channel (SPEC §8.3): file first, stdout fallback.
         result_text: str | None = None

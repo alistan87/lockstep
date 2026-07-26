@@ -24,7 +24,8 @@ file records implementation-level departures below that bar.
   blocked dependents) is what a human resuming plainly wants. `heal_round` is
   preserved, so exhausted heal budgets stay exhausted.
 - **2026-07-25 — reserved commands (`steer`, `cancel`) exit 7** after printing
-  "reserved for v2"; the spec assigns them no exit code.
+  "reserved for v2"; the spec assigns them no exit code. *(Superseded by
+  AMENDMENTS-r6 C4: both commands are implemented as of v0.2.0.)*
 - **2026-07-25 — approval "edit" reads from the interactive prompt loop**
   (input() until EOF), which on Windows means Ctrl-Z then Enter.
 - **2026-07-25 — readonly harness nodes get a variant footer** (found by the

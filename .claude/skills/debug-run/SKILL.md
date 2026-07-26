@@ -54,6 +54,16 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
   the lineage-head fingerprint; done nodes with un-consumed outputs re-run.
 - Transient `PermissionError` on this machine is usually AV — retry once.
 
+## Steering and cancel (r6)
+
+`steer <run_dir> <node> "msg"` appends to `mailbox/<node>.jsonl`; consumed at
+the next checkpoint (node spawn, heal round, map item at concurrency 1) and
+rendered as a `--- steering ---` block that folds into the hash — steering a
+`done` node re-marks it pending on the next resume. `cancel <run_dir> <node>`
+kills the recorded process tree (`phases/<node>/pid.txt`); the node fails as
+`cancelled` with NO retries and restarts from a known input on resume. Latest
+per-node progress (advisory `progress.jsonl`) shows in `status`.
+
 ## Resume vs run vs run --fresh
 
 `resume <run_dir>` re-runs failed/stale-running/pending/blocked nodes and

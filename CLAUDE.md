@@ -5,11 +5,11 @@ Harness-agnostic driver for headless coding agents: executes a taskgraph
 subprocesses. The driver never calls a model and never holds a credential.
 
 **The spec is authoritative:** `docs/SPEC.md` (revision 3) as amended by
-`docs/AMENDMENTS-r4.md` and `docs/AMENDMENTS-r5.md` (both adopted; the LATER
-revision wins wherever documents disagree: r5 > r4 > SPEC). Implementation-
-level departures are logged in `docs/DEVIATIONS.md` — check it before
-reporting a spec mismatch. Last full adversarial audits:
-`docs/AUDIT-2026-07-25.md` (code), `docs/AUDIT-DOCS-2026-07-25.md` (docs).
+`docs/AMENDMENTS-r4.md`, `-r5.md`, and `-r6.md` (all adopted; the LATER
+revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
+Implementation-level departures are logged in `docs/DEVIATIONS.md` — check it
+before reporting a spec mismatch. Adversarial audit reports live in
+`docs/AUDIT-*.md`.
 
 ## Commands
 
@@ -17,7 +17,9 @@ reporting a spec mismatch. Last full adversarial audits:
 .venv\Scripts\python.exe -m pytest                 # full suite; run after EVERY change
 .venv\Scripts\lockstep.exe verify <flow.tg.json>   # static verification (exit 5 on error)
 .venv\Scripts\lockstep.exe run <flow> --dry-run    # layered execution plan
-.venv\Scripts\lockstep.exe status <run_dir>
+.venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6)
+.venv\Scripts\lockstep.exe steer <run_dir> <node> "msg"   # consumed at next checkpoint; folds into hash
+.venv\Scripts\lockstep.exe cancel <run_dir> <node>        # kills the node's process tree; no retries
 .venv\Scripts\lockstep.exe doctor                  # probes harness stanzas; spends small model calls
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
 ```

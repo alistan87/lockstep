@@ -141,6 +141,75 @@ def load_state(run_dir: Path) -> RunState:
     return RunState.model_validate_json((Path(run_dir) / "state.json").read_text(encoding="utf-8"))
 
 
+# --- mailbox (SPEC §16.2, AMENDMENTS-r6 C2) ------------------------------------
+
+_mailbox_lock = threading.Lock()
+
+
+def mailbox_path(run_dir: Path, node_id: str) -> Path:
+    return Path(run_dir) / "mailbox" / f"{node_id}.jsonl"
+
+
+def append_steer(run_dir: Path, node_id: str, message: str, author: str = "local-user") -> None:
+    line = json.dumps(
+        {"ts": utcnow(), "author": author, "message": message, "consumed": False},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    with _mailbox_lock:
+        path = mailbox_path(run_dir, node_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
+def read_mailbox(run_dir: Path, node_id: str) -> list[dict]:
+    """All messages, file order; tolerant of a trailing partial line."""
+    path = mailbox_path(run_dir, node_id)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i == len(lines) - 1:
+                continue
+            raise
+    return out
+
+
+def mark_mailbox_consumed(run_dir: Path, node_id: str) -> None:
+    """Bookkeeping (C2): records when messages first entered a spawn. The
+    steering block always renders the WHOLE mailbox, so this flag never
+    affects the rendered prompt or the hash — it drives resume re-marking."""
+    with _mailbox_lock:
+        messages = read_mailbox(run_dir, node_id)
+        if not any(not m.get("consumed") for m in messages):
+            return
+        for m in messages:
+            m["consumed"] = True
+        path = mailbox_path(run_dir, node_id)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(
+            "".join(json.dumps(m, separators=(",", ":"), ensure_ascii=False) + "\n" for m in messages),
+            encoding="utf-8",
+        )
+        os.replace(tmp, path)
+
+
+def render_steering(messages: list[dict]) -> str:
+    """The C2 steering block. Operator instruction — deliberately NOT
+    data-fenced; unlike interpolated content it is meant to be followed."""
+    if not messages:
+        return ""
+    lines = [f"{m.get('ts', '?')} {m.get('author', '?')}: {m.get('message', '')}" for m in messages]
+    return "--- steering ---\n" + "\n".join(lines) + "\n--- end steering ---"
+
+
 # --- lockfile (SPEC §10.3) -----------------------------------------------------
 
 class LockHeld(Exception):

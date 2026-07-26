@@ -33,7 +33,15 @@ from .interpolate import (
 from .policy import ACTOR_LOCAL_USER
 from .protocols import PlannedWork, RawResult, RenderCtx, SnapshotRef
 from .registry import LockstepConfig, Registry
-from .state import ItemRecord, append_event, compose_hash, utcnow
+from .state import (
+    ItemRecord,
+    append_event,
+    compose_hash,
+    mark_mailbox_consumed,
+    read_mailbox,
+    render_steering,
+    utcnow,
+)
 from .store import FileStore
 from .taskgraph import Node, TaskGraph
 from .workspace import GitWorkspace, WorkspaceError
@@ -48,6 +56,81 @@ class BudgetTripped(Exception):
 
 class RunRefusal(Exception):
     """Run-time refusal (exit 7), e.g. heal.rollback on a non-git tree."""
+
+
+class _ProgressTailer:
+    """r6 C1: follows every phase directory's progress.jsonl (and map items')
+    by byte offset, appending complete parseable lines to events.jsonl as
+    kind="progress". Advisory ONLY — never touches scheduling, hashing,
+    gating, budgets, or retries; unparseable lines are skipped silently."""
+
+    def __init__(self, run_dir: Path, cadence_s: float = 1.0):
+        self.run_dir = Path(run_dir)
+        self.cadence_s = cadence_s
+        self._offsets: dict[Path, int] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name="lockstep-progress", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+        self._sweep()  # final drain: catch lines the cadence missed
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.cadence_s):
+            try:
+                self._sweep()
+            except Exception:
+                pass  # advisory: a tailer hiccup must never disturb the run
+
+    def _iter_files(self):
+        phases = self.run_dir / "phases"
+        if not phases.exists():
+            return
+        for node_dir in phases.iterdir():
+            p = node_dir / "progress.jsonl"
+            if p.exists():
+                yield node_dir.name, None, p
+            items = node_dir / "items"
+            if items.exists():
+                for item_dir in items.iterdir():
+                    ip = item_dir / "progress.jsonl"
+                    if ip.exists():
+                        yield node_dir.name, item_dir.name, ip
+
+    def _sweep(self) -> None:
+        from .contracts import ProgressEvent
+
+        for node_id, item, path in self._iter_files():
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            offset = self._offsets.get(path, 0)
+            if size <= offset:
+                continue
+            with open(path, "rb") as f:
+                f.seek(offset)
+                chunk = f.read(size - offset)
+            last_nl = chunk.rfind(b"\n")
+            if last_nl < 0:
+                continue  # partial line: wait for the newline
+            self._offsets[path] = offset + last_nl + 1
+            for raw_line in chunk[: last_nl + 1].splitlines():
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    ev = ProgressEvent.model_validate_json(line)
+                except Exception:
+                    continue  # advisory: skip, never error
+                event = {"kind": "progress", "node": node_id, "step": ev.step, "pct": ev.pct, "note": ev.note}
+                if item is not None:
+                    event["item"] = item
+                append_event(self.run_dir, event)
 
 
 class _GateOutcome:
@@ -214,6 +297,11 @@ class Engine:
             config_digest=self.config.digest,
             executor_default=self.tg.executor_default or self.config.default,
             heal_text=self.heal_texts.get(node.id, ""),
+            # r6 C2: the WHOLE mailbox renders (consumed + new) so the hash is
+            # reproducible on resume; a new message grows the block and
+            # correctly invalidates. Re-built per plan, so map items at
+            # concurrency 1 re-read the mailbox between items.
+            steer_text=render_steering(read_mailbox(self.store.run_dir, node.id)),
         )
 
     def _body_referenced_deps(self, node: Node) -> set[str]:
@@ -252,6 +340,11 @@ class Engine:
             elif rec.status == "done":
                 if node.role == "approval":
                     rec.status = "pending"  # never skipped (SPEC §9.3)
+                elif any(
+                    not m.get("consumed")
+                    for m in read_mailbox(self.store.run_dir, node.id)
+                ):
+                    rec.status = "pending"  # steered done node re-runs (r6 C2)
                 else:
                     self.needs_check.add(node.id)
             elif rec.status == "skipped":
@@ -380,6 +473,8 @@ class Engine:
         self._start_monotonic = time.monotonic()
         token_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="lockstep-tok")
         other_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lockstep-oth")
+        tailer = _ProgressTailer(self.store.run_dir)
+        tailer.start()
         try:
             while True:
                 self._settle()
@@ -406,6 +501,7 @@ class Engine:
         finally:
             token_pool.shutdown(wait=True)
             other_pool.shutdown(wait=True)
+            tailer.stop()
             self.store.mutate(lambda s: None)
         return self._exit_code()
 
@@ -506,11 +602,20 @@ class Engine:
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0
         auto_used = False
+        # r6 C3: a marker from a PREVIOUS session is stale — this spawn starts
+        # fresh. (A cancel racing this exact instant degrades to an ordinary
+        # failed-then-retried spawn; acceptable.)
+        (phase_dir / "CANCELLED").unlink(missing_ok=True)
+        mark_mailbox_consumed(self.store.run_dir, node.id)  # r6 C2 bookkeeping
         while True:
             self._spend_spawn(work)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             rec.attempts += 1
             self.store.record(rec)
+            if (phase_dir / "CANCELLED").exists():
+                # r6 C3: consumes NO retries, no auto-retry, no corrective.
+                raw.error = "cancelled"
+                return raw
             ok = (not raw.timed_out) and raw.exit_code == 0 and raw.result_text is not None
             if ok:
                 return raw
@@ -592,6 +697,11 @@ class Engine:
                     f"[{node.id}] {raw.error}\n"
                     f"  wait for the limit/incident to clear, then: lockstep resume {self.store.run_dir}"
                 )
+            if raw.error == "cancelled":
+                # r6 C3: cancellation is not a verdict — a cancelled gate fails
+                # like any node; it restarts from a known input on resume.
+                self._set_status(node.id, "failed", error="cancelled")
+                return
             if node.role == "gate":
                 # Fail-closed for termination, never a healing trigger (§9.4.3).
                 self._queue_gate_outcome(node, None, "no valid verdict emitted")
@@ -908,10 +1018,15 @@ class Engine:
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0
         auto_used = False
+        (phase_dir / "CANCELLED").unlink(missing_ok=True)  # r6 C3 stale marker
+        mark_mailbox_consumed(self.store.run_dir, node.id)  # r6 C2 bookkeeping
         while True:
             self._spend_spawn(work)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             irec.attempts += 1
+            if (phase_dir / "CANCELLED").exists():
+                raw.error = "cancelled"
+                return raw
             ok = (not raw.timed_out) and raw.exit_code == 0 and raw.result_text is not None
             if ok:
                 return raw

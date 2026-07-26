@@ -3,10 +3,11 @@
 Executes a taskgraph (*.tg.json): a declarative DAG whose nodes are run by
 pluggable executors (headless agent harnesses, plain subprocesses). See
 docs/SPEC.md (revision 3) and the adopted amendment deltas
-docs/AMENDMENTS-r4.md and docs/AMENDMENTS-r5.md (the later revision wins).
+docs/AMENDMENTS-r4.md, docs/AMENDMENTS-r5.md, and docs/AMENDMENTS-r6.md
+(the later revision wins).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 FORMAT_VERSION = "1.0"
 

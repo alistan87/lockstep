@@ -203,6 +203,11 @@ class HarnessExecutor:
             # fence, gate findings inside it (SPEC §9.4.6).
             prompt_parts.append(ctx.heal_text)
             hash_parts.append(ctx.heal_text)
+        if ctx.steer_text:
+            # r6 C2: the whole-mailbox steering block; folds into the hash so a
+            # new message correctly invalidates while a resume replans stably.
+            prompt_parts.append(ctx.steer_text)
+            hash_parts.append(ctx.steer_text)
         result_file = "result.json" if node.output == "json" else "result.txt"
         footer = FOOTER_READONLY if spec.readonly else FOOTER
         prompt_parts.append(
@@ -286,6 +291,8 @@ class HarnessExecutor:
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")
+        # r6 C3: record the child pid so `lockstep cancel` can kill the tree.
+        (phase_dir / "pid.txt").write_text(str(proc.pid), encoding="utf-8")
         exit_code, timed_out = wait_or_kill(proc, timeout_s, stdin_text=stdin_text)
 
         stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""

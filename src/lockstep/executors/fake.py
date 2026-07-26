@@ -35,6 +35,7 @@ class FakeSpec(BaseModel):
     costs_tokens: bool = True
     sleep_s: float = 0.0
     empty_result: bool = False  # emit no result at all (tests the auto-retry)
+    progress: list[dict] = []  # ProgressEvent dicts appended to progress.jsonl (r6 C1)
 
 
 @dataclass
@@ -70,10 +71,11 @@ class FakeExecutor:
             null_for_skipped=ctx.allow_null_for_skipped,
         )
         heal = f"\n{ctx.heal_text}" if ctx.heal_text else ""
+        steer = f"\n{ctx.steer_text}" if ctx.steer_text else ""
         return PlannedWork(
-            render=rendered.prompt_text + heal,
+            render=rendered.prompt_text + heal + steer,
             fingerprint_parts=[
-                f"prompt:{rendered.hash_text}{heal}",
+                f"prompt:{rendered.hash_text}{heal}{steer}",
                 f"config:{ctx.config_digest}",
             ],
             costs_tokens=spec.costs_tokens,
@@ -101,6 +103,10 @@ class FakeExecutor:
             attempt = self._counts.get(node_id, 0)
             self._counts[node_id] = attempt + 1
             self.calls.append(call)
+        if spec.progress:
+            with open(phase_dir / "progress.jsonl", "a", encoding="utf-8") as f:
+                for ev in spec.progress:
+                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
         if spec.sleep_s:
             time.sleep(spec.sleep_s)
         for rel, content in spec.write_files.items():

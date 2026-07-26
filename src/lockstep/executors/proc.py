@@ -87,6 +87,22 @@ def kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
+def kill_pid_tree(pid: int) -> bool:
+    """Kill a process tree by pid — `lockstep cancel` (r6 C3), which runs in a
+    DIFFERENT process from the driver and has only the recorded pid. Same
+    platform mechanics as kill_tree. Returns True if a kill was issued."""
+    if sys.platform == "win32":
+        r = subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, shell=False
+        )
+        return r.returncode == 0
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
 def wait_or_kill(proc: subprocess.Popen, timeout_s: int, stdin_text: str | None = None) -> tuple[int, bool]:
     """Returns (exit_code, timed_out)."""
     timed_out = False

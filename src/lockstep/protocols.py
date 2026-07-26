@@ -47,6 +47,7 @@ class RenderCtx(BaseModel):
     config_digest: str
     executor_default: str | None = None
     heal_text: str = ""  # gate findings appended on heal re-runs; folds into the hash
+    steer_text: str = ""  # rendered steering block (r6 C2); folds into the hash
 
 
 class RawResult(BaseModel):
