@@ -23,6 +23,33 @@ not be discoverable by a re-executing agent, or must be explicitly marked as
 non-input. Related: run dirs under the repo root are visible to agents with
 read tools; consider defaulting `--runs-dir` outside the audited tree.
 
+**New r7 candidate (2026-07-28) — a corrective re-spawn can exceed the Windows
+command-line limit, and the spawn error is then masked.** Observed live: an
+extract node emitted an 11 KB result that failed contract validation; r5 A2's
+corrective prompt (original prompt + invalid output + validation error) came to
+59,028 chars; the stanza used `prompt_via = "argv"`; Windows `CreateProcess`
+caps a command line at 32,767. The spawn never started. Two defects, and the
+second is what made it expensive to diagnose:
+
+1. **No guard.** Nothing checks the rendered argv length before spawning. r5 A2
+   deliberately made corrective prompts several times larger than the original,
+   so this is now reachable on any node whose invalid output is sizable — on the
+   primary development platform.
+2. **The diagnosis is discarded.** `harness.execute` correctly returns
+   `RawResult(exit_code=127, error="spawn failed: …")`, but
+   `_validate_with_respawn` ignores `raw2.error` and reports only the
+   ContractError from `validate_result(raw2.result_text or "")` — so the operator
+   sees `result is not valid JSON: Expecting value: line 1 column 1 (char 0)` for
+   a process that never ran. The early return also means the stale `result.json`
+   from the previous attempt is never read, which is why the symptom is an empty
+   result rather than a repeat of the first schema error.
+
+Candidate fix: check the assembled argv against a platform limit at plan or spawn
+time and fail with a named error naming `prompt_via = "stdin"` as the remedy;
+and surface `raw.error` in the "contract validation failed twice" message
+whenever the re-spawn itself failed. Workaround today is config-only — set
+`prompt_via = "stdin"` on any stanza whose nodes can produce large outputs.
+
 **New r7 candidate (2026-07-27) — a JSON string interpolated into shell argv
 carries its quotes.** §7 defines `{steps.X.json.field}` as "parsed,
 compact-re-serialized", so a STRING field renders as `"…"`. That is right for a
