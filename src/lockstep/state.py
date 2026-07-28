@@ -83,6 +83,14 @@ class RunState(BaseModel):
     # snapshotting a tree that already contains the blocked attempt (audit r6
     # blocker). Cleared when the gate passes.
     heal_baselines: dict[str, str] = {}
+    # Heal text per TARGET node id (the block reason + fenced findings appended
+    # to its prompt on a heal round) — PERSISTED because it folds into the
+    # target's input_hash. A fresh process must re-plan the prompt the spawn
+    # actually saw, or every healed node re-runs on the next resume. Same
+    # reasoning as r6 C2's whole-mailbox rendering, and likewise NOT cleared when
+    # the gate passes: clearing it would change the hash of a result it helped
+    # produce. Latest round wins.
+    heal_texts: dict[str, str] = {}
 
 
 # --- events.jsonl --------------------------------------------------------------

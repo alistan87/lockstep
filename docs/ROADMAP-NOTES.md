@@ -23,6 +23,38 @@ not be discoverable by a re-executing agent, or must be explicitly marked as
 non-input. Related: run dirs under the repo root are visible to agents with
 read tools; consider defaulting `--runs-dir` outside the audited tree.
 
+**New r7 candidate (2026-07-27) — a JSON string interpolated into shell argv
+carries its quotes.** §7 defines `{steps.X.json.field}` as "parsed,
+compact-re-serialized", so a STRING field renders as `"…"`. That is right for a
+prompt (the value is data) and required for `when` comparison semantics, but a
+shell node's argv element is already a discrete string, so the quotes become part
+of the value — a path arrives as `".chronicle/resolved/ch0001.json"` and the
+program opens a file whose name starts with a quote. `interpolate.py` already
+makes the opposite choice one function away: `{item.field}` inserts strings raw,
+commented "prompt-friendly". Candidate fix: render strings raw when `fence=False`
+(shell argv), leaving prompts and `when` untouched. Not done unilaterally — §7 is
+a frozen surface. Found while wiring a gate's contract pointer into a downstream
+shell node; the failure surfaces as a confusing file-not-found far from the flow
+file.
+
+**New r7 candidate (2026-07-27) — heal text is not resume-stable.**
+*Implemented the same day (see DEVIATIONS); an r7 amendment should formalize the
+rule beside r6 C2's.* A gate's
+heal text (the block reason plus the fenced findings) is appended to each
+target's prompt and folds into `input_hash`, but it lives only in the Runner's
+in-memory `heal_texts` dict (`roles.py`); `RunState` persists `heal_round` and
+`heal_baselines`, not the text. A resume in a fresh process therefore re-plans a
+healed node WITHOUT it, computes a different hash, and re-runs a node that had
+already healed and passed. It is silent — the node looks like an ordinary cache
+miss — and the cost scales with heal rate × already-completed targets, so it
+grows with run length. r6 C2 solved exactly this shape for steering: it renders
+the ENTIRE mailbox, consumed and unconsumed, precisely so a resume re-plans the
+prompt the spawn actually saw. Heal wants the same treatment — persist per-node
+heal text in `RunState` (latest round wins) and render it at plan time. Pinned
+by `tests/test_heal.py::test_healed_node_hash_is_stable_across_resume`
+(xfail-strict). Found while designing a long chain flow, where every resume
+re-ran every heal-touched node in the completed prefix.
+
 Observations from live multi-model runs on 2026-07-25 that suggested
 spec-level refinements:
 

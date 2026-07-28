@@ -44,6 +44,18 @@ file records implementation-level departures below that bar.
   positional (collected in array order); two identical items at different
   indices must not share a cache slot. Inserting an item therefore re-runs
   the shifted tail — correct, since slots moved.
+- **2026-07-27 — heal text is persisted in `RunState.heal_texts`**, not held in
+  the Runner process. Why: the heal text (block reason + fenced findings) folds
+  into a target's `input_hash` (§9.4.6, §9.2), but a resumed process re-planned
+  the node WITHOUT it, so its hash differed and every healed node re-ran on the
+  next resume — silently, indistinguishable from an ordinary cache miss, at a
+  cost growing with run length. The spec does not say where heal text lives;
+  putting it in run state is what makes §9.2's "skipped when nothing changed"
+  true for healed nodes. Deliberately NOT cleared when the gate passes (unlike
+  `heal_baselines`): clearing it would change the hash of a result it helped
+  produce. Latest round wins. Same reasoning r6 C2 applied to whole-mailbox
+  steering; an r7 amendment should state both together. Pinned by
+  `tests/test_heal.py::test_healed_node_hash_is_stable_across_resume`.
 - **2026-07-25 — per-attempt artifacts are rotated**, not overwritten
   (`stdout-attempt1.log`, …): attempt 1's output was undiagnosable after the
   corrective attempt overwrote it. §10.1's `stdout.log`/`prompt.txt` names

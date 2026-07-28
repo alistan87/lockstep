@@ -169,7 +169,6 @@ class Engine:
         self._budget_guard = threading.Lock()
         self._snapshot_guard = threading.Lock()
         self.needs_check: set[str] = set()
-        self.heal_texts: dict[str, str] = {}
         self._gate_outcomes: list[_GateOutcome] = []
         self._outcomes_guard = threading.Lock()
         self.flags = {"budget": False, "gate_block": False, "approval_rejected": False}
@@ -301,7 +300,9 @@ class Engine:
             max_interp_chars=self.tg.max_interp_chars,
             config_digest=self.config.digest,
             executor_default=self.tg.executor_default or self.config.default,
-            heal_text=self.heal_texts.get(node.id, ""),
+            # From RunState, never process-local: a resume must re-plan the same
+            # prompt the healed spawn saw, or its hash changes and it re-runs.
+            heal_text=self.store.state.heal_texts.get(node.id, ""),
             # r6 C2: the WHOLE mailbox renders (consumed + new) so the hash is
             # reproducible on resume; a new message grows the block and
             # correctly invalidates. Re-built per plan, so map items at
@@ -862,7 +863,10 @@ class Engine:
         for nid in sorted(invalid):
             nrec = self._rec(nid)
             if nid in gate.heal.targets:
-                self.heal_texts[nid] = heal_text  # folds into the prompt AND the hash
+                # Folds into the prompt AND the hash, so it is persisted with the
+                # run state rather than held in this process (r7 candidate,
+                # ROADMAP-NOTES 2026-07-27).
+                self.store.mutate(lambda st, n=nid: st.heal_texts.__setitem__(n, heal_text))
             if nrec.status in ("done", "skipped", "failed", "blocked") or nid in gate.heal.targets:
                 nrec.status = "pending"
                 nrec.error = None

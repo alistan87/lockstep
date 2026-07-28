@@ -188,6 +188,28 @@ def test_heal_baseline_survives_resume(tmp_path, git_repo):
     assert load_state(h1.run_dir).heal_baselines == {}, "baseline cleared on gate pass"
 
 
+def test_healed_node_hash_is_stable_across_resume(tmp_path, git_repo):
+    # Heal text folds into the target's input_hash, so it lives in RunState, not
+    # in the Runner: a fresh process must re-plan the prompt the healed spawn
+    # actually saw. Same reasoning as r6 C2's whole-mailbox rendering.
+    # Session 1: the gate blocks once, `impl` heals, the gate passes. rollback is
+    # off to isolate hashing from restore.
+    from conftest import rebuild
+
+    f = heal_flow([BLOCK, PASS], rollback=False)
+    h1 = build(tmp_path, f, git_repo)
+    assert h1.engine.run() == 0
+    assert len(calls_of(h1, "impl")) == 2, "first attempt + one heal re-run"
+
+    # Session 2: fresh process, nothing changed on disk. The heal text is part of
+    # what produced `impl`'s stored result, so re-planning must reproduce it —
+    # otherwise a healed node is permanently uncacheable.
+    h2 = rebuild(tmp_path, f, git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert calls_of(h2, "impl") == [], "a healed node must not re-run on an unchanged resume"
+
+
 def test_missing_baseline_fails_closed(tmp_path, git_repo):
     # A rollback heal whose target hash-skipped (so no fresh snapshot fires)
     # and whose lineage has no persisted baseline must terminal-block — never
