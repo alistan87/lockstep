@@ -147,7 +147,9 @@ const RESULT_SCHEMA = CONTRACT_SCHEMAS[CONTRACT] ?? {
   description: "The exact JSON envelope for this node's contract.",
 };
 
-pi.registerTool({
+// Registered ONLY for Lockstep-driven sessions: an interactive session must
+// not grow a session-terminating tool (header promise: untouched without env).
+if (ACTIVE) pi.registerTool({
   name: "submit_result",
   description:
     "Submit this node's final result envelope and end the session. The content " +
