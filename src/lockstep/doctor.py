@@ -31,7 +31,10 @@ def _probe_once(
     for part in stanza.argv:
         if stanza.prompt_via == "stdin" and part == "{prompt}":
             continue
-        argv.append(part.replace("{prompt}", prompt))
+        # {phase_dir} expands here too: a stanza using e.g. `--session-dir
+        # {phase_dir}` (ADDENDUM-A A.3.4) must probe with a real dir, not the
+        # literal placeholder — doctor exists to catch flag drift, not add it.
+        argv.append(part.replace("{prompt}", prompt).replace("{phase_dir}", str(phase_dir)))
     argv += extra_argv
     if stanza.prompt_via == "stdin":
         stdin_text = prompt

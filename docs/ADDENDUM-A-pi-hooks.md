@@ -1,33 +1,62 @@
-> **Adopted as informative 2026-07-26, with the following reconciliation notes**
+> **Adopted as informative 2026-07-26, with the reconciliation notes below**
 > (the addendum was drafted against spec revision 3; this repo has since adopted
-> AMENDMENTS r4–r6):
+> AMENDMENTS r4–r6). **Revised in place 2026-07-31** after a three-lens
+> adversarial review (spec conformance, claims-vs-code, internal logic); the
+> original draft wording survives in git history.
 >
 > 1. **A.3.4 vs the live pi stanza:** the working `lockstep.toml` passes
 >    `--no-session` (keeps doctor probes out of pi's session store). Lineage
->    capture instead uses `--session-dir` pointed INTO the phase dir via the
->    `{phase_dir}` argv placeholder (added for this addendum; run-specific, so
->    excluded from `input_hash` like all run-specific paths).
+>    capture is an OPT-IN stanza variant: `--session-dir` pointed INTO the
+>    phase dir via the `{phase_dir}` argv placeholder (added for this addendum;
+>    run-specific, so excluded from `input_hash` — see the DEVIATIONS entry on
+>    template-vs-rendered argv hashing). The variant is sanctioned only on the
+>    condition that pi in print mode starts a FRESH session per spawn and never
+>    resumes from that dir — a property of pi, not of Lockstep, so verify it
+>    with `doctor` after any pi upgrade; if a pi version auto-resumes, point
+>    the flag at a per-attempt subdirectory instead (else a retried node
+>    inherits its own prior transcript — exactly note 4's contamination class).
 > 2. **`LOCKSTEP_WORKSPACE_SCOPE` source:** v1 nodes declare no write-scope
 >    field; the env var carries the resolved `spec.cwd` until an amendment adds
->    a dedicated scope field (r7 candidate, ROADMAP-NOTES).
+>    a dedicated scope field (r7 candidate, ROADMAP-NOTES). Caveat (A.1): `cwd`
+>    is a working directory, NOT a write boundary — a correct agent may
+>    legitimately write elsewhere in the repo. Scope enforcement is therefore
+>    per-flow opt-in: enable the extension's hard block only for flows whose
+>    nodes' legitimate writes really are confined to their `cwd`; anything else
+>    fails A.1's own deletion test by over-blocking a correct agent. Opt-in
+>    mechanism, until the r7 scope field exists: presence of the project-local
+>    extension (`.pi/extensions/`, versioned with the workspace — so
+>    A.4.4-reconstructible from the checkout; a global install is hidden state
+>    and does not qualify). That granularity is per-REPO, not truly per-flow —
+>    a repo whose flows are not uniformly cwd-confined must leave the hard
+>    block off.
 > 3. **Readonly via extension (SPEC §6.11):** an extension `tool_call` gate
 >    could be pi's readonly enforcement, but §6.11 requires argv-visible
 >    enforcement (`readonly_argv`). Reconciling the two is an r7 candidate;
 >    until then, readonly nodes on pi remain a verification error.
 > 4. **A.4.4 and re-run contamination:** "reconstructible from env + run dir"
->    must also honor the r6 lesson — extension artifacts in the phase dir are
->    write-only outputs, never inputs to a re-spawned node (prior-attempt
->    artifacts poisoned a live audit once; see the self-contamination fix).
+>    must also honor the re-run isolation lesson (implementation-level, pinned
+>    by tests; an r7 spec candidate — not r6 text): extension artifacts in the
+>    phase dir are write-only outputs, never inputs to a re-spawned node
+>    (prior-attempt artifacts poisoned a live audit once; see the
+>    self-contamination fix). The verdict file gets the same treatment one node
+>    downstream: it IS an input to the gate, so the driver rotates it per
+>    attempt (§A.3.3) — a gate must never read a stale block from a superseded
+>    attempt.
 >
-> Lockstep-side A.7 items 1/3/4/5 are implemented (env vars, verdict-file gate
-> convention + offline test, `{phase_dir}` substitution); item 2 is the
+> Lockstep-side A.7 items 1/3/5 are implemented (env identity incl.
+> `LOCKSTEP_CONTRACT`, verdict-file gate convention + per-attempt rotation +
+> offline tests, `{phase_dir}` substitution — honored by doctor probes too);
+> item 4 is realized as the opt-in `--session-dir` stanza variant of note 1,
+> not the post-run copy step the original draft described; item 2 is the
 > reference extension at `contrib/pi-extension/lockstep-guard.ts` (UNTESTED
-> against live pi). A.7.3 needed no driver code: a deterministic shell gate
-> reads the verdict file — the spec's preferred gate form.
+> against live pi; implements the path-scope half of A.3.1 — the
+> ActionType/ontology half is Mimir-side and not written). A.7.3 needed no
+> driver code: a deterministic shell gate reads the verdict file — the spec's
+> preferred gate form.
 
 # Lockstep Addendum A — Pi Extension Hooks Integration
 
-**Status:** Informative addendum. Does not modify the frozen Lockstep v1 spec (`lockstep-spec.md`, revision 3). Nothing here changes the taskgraph format, CLI contract, exit codes, or phase lifecycle. This addendum records how Pi coding-agent extension hooks relate to Lockstep and to Mimir's interactive sessions, and constrains how extensions may be used so that harness replaceability is preserved.
+**Status:** Informative addendum: it does not amend the frozen Lockstep v1 spec (`docs/SPEC.md`, revision 3, as amended by AMENDMENTS r4–r6), and `lockstep verify` enforces none of it. Nothing here changes the taskgraph format, CLI contract, exit codes, or phase lifecycle; the driver-side support it motivated (the `{phase_dir}` argv placeholder, node-identity env vars) is additive executor-config and spawn-environment surface, logged in the preamble. Within its scope this document is a binding working agreement for ALL Lockstep-driven nodes on the `pi` executor — not only Mimir flows — and for Mimir's interactive sessions: it records how Pi coding-agent extension hooks relate to Lockstep and constrains how extensions may be used so that harness replaceability is preserved.
 
 **Applies to:** Lockstep harness nodes executed via the `pi` executor, and interactive Mimir sessions run in Pi outside Lockstep entirely.
 
@@ -43,11 +72,11 @@ Lockstep and Pi extensions operate at different layers and must not blur:
 | Inner harness session | Pi extension hooks | In-session enforcement, structured output shaping, trace capture |
 | Interactive investigation | Pi extension hooks | Working-set tracking, graph widgets, traversal-as-tool-discovery, dialogs — no Lockstep in the loop |
 
-**Governing principle (normative for Mimir usage): extensions may only *enforce*, never *enable*.**
+**Governing principle (binding for every Lockstep-driven `pi` node — see Status): extensions may only *enforce*, never *enable*.**
 
 Test: if deleting a Pi extension changes what a *correctly behaving* agent can accomplish — not merely what a misbehaving one can get away with — the extension has become load-bearing and violates the Lockstep principle that harnesses are replaceable config, not dependencies. A taskgraph must produce equivalent results on `pi`, Claude Code, or Copilot CLI executors; extensions may only make failure faster and conformance easier on `pi`.
 
-Corollary: all control flow stays in Lockstep. Extensions never retry, never dispatch, never approve, never decide.
+Corollary: all control flow stays in Lockstep. Extensions never retry, never dispatch, never approve, never decide — and in headless runs they never reshape what the model sees or can call (§A.4.1).
 
 ---
 
@@ -76,14 +105,14 @@ Four uses are sanctioned for `pi` executor nodes. All four satisfy the enforce-n
 
 ### A.3.1 Defense-in-depth manifest gate
 
-Lockstep's existing enforcement is post-hoc: output contract validation, tree fingerprint comparison, gate phases. A `tool_call` hook adds in-session, pre-damage enforcement:
+Lockstep's existing enforcement is post-hoc: output contract validation, gate phases, and heal rollback (SPEC §9.4). (The tree fingerprint, §9.2, is NOT part of this net: it detects external edits at the lineage head on resume — every completed node legitimately changes it, and v1 has no write-scope field at all, per preamble note 2.) A `tool_call` hook adds in-session, pre-damage enforcement:
 
-- Block `write`/`edit`/`bash` targeting paths outside the node's declared workspace scope.
+- Block `write`/`edit`/`bash` targeting paths outside the node's declared workspace scope — subject to preamble note 2's caveat: until a real scope field exists this is per-flow opt-in, because `cwd` is not a write boundary and hard-blocking outside it can over-block a correct agent (an A.1 violation).
 - Block direct writes to ontology files that bypass registered ActionType tools (Mimir's Actions-as-sole-write-path invariant).
 
-Effect: the failure class that the tree fingerprint catches after the fact is caught before the damage lands, and a heal round is never triggered. Lockstep remains the source of truth; the extension only fails faster.
+Effect: an out-of-scope write is refused before the damage lands, instead of surfacing later — if at all — through failed contracts or gate checks. Whether the node then fails is governed by the verdict-file gate policy (§A.3.3), not by luck. Lockstep remains the source of truth; the extension only fails faster.
 
-**Manifest selection:** the executor argv template in `lockstep.toml` passes node identity into the session environment (e.g. `LOCKSTEP_NODE_ID`, `LOCKSTEP_ROLE`, `LOCKSTEP_WORKSPACE_SCOPE`). Pi's bash tool already exposes session env to spawned commands; the extension reads these at `session_start` to select the manifest. A node run on a non-`pi` executor simply lacks this layer and relies on Lockstep's post-hoc checks — which is the acceptable degradation mode.
+**Manifest selection:** the driver exports node identity into the session environment of every spawned node — `LOCKSTEP_NODE_ID`, `LOCKSTEP_ROLE`, `LOCKSTEP_WORKSPACE_SCOPE`, `LOCKSTEP_VERDICT_FILE`, `LOCKSTEP_PHASE_DIR`, `LOCKSTEP_CONTRACT` (driver code, uniform across executors; the argv template plays no part). Pi's bash tool already exposes session env to spawned commands; the extension reads these at load to select the manifest. A node run on a non-`pi` executor simply lacks this layer: out-of-scope writes there are caught only indirectly (contracts, gates) or not at all — acceptable, because the layer (with note 2's opt-in discipline observed) only ever removes damage a MISBEHAVING agent could do, never capability a correct one needs.
 
 ### A.3.2 Structured output at the terminate boundary
 
@@ -95,34 +124,50 @@ Register a `submit_result` tool whose parameter schema **is** the node's output 
 
 On non-`pi` executors, the persona prompt instructs the model to emit the same JSON envelope to stdout/file — same contract, no schema-enforced assist.
 
+**Schema selection:** the extension learns the node's envelope from `LOCKSTEP_CONTRACT` and resolves built-in contract names (`contracts.py`) against schemas it ships; an unknown or absent name degrades to a permissive object schema — degradation by design, never substitution. (One residual: a KNOWN name resolved against a stale shipped schema — the extension lagging `contracts.py` — is still a wrong schema. Harmless in outcome, because Lockstep's independent validation catches it with a corrective re-spawn, but keep the shipped schemas in sync.) Schema distribution for non-built-in envelopes is unspecified here (a Mimir-side concern). Readonly nodes: currently moot on pi (preamble note 3 — verification error); when r7 reconciles readonly-on-pi, note that `submit_result` writes the result file into the phase dir (the §8.3 result channel, not the workspace) while `FOOTER_READONLY` assumes the stdout channel — that collision must be resolved then, not papered over.
+
 ### A.3.3 Deterministic BLOCK signaling
 
-When the `tool_call` hook blocks a call, the extension writes a structured verdict record to a file in the run dir (path supplied via env, e.g. `LOCKSTEP_VERDICT_FILE`) rather than relying on the model to self-report its failure.
+When the `tool_call` hook blocks a call, the extension writes a structured verdict record to a per-node file in that node's phase dir (path supplied via env: `LOCKSTEP_VERDICT_FILE`) rather than relying on the model to self-report its failure.
 
 - Lockstep's gate phase reads a machine-parseable BLOCK verdict instead of inferring failure from mangled model output.
 - This closes the "heal firing on malformed verdicts" defect class (spec revision history) from a second direction: the verdict originates from deterministic code, not model prose.
-- Format: one JSON object per line — `{ ts, node_id, tool, reason, input_digest }`.
+- Format: one JSON object per line — `{ ts, node_id, tool, reason, input_digest }`. The file is per-node (parallel nodes and map items never share a writer); `node_id` is defensive provenance for later cross-run aggregation, not a filtering key.
+- **Lifecycle:** the driver rotates `verdicts.jsonl` with the other per-attempt artifacts before every re-spawn — auto-retry, corrective, heal re-run, resume: every path re-invokes the executor, and rotation runs at the top of `execute` — so a gate reads only the FINAL attempt's in-session blocks; an agent that was blocked, then succeeded on a clean retry, is not failed by its own superseded attempt. Rotation is best-effort per r5 A4 (it never blocks a spawn); a failed rename fails CLOSED — a stale block can cause a false gate block, never a silent pass.
+- **Degradation and strictness:** on non-`pi` executors no verdict file exists; a verdict-file gate's absent-file branch is therefore `pass` (the gate detects in-session blocks, it does not require them). A crashed or never-loaded extension degrades `pi` to this same baseline — silently; Lockstep's post-hoc checks still hold. (Making that state observable would need a non-block record kind; the current format has none, and a gate must treat every record as a block.) Composed with §A.3.1 this means an agent blocked and self-corrected within one attempt fails the gate on `pi` but passes elsewhere. The divergence is deliberate and A.1-clean — it penalizes only misbehaving agents — but it IS a policy choice: flows preferring forgiveness can gate on final output alone and keep the verdict file as forensics.
 
 ### A.3.4 Audit lineage capture
 
-Pi persists each session as a JSONL file. The `pi` executor configuration (or a post-node step) copies the session file into the run dir alongside `events.jsonl`.
+Pi persists each session as a JSONL file. The opt-in `pi` stanza variant points pi's session store into the node's phase dir (`"--session-dir", "{phase_dir}"`; the committed stanzas ship `--no-session` — see preamble note 1, including the fresh-session-per-spawn condition), so the transcript lands in the run dir with the node's other artifacts. There is no copy step. (The driver's per-attempt rotation, §A.3.3, does not reach into the session store's subtree — pi owns its layout — which is why note 1's fallback for an auto-resuming pi is a per-attempt subdirectory, not rotation.)
 
 - Yields a complete tool-call-level trace per harness node, deeper than `events.jsonl` alone.
 - In Mimir terms: each `ActionRun` node can reference its session transcript as provenance, giving audit lineage down to individual tool calls.
+- Transcripts are provenance for humans and post-hoc audit ONLY. Interpolating a session transcript as an input to another node would make the `pi` executor load-bearing (the artifact does not exist on other executors) — prohibited under A.1.
 
 ---
 
 ## A.4 Prohibited / constrained patterns
 
-### A.4.1 No Lens rendering in `before_agent_start` for Lockstep-driven nodes
+### A.4.1 No context or capability divergence in Lockstep-driven nodes
 
 Personas are portable markdown precisely so the same taskgraph works across `pi`, Claude Code, and Copilot CLI. If Lens/subgraph rendering happens inside a Pi hook, the same node produces different context on different harnesses — a silent portability break.
 
-**Rule:** Lens rendering (NodeSelector output, scoped subgraph slices, permitted ActionType listings) belongs in Lockstep's interpolation layer — data rendered into the prompt before spawn. Hooks do enforcement only. (Interactive sessions outside Lockstep are exempt; see §A.6.)
+**Rule:** Lens rendering (NodeSelector output, scoped subgraph slices, permitted ActionType listings) belongs in Lockstep's interpolation layer — data rendered into the prompt before spawn. Hooks do enforcement only. (Interactive sessions outside Lockstep are exempt; see §A.5.)
+
+**The rule covers every context- and capability-shaping channel in §A.2's inventory, not just `before_agent_start`.** In headless Lockstep-driven nodes, hooks must not:
+
+- mutate `event.input` in `tool_call` — blocking is the ONLY sanctioned intervention; a mutated call silently rewrites what the agent did;
+- modify results in `tool_result` — covert context injection into everything the model reads back;
+- filter or rewrite the message list in `context`, or transform `input` — the prompt Lockstep hashed into `input_hash` is no longer the prompt the model saw, a divergence invisible to every post-hoc check;
+- activate tools dynamically (`pi.setActiveTools()`) — tools materializing on `pi` that no other executor has is the purest possible "enable"; traversal-as-tool-discovery is interactive-only (§A.5);
+- customize compaction (`session_before_compact` / `session_compact`) — a custom summary rewrites the message list mid-session, the same divergence class as `context`; compaction pinning is interactive-only (§A.5);
+- inject messages or replace the system prompt in `before_agent_start` — the Lens case above is one instance of this, not the whole of it.
+
+These bullets name the channels known in §A.2 — they illustrate the rule, they do not bound it: any hook, present or future, that shapes context or the toolset falls under it. Two boundaries: tool registration at load per §A.3.2 is exempt (the capability it shapes — emitting the envelope — exists on every executor; only the ergonomics differ), and block-and-record (§A.3.3) is the one sanctioned MID-SESSION intervention.
 
 ### A.4.2 No approvals inside headless sessions
 
-Lockstep spawns Pi in print mode, where `ctx.hasUI` is false. Any hook that attempts `ctx.ui.confirm()` / `select()` / `input()` will no-op or fail.
+Lockstep spawns Pi in print mode, where `ctx.hasUI` is false. Any hook that attempts `ctx.ui.confirm()` / `select()` / `input()` will no-op or fail — which of the two is pi-version-dependent, and a compliant hook never finds out: it branches on `ctx.hasUI` before any UI call (§A.5).
 
 **Rule:** in headless runs, hooks auto-block and record (§A.3.3); they never ask. Approvals remain exclusively a Lockstep phase (exit code 6 semantics unchanged).
 
@@ -164,8 +209,8 @@ These may share code with the headless extension (same manifest logic, same work
 
 ## A.7 Suggested v1.x work items (non-blocking)
 
-1. `pi` executor template in `lockstep.toml.example` passing `LOCKSTEP_NODE_ID` / `LOCKSTEP_ROLE` / `LOCKSTEP_WORKSPACE_SCOPE` / `LOCKSTEP_VERDICT_FILE` env vars.
-2. `~100`-line reference extension: `session_start` manifest load → `tool_call` scope/ActionType gate → verdict file writer → `submit_result` structured-output tool. Single file, branches on `ctx.hasUI` for interactive reuse.
-3. Gate-phase reader for the verdict file format (§A.3.3) — additive, no exit-code changes.
-4. Session-JSONL capture step in the `pi` executor post-run hook (§A.3.4).
-5. Offline test: FakeExecutor variant that emits a verdict file, proving the gate path without a model.
+1. Node-identity env on every spawn: `LOCKSTEP_NODE_ID` / `LOCKSTEP_ROLE` / `LOCKSTEP_WORKSPACE_SCOPE` / `LOCKSTEP_VERDICT_FILE` / `LOCKSTEP_PHASE_DIR` / `LOCKSTEP_CONTRACT` — exported by shared driver code for every spawned process (shell and harness spawns alike; the fake test double spawns nothing); the `lockstep.toml.example` pi stanza documents them. *(Done.)*
+2. `~100`-line reference extension: env identity at load → `tool_call` path-scope gate → verdict file writer → contract-keyed `submit_result` structured-output tool. Single file, branches on `ctx.hasUI` for interactive reuse. *(Written — `contrib/pi-extension/lockstep-guard.ts`, UNTESTED against live pi; the ActionType half of A.3.1 is not included.)*
+3. Gate-phase reader for the verdict file format (§A.3.3) — realized as a deterministic shell gate: no driver changes, no exit-code changes, offline-tested. *(Done.)*
+4. Session-JSONL capture for the `pi` executor — realized as the opt-in `--session-dir {phase_dir}` stanza variant (§A.3.4, preamble note 1), not a post-run copy hook. *(Done, opt-in.)*
+5. Offline test: FakeExecutor variant that emits a verdict file, proving the gate path without a model. *(Done — plus per-attempt verdict rotation tests.)*

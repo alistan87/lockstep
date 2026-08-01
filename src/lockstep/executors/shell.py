@@ -22,13 +22,16 @@ def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
     """Node identity for the spawned session (ADDENDUM-A A.3.1 / A.7.1): lets
     an in-harness enforcement layer (e.g. a pi extension) select its manifest
     and write deterministic verdicts — enforce, never enable. WORKSPACE_SCOPE
-    carries the resolved cwd until a dedicated scope field exists (r7)."""
+    carries the resolved cwd until a dedicated scope field exists (r7).
+    CONTRACT names the node's output contract (A.3.2) so an extension can
+    offer the matching submit_result schema; empty when the node has none."""
     return {
         "LOCKSTEP_PHASE_DIR": str(phase_dir.resolve()),
         "LOCKSTEP_NODE_ID": str(work.meta.get("node_id", "")),
         "LOCKSTEP_ROLE": str(work.meta.get("role", "")),
         "LOCKSTEP_WORKSPACE_SCOPE": str(work.meta.get("cwd", "")),
         "LOCKSTEP_VERDICT_FILE": str((phase_dir / "verdicts.jsonl").resolve()),
+        "LOCKSTEP_CONTRACT": str(work.meta.get("contract", "")),
     }
 
 
@@ -81,7 +84,8 @@ class ShellExecutor:
             fingerprint_parts=[f"argv:{json.dumps(argv, ensure_ascii=False)}"],
             costs_tokens=False,
             exclusive=[],
-            meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role},
+            meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role,
+                  "contract": node.contract or ""},
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
@@ -89,8 +93,12 @@ class ShellExecutor:
         stdout_path = phase_dir / "stdout.log"
         stderr_path = phase_dir / "stderr.log"
         # r5 A4: rotate prior-attempt logs (best-effort) — shell retries were
-        # overwriting the evidence, unlike harness attempts.
-        for p in (stdout_path, stderr_path):
+        # overwriting the evidence, unlike harness attempts. verdicts.jsonl and
+        # the result files rotate for the same reasons as in harness.py: gate
+        # staleness (A.3.3) and the driver-persisted result.json shadowing the
+        # §8.3 file-first channel on re-execution.
+        for p in (stdout_path, stderr_path, phase_dir / "verdicts.jsonl",
+                  phase_dir / "result.json", phase_dir / "result.txt"):
             if p.exists():
                 n = 1
                 while (phase_dir / f"{p.stem}-attempt{n}{p.suffix}").exists():

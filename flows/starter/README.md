@@ -1,0 +1,148 @@
+# Starter taskgraphs
+
+Portable, generic flows for driving an end-to-end software development life
+cycle with lockstep, plus a smoke flow that live-verifies the pi extension on
+a new machine. Copy this directory (and `personas/`) into any git repo where
+lockstep is installed; everything here uses the config-default executor unless
+noted.
+
+All seven flows pass `lockstep verify` and are meant as **templates** — edit
+prompts, check commands, and budgets to fit the target repo, then re-verify.
+
+## The flows
+
+| Flow | Spends tokens | What it does |
+|---|---|---|
+| `pi-guard-smoke.tg.json` | ~2 spawns | Live-verifies the pi extension (ADDENDUM-A): env identity reaches the session, the `tool_call` scope guard blocks an out-of-scope write and records a verdict, `LOCKSTEP_CONTRACT` drives structured output. PASS = guard live. BLOCK = extension missing/drifted (lockstep still safe — you only lose the fast-fail layer). |
+| `plan-adversarial.tg.json` | up to ~12 | Author writes `PLAN.md` → two adversarial reviewers (feasibility/risk, completeness/scope) → arbiter gate **heals** the plan (≤2 rounds, findings folded into the author's re-prompt) → **human approval**. |
+| `implement-heal.tg.json` | up to ~15 | Implementer works the task (follows `PLAN.md` if present) → deterministic **lint+pytest shell gate heals** the implementer (≤2 rounds, failure output in the re-prompt) → adversarial diff review → deterministic gate blocks on blocker/major findings (no auto-heal: a human fixes/decides, then `resume`). |
+| `sdlc-e2e.tg.json` | up to ~30 | The full chain: plan → adversarial plan review → healing plan gate → **approval** → implement → healing lint+pytest gate → adversarial diff review → block-on-major gate → closing report. |
+| `file-audit.tg.json` | 1/file + arbiter | **Map fan-out**: lists files matching `--arg glob=` as `path\|content-fingerprint` entries (per-item caching invalidates on content change, not just path); one readonly auditor per file (`concurrency: 4`); arbiter gate blocks on upheld blockers. `--arg focus=` steers the lens; `--arg max_files=` caps fan-out (default 40, truncation recorded in the manifest notes). |
+| `proposal-gate.tg.json` | up to ~12 | Review gates for a **human-owned** proposal/design doc (`--arg file=`): deterministic required-sections shell gate (`--arg sections=`, default `Goal, Approach, Risks, Test plan`) → completeness + ambiguity/testability reviewers → arbiter Verdict. No heal by design: a block returns findings to the author, who revises and `resume`s. |
+| `bugfix-heal.tg.json` | up to ~15 | Diagnose → fix → verify: diagnostician pins root cause from `--arg bug=` + `--arg repro=` (a command); fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); adversarial diff review → block-on-major gate. |
+
+## Running them
+
+```powershell
+lockstep verify flows\starter\sdlc-e2e.tg.json          # exit 5 on schema errors
+lockstep run    flows\starter\sdlc-e2e.tg.json --dry-run --arg "task=..."   # show waves, spawn nothing
+
+lockstep run flows\starter\pi-guard-smoke.tg.json
+lockstep run flows\starter\plan-adversarial.tg.json --arg "task=Add CSV export to the report module"
+lockstep run flows\starter\implement-heal.tg.json  --arg "task=Add CSV export to the report module"
+lockstep run flows\starter\sdlc-e2e.tg.json        --arg "task=Add CSV export to the report module"
+lockstep run flows\starter\file-audit.tg.json      --arg "glob=docs/*.md" --arg "focus=stale claims vs the code"
+lockstep run flows\starter\proposal-gate.tg.json   --arg "file=proposals/q3-pipeline.md"
+lockstep run flows\starter\bugfix-heal.tg.json     --arg "bug=export drops the last row" --arg "repro=python -m pytest tests/test_export.py -q"
+
+lockstep status runs\<run-dir>            # live per-node progress
+lockstep steer  runs\<run-dir> impl "prefer the streaming writer"   # consumed at next checkpoint
+lockstep resume runs\<run-dir>            # continue after a block / crash / provider limit
+```
+
+Typical `implement-heal` outcomes: exit `0` (all gates passed) or exit `2`
+(`review-gate` blocked — read the gate's verdict in the run dir, fix or decide,
+then `resume`). Exit `6` (approval rejected) can only come from the flows with
+an approval node: `plan-adversarial` and `sdlc-e2e`.
+
+## Prerequisites
+
+- **A git repo.** The healing gates use `rollback` (the default), which
+  requires a git-managed workspace — `verify` only warns, but `run` refuses
+  with exit 7 otherwise.
+- **`lockstep.toml`** with a working executor stanza (`lockstep doctor` green).
+- **Personas**: `planner`, `implementer`, `reviewer`, `arbiter` from
+  `personas/` — copy that directory alongside `flows/`.
+- **`python` on PATH** for the shell gate scripts; `ruff` is optional (the
+  checks gate lints only if `ruff` is found, and always runs
+  `python -m pytest`). Swap the `checks` node's `cmd` for your repo's real
+  check commands — it just has to print a `Verdict` JSON object.
+
+## Portability notes (work-laptop / pi specifics)
+
+- **No `readonly: true` except in `file-audit`, deliberately.** Readonly
+  harness nodes require the executor stanza to declare `readonly_argv`, and a
+  typical `pi` stanza has none — flows using it would fail `verify` there.
+  Cost: the two reviewers in `plan-adversarial` (and likewise in
+  `proposal-gate`) share the `tree` exclusion and serialize (the
+  `exclusive-collision` warning is expected). If your stanza declares
+  `readonly_argv`, add `"readonly": true` to reviewer/arbiter/report nodes to
+  parallelize them and enforce read-only at the argv level.
+- **`pi-guard-smoke` assumptions**: the extension is installed project-locally
+  at `.pi/extensions/lockstep-guard.ts`; the flow lives under `flows/` of the
+  target repo (`scope-probe` narrows `spec.cwd` to `flows` and tries to write
+  `../pi-guard-escape.tmp` — adjust `cwd` if your layout differs). The
+  `guard-gate` itself removes the escape file after checking, so a failed
+  smoke never poisons later runs. **Re-probe with `run --fresh`** after
+  installing or fixing the extension: extension presence is invisible to
+  `input_hash`, so a plain re-run attaches to the old lineage and skips the
+  probe. Session-capture (`--session-dir {phase_dir}`) is a separate,
+  stanza-level opt-in — verify fresh-session-per-spawn behavior first
+  (ADDENDUM-A preamble note 1); this flow does not test it.
+- **Approvals need a TTY.** `approve-plan` auto-rejects (exit 6) on non-TTY
+  stdin — run `plan-adversarial` and `sdlc-e2e` interactively (WezTerm is
+  fine; it is the parent terminal, not part of the loop), or delete the
+  approval node for unattended runs.
+
+## Things to know before the first real run
+
+- **Set budgets and retries before the first run.** Editing a flow file later
+  changes `flow_hash` and starts a new lineage — every completed node re-runs
+  (and re-bills). Harness nodes here inherit the default
+  `retry: {max: 2, backoff_ms: 60000}`, which absorbs provider 429/529s.
+- **`budget.max_agent_spawns` counts heal rounds and corrective re-spawns** —
+  the numbers above leave headroom; tighten them once you know your repo.
+- **Everything is inspectable.** Each node's phase dir under `runs/<run>/`
+  holds the rendered prompt, argv, stdout/stderr, result, per-attempt
+  rotations, and (on pi with the extension) `verdicts.jsonl`; HEALING gates
+  additionally preserve each rolled-back attempt as `attempt-N.patch`
+  (terminal blocks leave no patch — nothing was rolled back). `runs/` is
+  sensitive — keep it gitignored.
+- **Chaining**: `plan-adversarial` then `implement-heal` with the same
+  `--arg task=` is the two-stage version of `sdlc-e2e` — useful when you want
+  a long gap (or a different day) between plan approval and implementation.
+- **`file-audit` and readonly**: unlike the other flows, its map node sets
+  `readonly: true` (parallel fan-out is the point). It therefore requires an
+  executor stanza with `readonly_argv`; on bare pi, remove `"readonly": true`
+  from the `audit` and `arbiter` nodes and accept serialized audits.
+- **`bugfix-heal` repro quoting**: the repro command is split with
+  `shlex.split` (Windows-aware: backslash paths survive, surrounding quotes
+  are stripped) — simple commands (`python -m pytest tests\test_x.py -q`)
+  work as-is; avoid shell operators (`&&`, `|`, redirects), which it will not
+  interpret. An unrunnable command (typo, missing binary) FAILS the gate as a
+  config error instead of burning heal rounds on the fixer; a hang is treated
+  as a genuine block after 600 s.
+- **`file-audit` scope**: only git-TRACKED files are listed (`git ls-files`) —
+  commit or `git add -N` new files first; and `fnmatch` patterns let `*`
+  cross `/` (`docs/*.md` also matches `docs/sub/x.md`), unlike shell globs.
+  Inserting or deleting a file shifts later items' indices and re-runs them
+  (per-item hashes couple to array position) — cost only, results stay
+  correct.
+- **`checks` gates assume a green baseline**: they run the FULL suite, so
+  pre-existing red tests will heal the innocent implementer and then block —
+  start from a passing suite, and prefer pinning `cmd` to your venv's
+  interpreter/linters (the script already uses its own interpreter for
+  pytest, but `ruff` resolves from PATH).
+- **Large-interpolation flows on Windows argv stanzas**: `plan-adversarial`,
+  `proposal-gate`, `sdlc-e2e`, and especially `file-audit` raise
+  `max_interp_chars`, and Windows caps a command line at ~32k chars — with a
+  `prompt_via = "argv"` stanza, aggregate findings between ~32k and the cap
+  fail to spawn (exit 127). If you hit that, switch the stanza to
+  `prompt_via = "stdin"` (config-only) or lower `max_interp_chars` so big
+  values spill to files instead.
+
+## More templates worth building (not included yet)
+
+- **release-readiness** — all-shell checklist gate: tests, build, changelog
+  entry present, version consistency; one reviewer for the release notes.
+- **context-freshness** — `file-audit` specialized for a docs corpus: map over
+  `docs/**/*.md`, focus "claims contradicted by the current code/data",
+  scheduled weekly; per-item caching means only changed files re-audit.
+- **data-reconciliation factory** — the analytics pattern: shell extract →
+  map analyst per segment → deterministic reconcile gate → report assembler →
+  approval before publish.
+- **migration sweep** — list call sites via grep (shell) → map a fixer per
+  file (worktree-style isolation via small batches) → checks gate per batch.
+- **coverage-gap audit** — shell node emits coverage JSON → reviewer proposes
+  the N highest-value missing tests as Finding[] → implement-heal on the
+  accepted ones.

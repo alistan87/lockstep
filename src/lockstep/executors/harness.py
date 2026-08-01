@@ -253,14 +253,23 @@ class HarnessExecutor:
                 "cwd": str(cwd),
                 "node_id": node.id,
                 "role": node.role,
+                "contract": node.contract or "",
             },
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
         prompt = str(work.render)
         # Preserve prior-attempt artifacts (auto-retries, corrective re-spawns):
-        # losing attempt 1's output makes failures undiagnosable.
-        for name in ("prompt.txt", "argv.json", "stdout.log", "stderr.log"):
+        # losing attempt 1's output makes failures undiagnosable. verdicts.jsonl
+        # rotates too (ADDENDUM-A A.3.3): the verdict-file gate must read only
+        # the FINAL attempt's in-session blocks — a stale block record from a
+        # retried attempt must not fail a node that succeeded on retry. The
+        # result files rotate for the same reason: the driver persists the
+        # validated result to this very path (store.write_result), and the §8.3
+        # file-first channel must never hand a re-execution its own previous
+        # answer (a blocked shell gate would otherwise re-block forever).
+        for name in ("prompt.txt", "argv.json", "stdout.log", "stderr.log",
+                     "verdicts.jsonl", "result.json", "result.txt"):
             p = phase_dir / name
             if p.exists():
                 n = 1

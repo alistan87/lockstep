@@ -59,4 +59,20 @@ file records implementation-level departures below that bar.
 - **2026-07-25 — per-attempt artifacts are rotated**, not overwritten
   (`stdout-attempt1.log`, …): attempt 1's output was undiagnosable after the
   corrective attempt overwrote it. §10.1's `stdout.log`/`prompt.txt` names
-  still hold the latest attempt.
+  still hold the latest attempt. *(2026-07-31: `verdicts.jsonl` joined the
+  rotation set — unlike the logs it is a GATE INPUT (ADDENDUM-A §A.3.3), so a
+  stale block record from a superseded attempt would fail a node that
+  succeeded on retry.)* *(2026-08-01: `result.json`/`result.txt` joined too —
+  the driver persists the validated result to the SAME path the executors read
+  as the §8.3 file-first channel, so without rotation every re-execution
+  (retry, heal round, resume of a blocked gate) returned its own previous
+  answer: a blocked shell gate could never pass again. Found by the
+  starter-flow adversarial review; pinned by `tests/test_result_rotation.py`.)*
+- **2026-07-31 — the harness fingerprint hashes the argv TEMPLATE, not §9.2's
+  "rendered argv"**: `{prompt}` stays intact (the prompt is hashed separately;
+  expansion would double-embed it) and `{phase_dir}` stays intact (run-specific
+  path — §7's spill-stub exclusion rule, generalized). §0.1.4 invalidation
+  still holds: template/flag edits change the hashed template, and r5 B1's
+  stanza digest covers the rest. Long-standing behavior; recorded here (rather
+  than only in code comments and ADDENDUM-A's preamble) after the 2026-07-31
+  addendum audit. An r7 amendment should restate §9.2's fingerprint part list.

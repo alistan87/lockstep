@@ -1,7 +1,9 @@
 /**
  * lockstep-guard — reference Pi extension for Lockstep harness nodes.
- * Implements ADDENDUM-A §A.7.2: manifest gate (A.3.1), deterministic BLOCK
- * verdicts (A.3.3), and a structured-output submit_result tool (A.3.2).
+ * Implements ADDENDUM-A §A.7.2: path-scope gate (A.3.1 — the ActionType/
+ * ontology half of A.3.1 is NOT implemented here), deterministic BLOCK
+ * verdicts (A.3.3), and a structured-output submit_result tool (A.3.2)
+ * whose schema is selected by LOCKSTEP_CONTRACT.
  *
  * STATUS: UNTESTED against a live pi install — written to the hook surface
  * documented in docs/ADDENDUM-A-pi-hooks.md §A.2. Verify against your pi
@@ -37,6 +39,7 @@ const ROLE = process.env.LOCKSTEP_ROLE ?? "";
 const SCOPE = process.env.LOCKSTEP_WORKSPACE_SCOPE ?? "";
 const VERDICT_FILE = process.env.LOCKSTEP_VERDICT_FILE ?? "";
 const PHASE_DIR = process.env.LOCKSTEP_PHASE_DIR ?? "";
+const CONTRACT = process.env.LOCKSTEP_CONTRACT ?? "";
 const ACTIVE = NODE_ID !== "";
 
 const WRITE_TOOLS = new Set(["write", "edit", "bash"]);
@@ -46,7 +49,8 @@ function digest(input: unknown): string {
 }
 
 /** A.3.3: verdicts come from deterministic code, never model prose.
- *  A.4.4 + r6 contamination rule: this file is WRITE-ONLY — never read back. */
+ *  A.4.4 + the re-run isolation rule (ADDENDUM-A preamble note 4): this file
+ *  is WRITE-ONLY — never read back. */
 function recordVerdict(tool: string, reason: string, input: unknown): void {
   if (!VERDICT_FILE) return;
   const line = JSON.stringify({
@@ -62,6 +66,13 @@ function recordVerdict(tool: string, reason: string, input: unknown): void {
 function insideScope(target: string): boolean {
   if (!SCOPE) return true; // no declared scope => Lockstep's post-hoc checks own it
   const resolved = path.resolve(String(target));
+  // The node's phase dir is the sanctioned result channel (SPEC §8.3): writes
+  // there are result delivery, not workspace mutation — blocking them would
+  // break the driver's own footer contract for scope-narrowed nodes.
+  if (PHASE_DIR) {
+    const pd = path.resolve(PHASE_DIR);
+    if (resolved === pd || resolved.startsWith(pd + path.sep)) return true;
+  }
   const scope = path.resolve(SCOPE);
   return resolved === scope || resolved.startsWith(scope + path.sep);
 }
@@ -95,10 +106,46 @@ pi.on("tool_call", async (event: ToolCallEvent, ctx: any) => {
 });
 
 // --- A.3.2: structured output at the terminate boundary ----------------------
-// The schema mirrors contracts.py Verdict as an example envelope; swap the
-// parameters block for the node's actual contract. Lockstep validates the
-// result independently either way — this only makes conformance the path of
-// least resistance.
+// Schemas mirror the built-in contracts in contracts.py, selected by the
+// LOCKSTEP_CONTRACT env var. An unknown (or absent) contract name degrades to
+// the permissive object schema — never to a WRONG schema, which would let the
+// extension "enable" a divergent envelope. Lockstep validates the result
+// independently either way — this only makes conformance the path of least
+// resistance.
+
+const FINDING_SCHEMA = {
+  type: "object",
+  properties: {
+    schema_version: { type: "string" },
+    severity: { enum: ["blocker", "major", "minor", "nit"] },
+    category: { type: "string" },
+    file: { type: "string" },
+    line: { type: ["integer", "null"] },
+    claim: { type: "string" },
+    evidence: { type: "string" },
+    fix_hint: { type: "string" },
+  },
+  required: ["severity", "category", "file", "claim", "evidence"],
+};
+
+const CONTRACT_SCHEMAS: Record<string, object> = {
+  Finding: FINDING_SCHEMA,
+  Verdict: {
+    type: "object",
+    properties: {
+      schema_version: { type: "string" },
+      findings: { type: "array", items: FINDING_SCHEMA },
+      verdict: { enum: ["pass", "block"] },
+      reason: { type: "string" },
+    },
+    required: ["findings", "verdict", "reason"],
+  },
+};
+
+const RESULT_SCHEMA = CONTRACT_SCHEMAS[CONTRACT] ?? {
+  type: "object",
+  description: "The exact JSON envelope for this node's contract.",
+};
 
 pi.registerTool({
   name: "submit_result",
@@ -108,7 +155,7 @@ pi.registerTool({
   parameters: {
     type: "object",
     properties: {
-      result: { type: "object", description: "The exact JSON envelope for this node's contract." },
+      result: RESULT_SCHEMA,
     },
     required: ["result"],
   },

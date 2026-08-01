@@ -14,7 +14,7 @@ from conftest import PY, build, make_config
 PRINT_ENV = (
     "import os, json; print(json.dumps({k: os.environ.get(k, '') for k in ("
     "'LOCKSTEP_NODE_ID', 'LOCKSTEP_ROLE', 'LOCKSTEP_WORKSPACE_SCOPE', "
-    "'LOCKSTEP_VERDICT_FILE', 'LOCKSTEP_PHASE_DIR')}))"
+    "'LOCKSTEP_VERDICT_FILE', 'LOCKSTEP_PHASE_DIR', 'LOCKSTEP_CONTRACT')}))"
 )
 
 
@@ -34,6 +34,99 @@ def test_node_identity_env_vars(tmp_path, git_repo):
     assert env["LOCKSTEP_WORKSPACE_SCOPE"].endswith("repo")  # resolved spec.cwd
     assert env["LOCKSTEP_VERDICT_FILE"].endswith("verdicts.jsonl")
     assert env["LOCKSTEP_PHASE_DIR"]
+    assert env["LOCKSTEP_CONTRACT"] == ""  # no contract on this node
+
+
+def test_contract_env_var_names_the_node_contract(tmp_path, git_repo):
+    # A.3.2: LOCKSTEP_CONTRACT lets an extension pick the submit_result schema
+    # matching the node's envelope (built-in names resolve; unknown degrades).
+    emit = ("import os, json; print(json.dumps({'findings': [], 'verdict': 'pass',"
+            " 'reason': os.environ['LOCKSTEP_CONTRACT']}))")
+    f = {
+        "name": "contract-env",
+        "nodes": [
+            {"id": "n", "kind": "shell", "spec": {"cmd": [PY, "-c", emit]},
+             "output": "json", "contract": "Verdict", "final": True}
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    out = json.loads(open(load_state(h.run_dir).nodes["n"].result_path, encoding="utf-8").read())
+    assert out["reason"] == "Verdict"
+
+
+FLAKY_WITH_VERDICT = (
+    "import sys, pathlib\n"
+    "pd = pathlib.Path(sys.argv[1])\n"
+    "marker = pd / 'marker'\n"
+    "if not marker.exists():\n"
+    "    marker.write_text('1')\n"
+    "    # simulate an in-session enforcement block on the failing attempt\n"
+    "    (pd / 'verdicts.jsonl').write_text('{\"stale\": true}\\n')\n"
+    "    sys.exit(1)\n"
+    "(pd / 'result.txt').write_text('ok-after-retry')\n"
+)
+
+
+def test_verdict_file_rotates_per_attempt(tmp_path, git_repo):
+    # A.3.3 lifecycle: the gate must read only the FINAL attempt's in-session
+    # blocks. Attempt 1 records a block and fails (no result + exit 1, so the
+    # M4 auto-retry re-spawns — rotation runs at the top of execute() for EVERY
+    # re-invocation); the retry succeeds cleanly. The stale record must rotate
+    # away with the other per-attempt artifacts, or a downstream verdict-file
+    # gate would block a node that self-corrected.
+    config = make_config(x=ExecutorStanza(argv=[PY, "-c", FLAKY_WITH_VERDICT, "{phase_dir}"]))
+    f = {
+        "name": "rot",
+        "nodes": [{"id": "n", "kind": "harness", "spec": {"task": "t"},
+                   "output": "text", "final": True}],
+    }
+    h = build(tmp_path, f, git_repo, config=config)
+    assert h.engine.run() == 0
+    pd = h.store.phase_dir("n")
+    assert not (pd / "verdicts.jsonl").exists()          # final attempt was clean
+    assert (pd / "verdicts-attempt1.jsonl").exists()      # forensics preserved
+
+
+SHELL_FLAKY_WITH_VERDICT = (
+    "import os, sys, pathlib\n"
+    "pd = pathlib.Path(os.environ['LOCKSTEP_PHASE_DIR'])\n"
+    "marker = pd / 'marker'\n"
+    "if not marker.exists():\n"
+    "    marker.write_text('1')\n"
+    "    (pd / 'verdicts.jsonl').write_text('{\"stale\": true}\\n')\n"
+    "    sys.exit(1)\n"
+    "print('ok-after-retry')\n"
+)
+
+
+def test_shell_verdict_file_rotates_per_attempt(tmp_path, git_repo):
+    # Same lifecycle guarantee for the shell executor's rotation loop.
+    f = {
+        "name": "rot-shell",
+        "nodes": [{"id": "n", "kind": "shell",
+                   "spec": {"cmd": [PY, "-c", SHELL_FLAKY_WITH_VERDICT]},
+                   "retry": {"max": 1}, "output": "text", "final": True}],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    pd = h.store.phase_dir("n")
+    assert not (pd / "verdicts.jsonl").exists()
+    assert (pd / "verdicts-attempt1.jsonl").exists()
+
+
+def test_doctor_expands_phase_dir_placeholder(tmp_path):
+    # A stanza like `pi --session-dir {phase_dir}` must probe with a real dir:
+    # doctor exists to catch flag drift, not to inject a literal placeholder.
+    from lockstep.doctor import _probe_once
+
+    seen = tmp_path / "seen.txt"
+    script = ("import sys, pathlib; pathlib.Path(sys.argv[1], 'result.txt').write_text('OK'); "
+              f"pathlib.Path(r'{seen}').write_text(sys.argv[1])")
+    stanza = ExecutorStanza(argv=[PY, "-c", script, "{phase_dir}", "{prompt}"])
+    ok, _msg = _probe_once("x", stanza, [], tmp_path, print)
+    assert ok
+    assert seen.read_text() == str(tmp_path)  # expanded, not the literal "{phase_dir}"
 
 
 def test_phase_dir_argv_substitution(tmp_path, git_repo):

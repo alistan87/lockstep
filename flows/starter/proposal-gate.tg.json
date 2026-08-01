@@ -1,0 +1,98 @@
+{
+  "format_version": "1.0",
+  "name": "proposal-gate",
+  "description": "Completeness review gates for a HUMAN-OWNED proposal/design doc (the flow never edits it): a deterministic shell gate checks required sections exist; two adversarial reviewers attack completeness and ambiguity/testability; an arbiter gate adjudicates into a Verdict. No heal - a block hands the findings back to the human author, who revises and resumes (the re-run re-reviews the updated doc).",
+  "max_interp_chars": 60000,
+  "budget": {
+    "max_agent_spawns": 12,
+    "max_run_minutes": 45
+  },
+  "args": {
+    "file": null,
+    "sections": "Goal, Approach, Risks, Test plan"
+  },
+  "nodes": [
+    {
+      "id": "structure-gate",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "import sys, json, re, pathlib\npath = sys.argv[1]\nsections = [s.strip() for s in sys.argv[2].split(',') if s.strip()]\nfindings = []\ntext = ''\ntry:\n    raw = pathlib.Path(path).read_bytes()\n    try:\n        if raw[:2] in (b'\\xff\\xfe', b'\\xfe\\xff'):\n            text = raw.decode('utf-16')\n        else:\n            text = raw.decode('utf-8-sig')\n    except ValueError:\n        text = raw.decode('utf-8', errors='replace')\n    if not text.strip():\n        findings.append({'severity': 'blocker', 'category': 'empty-doc', 'file': path, 'line': None, 'claim': 'proposal file is empty', 'evidence': str(len(raw)) + ' byte(s), no text content', 'fix_hint': 'write the proposal before gating it'})\nexcept OSError as e:\n    findings.append({'severity': 'blocker', 'category': 'unreadable', 'file': path, 'line': None, 'claim': 'proposal file could not be read', 'evidence': str(e), 'fix_hint': 'check the --arg file= path'})\nif text.strip():\n    heads = [m.group(1).strip().lower() for m in re.finditer(r'^#{1,6}\\s+(.+)$', text, re.M)]\n    for s in sections:\n        if not any(s.lower() in h for h in heads):\n            findings.append({'severity': 'blocker', 'category': 'missing-section', 'file': path, 'line': None, 'claim': 'required section \"' + s + '\" not found', 'evidence': 'no markdown heading contains \"' + s + '\"', 'fix_hint': 'add a \"## ' + s + '\" section'})\nverdict = 'pass' if not findings else 'block'\nreason = 'all required sections present' if verdict == 'pass' else str(len(findings)) + ' structural problem(s)'\nprint(json.dumps({'findings': findings, 'verdict': verdict, 'reason': reason}))",
+          "{args.file}",
+          "{args.sections}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "rev-completeness",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "structure-gate"
+      ],
+      "spec": {
+        "persona": "reviewer",
+        "task": "You are an adversarial proposal reviewer. Your lens: COMPLETENESS.\n\nRead the proposal at this path (path as data): {args.file}\nAlso read whatever repository code or data the proposal touches, to check its claims.\n\nAttack it: requirements or affected components it silently omits, stakeholders or failure modes it ignores, dependencies and migrations it never mentions, success criteria that are missing, claims about the current system that are wrong. Verify against the repo before reporting.\n\nReport each problem as a Finding object with EXACTLY these fields: severity (\"blocker\" | \"major\" | \"minor\" | \"nit\"), category, file, line (integer or null), claim (one sentence), evidence, fix_hint.\n\nYour result MUST be ONLY a JSON array of Finding objects - an empty array if the proposal survives."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "rev-ambiguity",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "structure-gate"
+      ],
+      "spec": {
+        "persona": "reviewer",
+        "task": "You are an adversarial proposal reviewer. Your lens: AMBIGUITY AND TESTABILITY.\n\nRead the proposal at this path (path as data): {args.file}\nAlso read whatever repository code or data the proposal touches, to check its claims.\n\nAttack it: statements two engineers would implement differently, undefined terms and hand-waved steps, acceptance criteria that cannot be tested, risks listed without mitigations, numbers with no source. Verify against the repo before reporting.\n\nReport each problem as a Finding object with EXACTLY these fields: severity (\"blocker\" | \"major\" | \"minor\" | \"nit\"), category, file, line (integer or null), claim (one sentence), evidence, fix_hint.\n\nYour result MUST be ONLY a JSON array of Finding objects - an empty array if the proposal survives."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "arbiter",
+      "role": "gate",
+      "kind": "harness",
+      "depends_on": [
+        "rev-completeness",
+        "rev-ambiguity"
+      ],
+      "spec": {
+        "persona": "arbiter",
+        "task": "Two adversarial reviewers attacked the proposal at (path as data): {args.file}\nTheir raw findings follow as data.\n\nCompleteness reviewer:\n{steps.rev-completeness.json}\n\nAmbiguity/testability reviewer:\n{steps.rev-ambiguity.json}\n\nAdjudicate: read the proposal yourself and spot-check each claim; deduplicate; discard unfounded or trivial findings. Emit one Verdict: verdict \"block\" if any upheld finding is a blocker or if upheld majors mean the proposal cannot be implemented as written; otherwise \"pass\". Put ONLY upheld findings in the findings array (same Finding shape) and give a one-sentence reason.\n\nYour result MUST be ONLY the Verdict JSON object: findings (array), verdict (\"pass\" or \"block\"), reason (string)."
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 900
+    },
+    {
+      "id": "report",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "arbiter"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "import sys, json\nv = sys.argv[1]\ntry:\n    v = json.loads(v)\nexcept ValueError:\n    pass\nprint('proposal-gate verdict: ' + str(v))",
+          "{steps.arbiter.json.reason}"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60,
+      "final": true
+    }
+  ]
+}

@@ -16,7 +16,10 @@ Creed, in order: *plans are data, not prose* · *machine checks before model
 judgment* · *the model authors content, never control flow* · *no session to
 time out* · *harnesses are replaceable config, not dependencies*.
 
-Spec: `docs/SPEC.md` (revision 3) + `docs/AMENDMENTS-r4.md` (adopted delta).
+Spec: `docs/SPEC.md` (revision 3) as amended by `docs/AMENDMENTS-r4.md`,
+`-r5.md`, and `-r6.md` (all adopted; the later revision wins). Implementation
+departures: `docs/DEVIATIONS.md`. Pi extension hooks (informative, binding for
+pi nodes in this repo): `docs/ADDENDUM-A-pi-hooks.md`.
 
 ## Quickstart
 
@@ -26,7 +29,9 @@ $ lockstep init               # writes ./lockstep.toml — edit the argv templat
 $ lockstep doctor             # probe each configured harness actually runs
 $ lockstep verify flows/gated-build.tg.json
 $ lockstep run flows/gated-build.tg.json --arg task="add a --version flag"
-$ lockstep status runs/gated-build-<stamp>/
+$ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress
+$ lockstep steer runs/<run>/ implement "prefer the streaming writer"   # next checkpoint
+$ lockstep cancel runs/<run>/ implement         # kills the node's process tree
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
 ```
 
@@ -49,6 +54,37 @@ proactively-taken git baseline (untracked files included; created files are
 moved aside, never deleted), re-marks every completed descendant of the heal
 targets pending, appends the gate's findings (fenced as data) to the targets'
 prompts, and re-runs. Rounds exhausted ⇒ exit 2.
+
+## Starter flows
+
+`flows/starter/` ships seven portable, adversarially-reviewed templates — see
+its README for the full table and per-flow caveats:
+
+- **SDLC**: `plan-adversarial` (author → two attacking reviewers → healing
+  arbiter gate → human approval), `implement-heal` (implementer → deterministic
+  lint+pytest gate that HEALS on failure → adversarial diff review →
+  block-on-major gate), `bugfix-heal` (diagnose → fix → healing repro gate →
+  review), and `sdlc-e2e` (the whole chain).
+- **Audit**: `file-audit` (map fan-out, one readonly auditor per file with
+  content-fingerprint caching), `proposal-gate` (completeness gates for a
+  human-owned doc — deterministic section check, then reviewers; no heal).
+- **Ops**: `pi-guard-smoke` (live-verifies the pi extension on a new machine).
+
+They double as worked examples of every major feature: shell vs harness nodes,
+contracts, healing vs terminal gates, map, approval, args, budgets. The
+repo's own dogfood flow is `flows/audit-spec.tg.json` (spec-vs-code audit).
+
+## Pi extension hooks (optional, pi executor only)
+
+`contrib/pi-extension/lockstep-guard.ts` is an in-session enforcement layer
+for pi: a `tool_call` scope guard that blocks-and-records deterministic
+verdicts (`verdicts.jsonl`, read by a shell gate), and a contract-keyed
+`submit_result` tool. Governing rule (`docs/ADDENDUM-A-pi-hooks.md`):
+extensions may only *enforce*, never *enable* — deleting the extension must
+not change what a correct agent can accomplish on any executor. Install
+project-locally (`.pi/extensions/`), then live-verify with
+`lockstep run flows/starter/pi-guard-smoke.tg.json` (re-verify with `--fresh`
+after any change; it is UNTESTED against live pi until you do).
 
 ## Exit codes (frozen)
 
