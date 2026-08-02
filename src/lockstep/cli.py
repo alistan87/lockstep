@@ -323,11 +323,15 @@ def cmd_status(ns) -> int:
 
 def cmd_doctor(ns) -> int:
     repo_root = Path(".").resolve()
+    if getattr(ns, "setup", False):
+        # --setup spends nothing and needs no config: it is what a domain
+        # expert runs alone on a machine nobody can inspect for them.
+        return run_doctor(LockstepConfig(), repo_root=repo_root, setup_only=True)
     try:
         config = load_config(Path(ns.config) if ns.config else repo_root / "lockstep.toml")
     except ConfigError as e:
         return _fail(str(e), EXIT_CONFIG)
-    return run_doctor(config)
+    return run_doctor(config, repo_root=repo_root)
 
 
 EXAMPLE_TOML = '''# lockstep executor config (SPEC §8.2). An executor entry is an argv template:
@@ -474,8 +478,10 @@ def main(argv: list[str] | None = None) -> int:
     pst.add_argument("run_dir")
     pst.set_defaults(fn=cmd_status)
 
-    pd = sub.add_parser("doctor", help="probe each configured executor")
+    pd = sub.add_parser("doctor", help="check the setup, then probe each configured executor")
     pd.add_argument("--config", default=None)
+    pd.add_argument("--setup", action="store_true",
+                    help="setup checks only: free, no model calls, no config needed")
     pd.set_defaults(fn=cmd_doctor)
 
     pi = sub.add_parser("init", help="write lockstep.toml.example to ./lockstep.toml")

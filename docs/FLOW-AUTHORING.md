@@ -104,6 +104,52 @@ map body · `{previous.output}` (exactly one dep). `{{` escapes `{`.
 - Personas (`personas/<name>.md`, YAML front-matter + body) carry the stable
   role instructions; keep the per-node `task` about THIS node's job.
 
+## Authoring for a human decision (cockpit-facing flows)
+
+A flow a non-programmer will drive has three extra obligations. Templates:
+`flows/starter/clarify-gate.tg.json`, `flows/starter/evidence-approval.tg.json`,
+and the full shape in `flows/demo/repo-hygiene-demo.tg.json`.
+
+**Clarification gates.** Domain questions travel through a gate with
+`"heal": {"max_rounds": 0}` whose findings carry `category: "question"` and
+whose `claim` is one line a non-programmer can answer without reading code — it
+is read to them verbatim. A healing clarify gate is a bug: heal fires
+in-process and re-runs the target with the questions still unanswered. Say in
+the gate's prompt that a `--- steering ---` block containing a human's ruling is
+authoritative and ends the question, or the gate re-asks forever.
+
+**The evidence rule.** Every approval must be preceded by a shell node that
+renders a **mechanical extract of the deliverable** — the thing itself, not a
+summary of it. Shell stdout goes to `stdout.log`, not the terminal, and the
+approval prompt is one bare line, so the extract must be written to
+`<run_dir>/approval-evidence.txt`; `contrib/approve.ps1` prints it before the
+prompt. `contrib/render_evidence.py` does headings/diffstat/full-text; a
+domain-specific extract is better (see `contrib/demo/hygiene_evidence.py`, which
+stratifies: counts, then every structural change, then everything the system was
+unsure about, then a deterministic sample of what it was sure about). Sampling
+must be seeded by the content: the same manifest has to produce the same pane
+twice, or approval means nothing. **A flow whose approval shows no evidence is
+unsuitable for a non-programmer.**
+
+**The segmentation rule.** Nothing non-trivial may run downstream of an
+approval, because everything after it executes in the human's own resume
+process. A seconds-long shell node (copy the deliverable out, print a summary)
+is fine; an implement phase is not — split it into two flows. `monolithic
+sdlc-e2e` is unsuitable for the cockpit for exactly this reason.
+`contrib/quiescent.py` enforces the distinction mechanically.
+
+Also worth knowing: a node may write one plain line to
+`phases/<node>/mission.txt`, which the cockpit's MISSION pane renders verbatim
+(a file copy — no model, so it keeps the pane's trust status). Use it for
+counters a human actually cares about: `catalog: 5,214 files, 4,102 by rule,
+812 need judgment`.
+
+**Custom contracts load by file path** (`path/to/module.py:Name`) — do NOT put
+`from __future__ import annotations` in that module. The module is not
+registered in `sys.modules`, so postponed annotations leave pydantic unable to
+resolve `Literal`/`Optional` and every spawn fails validation. Use eager
+annotations and `Optional[str]` rather than `str | None`.
+
 ## Operational caveats
 
 Windows argv limits with large interpolations, encoding rules for embedded

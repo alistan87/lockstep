@@ -6,7 +6,7 @@ a new machine. Copy this directory (and `personas/`) into any git repo where
 lockstep is installed; everything here uses the config-default executor unless
 noted.
 
-All seven flows pass `lockstep verify` and are meant as **templates** — edit
+All ten flows pass `lockstep verify` and are meant as **templates** — edit
 prompts, check commands, and budgets to fit the target repo, then re-verify.
 Authoring grammar: `docs/FLOW-AUTHORING.md`. Drive protocol for agents (exit
 codes, run-dir diagnosis, approval rules): `docs/DRIVING-LOCKSTEP.md`.
@@ -21,6 +21,9 @@ codes, run-dir diagnosis, approval rules): `docs/DRIVING-LOCKSTEP.md`.
 | `sdlc-e2e.tg.json` | up to ~30 | The full chain: plan → adversarial plan review → healing plan gate → **approval** → implement → healing lint+pytest gate → adversarial diff review → block-on-major gate → closing report. |
 | `file-audit.tg.json` | 1/file + arbiter | **Map fan-out**: lists files matching `--arg glob=` as `path\|content-fingerprint` entries (per-item caching invalidates on content change, not just path); one readonly auditor per file (`concurrency: 4`); arbiter gate blocks on upheld blockers. `--arg focus=` steers the lens; `--arg max_files=` caps fan-out (default 40, truncation recorded in the manifest notes). |
 | `proposal-gate.tg.json` | up to ~12 | Review gates for a **human-owned** proposal/design doc (`--arg file=`): deterministic required-sections shell gate (`--arg sections=`, default `Goal, Approach, Risks, Test plan`) → completeness + ambiguity/testability reviewers → arbiter Verdict. No heal by design: a block returns findings to the author, who revises and `resume`s. |
+| `clarify-gate.tg.json` | up to ~8 | **FRAGMENT** — the clarification-gate pattern: a drafter works from an under-specified brief, and a NON-healing gate (`heal.max_rounds: 0`) reports what only a human can decide as findings with `category: "question"`. Answers arrive by `steer` + `resume`, never by heal text. Copy the gate into your own flow. |
+| `evidence-approval.tg.json` | up to ~6 | **FRAGMENT** — the evidence-bearing terminal approval: a shell node renders a mechanical extract to `<run_dir>/approval-evidence.txt`, which `contrib/approve.ps1` prints before the prompt. Shows the segmentation rule (only a trivial shell node after the approval). |
+| `retrospect.tg.json` | up to ~8 | Gate-driven improvement: `contrib/retrospect.py` emits the friction report (metadata only), an analyst proposes flow/prompt edits **each citing the number that motivates it**, an arbiter blocks anything the numbers do not support. Adoption is gated — run the report by hand first. |
 | `bugfix-heal.tg.json` | up to ~15 | Diagnose → fix → verify: diagnostician pins root cause from `--arg bug=` + `--arg repro=` (a command); fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); adversarial diff review → block-on-major gate. |
 
 ## Running them

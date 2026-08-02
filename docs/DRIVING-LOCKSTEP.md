@@ -76,6 +76,94 @@ Everything lives under `runs/<run>/`:
 
 Provider limit named in the error ⇒ wait, then `resume` — do not go fresh.
 
+## Driving for a non-programmer (the cockpit)
+
+When the person you are talking to is a domain expert rather than an engineer,
+four rules change. All four exist because everything the human's terminal runs,
+the human owns — and they cannot read a stack trace.
+
+**1. Never block on `lockstep run`.** Run detached, with non-TTY stdin. A run
+hosted in a bare pty passes `isatty()`, sits silently at the approval prompt
+forever instead of auto-rejecting, and dies with its pane. Detached, you keep
+conversing and poll `status` / `events.jsonl` between turns. A mute orchestrator
+forfeits narration, question relay, and STOP.
+
+**2. Exit 6 is a handoff, not a failure.** A detached run reaching an approval
+auto-rejects and exits 6. Narrate it as "ready for your decision."
+
+**3. Check quiescence before handing over — with the tool, never by eye.**
+
+```powershell
+python contrib\quiescent.py <run_dir>     # 0 = only the approval is runnable
+```
+
+Exit 1 lists what would otherwise run inside the human's terminal. The fix is
+always the same: `resume` **detached** first, let the engine burn the queue down
+to the approval's auto-reject again, then re-check. **Any steer after the last
+detached resume means not quiescent until a detached resume has consumed it.**
+Do not re-derive this predicate by reading `state.json` yourself.
+
+A trivial `shell` node downstream of the approval is fine — that is the
+sanctioned shape (`approve` → copy the deliverable out). A harness node there is
+not, and `quiescent.py` will say so: split the flow into two segments.
+
+**4. Spawn the approval pane; never type Enter.**
+
+```powershell
+pwsh -File contrib\cockpit.ps1 -RunDir <run_dir> -Approve
+```
+
+This checks quiescence, then spawns a pane that **runs** `contrib\approve.ps1` —
+evidence first, prompt second. Nothing is typed into the pane at all, which is
+what makes "no automation answers an approval" true by construction: there is no
+code path that types anywhere. The human reads the pane and types `a` or `r`.
+
+**Why not pre-type the command?** That was the original design, and it failed on
+the first real machine. A pane spawned as `pwsh` did not stay a shell — a
+PowerShell profile auto-started an interactive agent in the project directory —
+so the "command" was typed into a **chat composer**. Nothing caught it, because
+the verification step only confirmed the pane id existed. Had the human pressed
+Enter, they would have sent a shell command to a language model instead of
+approving. Hence three rules now:
+
+- every cockpit pane runs with **`-NoProfile`**, because a cockpit pane is
+  infrastructure, not the operator's interactive shell;
+- the pane's program **writes a handshake** naming its marker and its
+  `WEZTERM_PANE`, and the cockpit requires both to match the pane it just
+  created — a pane title cannot carry this, since a title follows the foreground
+  process and becomes `python.exe` the moment `lockstep resume` starts;
+- verification failure **kills the pane and aborts** to narration rather than
+  leaving a decision surface nobody can vouch for.
+
+Never `wezterm cli set-tab-title` on a pane in a shared tab: a tab is shared by
+every pane in it, so that renames the human's own tab.
+
+**Clarification questions** come from a gate with `heal.max_rounds: 0` whose
+findings use `category: "question"` (`flows/starter/clarify-gate.tg.json`). On
+block, read `phases/<gate>/result.json`, relay each question in plain language
+**with the finding quoted verbatim**, echo-confirm the answer before sending it,
+then steer and resume:
+
+```powershell
+lockstep steer <run_dir> <target-node> "<the answer>"
+lockstep steer <run_dir> <the-gate>    "<the answer>"   # so it stops asking
+lockstep resume <run_dir>                               # detached
+```
+
+Steer the **target**, not just the gate — and the gate too, or it re-asks a
+question already answered and blocks forever. Answers are effectively permanent:
+the mailbox renders in full into every later prompt and folds into the hash, so
+a correction is appended beside the original and true retraction means `--fresh`
+(which re-bills the lineage). Verify the steer text actually landed in
+`phases/<target>/prompt.txt` before telling anyone their answer was applied.
+
+**Recovery is a double-click**: `contrib\start-cockpit.cmd` scans for unfinished
+runs and applies the mechanical rule — lock pid dead ⇒ plain `resume` is safe;
+lock pid alive ⇒ the run outlived you, reattach and do **not** unlock.
+
+**STOP is a reserved word.** If the human says it: `lockstep cancel` the running
+nodes, do not resume, and report what was spent.
+
 ## Environment facts
 
 - `lockstep doctor` after any harness upgrade and weekly — the only check
