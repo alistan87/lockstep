@@ -75,5 +75,22 @@ a feature over adding a dependency. Full pytest after every change.
   template is `lockstep.toml.example`.
 
 Project skills: `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
-a run dir). Subagents: `spec-auditor` (read-only spec-vs-code audit),
-`run-diagnostician` (run-dir failure triage).
+a run dir), `/getting-started` (first-run setup on a new machine). Subagents:
+`spec-auditor` (read-only spec-vs-code audit), `run-diagnostician` (run-dir
+failure triage).
+
+## Driving for a non-programmer (the cockpit)
+
+`contrib/` holds a layer for running lockstep on behalf of a domain expert:
+detached runs, clarification gates, evidence-bearing terminal approvals, live
+spend, and a friction retro. If you are the session driving it, read
+`docs/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
+`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds
+what you may say. Three rules that are enforced by code, not discretion:
+
+- **Never answer an approval.** Non-TTY stdin auto-rejects (exit 6) by design;
+  the cockpit has no `send-text` path at all. Exit 6 is a handoff signal.
+- **Never hand over without `contrib/quiescent.py` exiting 0** — whatever is
+  runnable at that moment runs in the human's own terminal.
+- **Never narrate in place of evidence at a decision point.** Approvals are
+  decided from `<run_dir>/approval-evidence.txt`, rendered by the flow.

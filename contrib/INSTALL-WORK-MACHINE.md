@@ -4,6 +4,15 @@ For a machine with **WezTerm + pwsh + pi.dev + GitHub Copilot** and an existing
 repo holding proprietary data. Assumes nothing about that repo except that it is
 a git repo.
 
+**Read first, depending on who you are:**
+
+- **`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md`** — two pages, no jargon. Give this to
+  the person who will actually use the system. It is the only document they
+  need.
+- **`docs/COCKPIT-THEORY-OF-OPERATIONS.md`** — the operating manual for the
+  assistant that drives lockstep on their behalf. Point your agent session at
+  it before the first session.
+
 Two things are being installed, and they go to different places:
 
 | What | Where | Why |
