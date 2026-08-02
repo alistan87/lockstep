@@ -17,7 +17,8 @@ judgment* · *the model authors content, never control flow* · *no session to
 time out* · *harnesses are replaceable config, not dependencies*.
 
 Spec: `docs/SPEC.md` (revision 3) as amended by `docs/AMENDMENTS-r4.md`,
-`-r5.md`, and `-r6.md` (all adopted; the later revision wins). Implementation
+`docs/AMENDMENTS-r5.md`, and `docs/AMENDMENTS-r6.md` (all adopted; the later
+revision wins). Implementation
 departures: `docs/DEVIATIONS.md`. Pi extension hooks (informative, binding for
 pi nodes in this repo): `docs/ADDENDUM-A-pi-hooks.md`.
 

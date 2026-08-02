@@ -10,17 +10,16 @@ THE STRUCTURE, and why it is this one. Documents are grouped by **authority and
 lifecycle**, not by subject, because that is the question a reader actually has:
 "can I rely on this?"
 
-    docs/spec/       the contract. Changing one of these changes what the
-                     software is allowed to do. Includes the deviations
-                     register, which only means anything next to the spec.
-    docs/guides/     how to use it. Wrong-but-fixable; no promises are broken
-                     by editing one.
-    docs/proposals/  design under consideration, plus accepted work orders.
-                     Explicitly NOT authoritative, which is why they must not
-                     sit beside the spec.
-    docs/audits/     point-in-time findings. Never edited after the fact —
-                     an audit that gets updated is not an audit.
-    docs/notes/      working material. No stability promise at all.
+    docs/spec/       the contract and what qualifies it — spec + amendments
+                     bind, addenda are informative, and the deviations register
+                     records where implementation departs. `type` says which.
+    docs/guides/     how to use it. Cheap to correct; but some are promises to
+                     a reader, and changing what they promise is not a fix.
+    docs/proposals/  design documents and accepted work orders. A proposal
+                     carries no authority by sitting here; an accepted plan's
+                     authority comes from the commit that adopted it.
+    docs/audits/     point-in-time findings, kept as written.
+    docs/notes/      working material. Nothing here binds.
 
 The alternative — grouping by subject, e.g. everything about the cockpit
 together — was rejected: it puts a proposal next to a specification, and the
@@ -61,7 +60,20 @@ RULES = [
 # Vendored third-party references are not ours to reorganise or annotate.
 EXCLUDE_DIRS = {"okf"}
 
-TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+# Any heading level. Two audits open with an H2, and an H1-only rule gave them
+# an empty title and a blank cell in the generated index — a document whose own
+# listing cannot name it is not catalogued, it is just moved.
+TITLE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+
+# OKF lifecycle. A superseded revision that sits as an undifferentiated peer of
+# the current one is a trap: the reader has no way to tell which is live. The
+# format has `status` for exactly this, so use it rather than relying on a
+# filename suffix nobody has explained.
+SUPERSEDED = {
+    "PROPOSAL-domain-cockpit.md": "PROPOSAL-domain-cockpit-rev7.md",
+    "PROPOSAL-domain-cockpit-rev5.md": "PROPOSAL-domain-cockpit-rev7.md",
+    "PROPOSAL-domain-cockpit-rev6.md": "PROPOSAL-domain-cockpit-rev7.md",
+}
 
 
 def tracked_docs(root: Path) -> list[Path]:
@@ -140,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
             "okf_type": okf_type,
             "title": title_of(p),
             "rule_ref": rule_id,
+            "status": "deprecated" if p.name in SUPERSEDED else None,
+            "superseded_by": SUPERSEDED.get(p.name),
             "sha": hashlib.sha256(p.read_bytes()).hexdigest()[:16],
         }
         (placed if bundle and not clash else residue).append(entry)

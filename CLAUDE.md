@@ -9,7 +9,8 @@ as it does (caching, gates, healing, the spawn contract, resume) — read it
 before changing engine behaviour or authoring a flow.
 
 **The spec is authoritative:** `docs/SPEC.md` (revision 3) as amended by
-`docs/AMENDMENTS-r4.md`, `-r5.md`, and `-r6.md` (all adopted; the LATER
+`docs/AMENDMENTS-r4.md`, `docs/AMENDMENTS-r5.md`, and `docs/AMENDMENTS-r6.md`
+(all adopted; the LATER
 revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
 Implementation-level departures are logged in `docs/DEVIATIONS.md` — check it
 before reporting a spec mismatch. Adversarial audit reports live in
