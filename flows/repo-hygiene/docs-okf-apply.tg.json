@@ -1,0 +1,54 @@
+{
+  "format_version": "1.0",
+  "name": "docs-okf-apply",
+  "description": "Segment 2 of 2 — execute an APPROVED docs manifest on a branch. No agent spawns at all: a preflight tamper check recomputes the manifest digest and hard-blocks if it changed after approval, then the deterministic apply engine moves files, rewrites every reference, injects OKF frontmatter, writes bundle indexes, and verifies. Verify failure leaves the branch for autopsy and merges nothing. The merge itself is the human's second gate and this flow never performs it.",
+  "budget": {
+    "max_agent_spawns": 0,
+    "max_run_minutes": 15
+  },
+  "args": {
+    "manifest": "docs-manifest.json",
+    "approved_sha": null,
+    "branch": null
+  },
+  "nodes": [
+    {
+      "id": "preflight",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/hygiene/preflight_docs.py",
+          "{args.manifest}",
+          "--approved-sha",
+          "{args.approved_sha}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "apply",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "preflight"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/hygiene/apply_docs.py",
+          "--manifest",
+          "{args.manifest}",
+          "--branch",
+          "{args.branch}"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 600,
+      "final": true
+    }
+  ]
+}

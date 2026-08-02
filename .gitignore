@@ -8,3 +8,4 @@ build/
 dist/
 contrib/cost-fields.toml
 Deliverables/
+docs-manifest.json
