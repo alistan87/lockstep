@@ -73,6 +73,9 @@ its README for the full table and per-flow caveats:
 They double as worked examples of every major feature: shell vs harness nodes,
 contracts, healing vs terminal gates, map, approval, args, budgets. The
 repo's own dogfood flow is `flows/audit-spec.tg.json` (spec-vs-code audit).
+Portable references: `docs/FLOW-AUTHORING.md` (writing flows) and
+`docs/DRIVING-LOCKSTEP.md` (the drive protocol for orchestrator agents —
+paste-ready for an `AGENTS.md`).
 
 ## Pi extension hooks (optional, pi executor only)
 
