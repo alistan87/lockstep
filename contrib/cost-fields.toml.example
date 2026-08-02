@@ -1,0 +1,29 @@
+# cost-fields.toml — envelope usage-field paths per harness BINARY, for
+# contrib/cost_report.py. Copy to cost-fields.toml (next to the script, in the
+# working dir, or pass --fields) and adjust after probing YOUR harness
+# versions. Keys are the harness binary's basename, lowercased, extension
+# stripped (argv[0] of the executor stanza). Values are dotted paths into the
+# JSON envelope the harness prints. Recognized fields: input_tokens,
+# output_tokens, cache_read_tokens, cache_write_tokens, cost.
+#
+# This file deliberately pre-proves the shape of the planned v1 stanza key
+# `usage_fields` (PROPOSAL-domain-cockpit, feature B) — it lives beside the
+# script, not in lockstep.toml, because the stanza model is extra="forbid".
+
+# Probed 2026-08-01 against the claude-code CLI (`claude -p ... --output-format
+# json`): envelope carries usage.* plus total_cost_usd. Dollars are NOTIONAL
+# under subscription billing.
+[claude]
+input_tokens = "usage.input_tokens"
+output_tokens = "usage.output_tokens"
+cache_read_tokens = "usage.cache_read_input_tokens"
+cache_write_tokens = "usage.cache_creation_input_tokens"
+cost = "total_cost_usd"
+
+# pi: PROBE YOUR VERSION (`pi -p --mode json "Reply OK"`) and fill in the
+# paths; if the envelope carries no usage fields, leave the section empty —
+# the report will honestly say "no field map (pi)" instead of printing 0.
+[pi]
+
+# copilot-cli has no JSON output mode: no envelope ever appears in
+# stdout.log, and the report prints "no envelope". No section needed.
