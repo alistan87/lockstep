@@ -28,6 +28,7 @@ input_tokens = "usage.input_tokens"
 output_tokens = "usage.output_tokens"
 cost = "total_cost_usd"
 [pi]
+format = "pi-stream"
 """
 
 
@@ -165,6 +166,49 @@ def test_render_multi_run_deliverable_rollup(tmp_path, fields_file, capsys):
     assert "token spawns: 10" in out          # 5 + 5
     assert "NOTIONAL" in out                  # units policy
     assert "| impl | harness | 2 | 0 | 130 | 180 | 30 |" in out
+
+
+def pi_stream(in_tok: int, out_tok: int, cost: float) -> str:
+    """Minimal pi --mode json stream (shape probed against pi 0.83.0):
+    message_end carries usage; turn_end/agent_end REPEAT the same message and
+    must not be double-counted."""
+    usage = {"input": in_tok, "output": out_tok, "cacheRead": 7, "cacheWrite": 3,
+             "totalTokens": in_tok + out_tok,
+             "cost": {"input": 0, "output": 0, "total": cost}}
+    msg = {"role": "assistant", "content": [{"type": "text", "text": "OK"}],
+           "provider": "copilot", "model": "gpt-x", "usage": usage}
+    lines = [
+        {"type": "session", "version": 3, "id": "x"},
+        {"type": "message_end", "message": {"role": "user", "content": []}},
+        {"type": "message_end", "message": msg},
+        {"type": "turn_end", "message": msg, "toolResults": []},
+        {"type": "agent_end", "messages": [msg]},
+        {"type": "agent_settled"},
+    ]
+    return "\n".join(json.dumps(x) for x in lines)
+
+
+def test_pi_stream_usage_sums_message_end_only(tmp_path, fields_file):
+    run = tmp_path / "pi-run"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({
+        "flow_name": "pi-flow", "flow_hash": "z", "format_version": "1.0",
+        "args": {}, "token_spawns": 2,
+        "nodes": {"n": {"node_id": "n", "role": "work", "kind": "harness",
+                        "status": "done", "attempts": 2}},
+    }), encoding="utf-8")
+    node = run / "phases" / "n"
+    (node / "argv.json").write_text(json.dumps(["pi.cmd", "-p"]), encoding="utf-8")
+    (node / "stdout.log").write_text(pi_stream(8646, 16, 0.021), encoding="utf-8")
+    (node / "stdout-attempt1.log").write_text(pi_stream(1000, 4, 0.009), encoding="utf-8")
+
+    maps = cost_report.load_field_maps(str(fields_file))
+    row = rows_by_node(cost_report.collect_run(run, maps))["n"]
+    assert row["input_tokens"] == 9646          # both attempts, message_end only
+    assert row["output_tokens"] == 20
+    assert row["cache_read_tokens"] == 14       # 7 per attempt
+    assert row["cost"] == pytest.approx(0.030)  # turn_end/agent_end not double-counted
+    assert row["note"] == ""
 
 
 def test_last_envelope_ignores_nested_objects(tmp_path):

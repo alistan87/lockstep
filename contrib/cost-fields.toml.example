@@ -20,10 +20,16 @@ cache_read_tokens = "usage.cache_read_input_tokens"
 cache_write_tokens = "usage.cache_creation_input_tokens"
 cost = "total_cost_usd"
 
-# pi: PROBE YOUR VERSION (`pi -p --mode json "Reply OK"`) and fill in the
-# paths; if the envelope carries no usage fields, leave the section empty —
-# the report will honestly say "no field map (pi)" instead of printing 0.
+# pi (probed 2026-08-02 against pi 0.83.0): `--mode json` emits an event
+# STREAM, not a single envelope — every assistant message_end carries
+# usage{input, output, cacheRead, cacheWrite, cost{total}}, computed by pi
+# per model/provider (on GitHub Copilot these track the credit billing
+# closely). `format = "pi-stream"` selects the built-in stream parser; no
+# dotted paths needed. NOTE: cost.total is 0 for free local providers
+# (e.g. an ollama default model) — that is a true zero, not missing data.
+# Re-probe after pi upgrades (the stream shape is pi's, not ours).
 [pi]
+format = "pi-stream"
 
 # copilot-cli has no JSON output mode: no envelope ever appears in
 # stdout.log, and the report prints "no envelope". No section needed.

@@ -35,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 KNOWN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost")
+KNOWN_KEYS = KNOWN_FIELDS + ("format",)
 TERMINAL = {"done", "failed", "blocked"}
 
 
@@ -54,7 +55,7 @@ def load_field_maps(explicit: str | None) -> dict[str, dict[str, str]]:
             for binary, fields in raw.items():
                 if isinstance(fields, dict):
                     maps[binary.lower()] = {
-                        k: v for k, v in fields.items() if k in KNOWN_FIELDS and isinstance(v, str)
+                        k: v for k, v in fields.items() if k in KNOWN_KEYS and isinstance(v, str)
                     }
             return maps
     return {}
@@ -166,8 +167,47 @@ def wall_and_heals(events: list[dict]) -> tuple[dict[str, float], dict[str, int]
     return wall, heals
 
 
+def pi_stream_usage(text: str) -> tuple[dict[str, float], int]:
+    """Sum per-message usage from a pi `--mode json` event stream (probed
+    against pi 0.83.0): each assistant `message_end` carries
+    usage{input, output, cacheRead, cacheWrite, cost{total}} — provider-
+    computed, so on Copilot these are the credit-accurate dollars. Only
+    `message_end` is summed: `turn_end`/`agent_end` repeat the same messages
+    and would double-count."""
+    sums: dict[str, float] = {}
+    seen = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if obj.get("type") != "message_end":
+            continue
+        msg = obj.get("message") or {}
+        if msg.get("role") != "assistant":
+            continue
+        usage = msg.get("usage") or {}
+        seen += 1
+        for field, path in (
+            ("input_tokens", "input"),
+            ("output_tokens", "output"),
+            ("cache_read_tokens", "cacheRead"),
+            ("cache_write_tokens", "cacheWrite"),
+            ("cost", "cost.total"),
+        ):
+            v = dig(usage, path)
+            if v is not None:
+                sums[field] = sums.get(field, 0.0) + v
+    return sums, seen
+
+
 def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
-    """Sum envelope fields over every attempt's stdout (map items included)."""
+    """Sum usage over every attempt's stdout (map items included). Two
+    formats: a single JSON envelope with dotted field paths (claude-code
+    style), or `format = "pi-stream"` (pi's per-message event stream)."""
     logs = sorted(phase_dir.glob("stdout*.log")) + sorted(phase_dir.glob("items/*/stdout*.log"))
     binary = binary_of(phase_dir)
     if binary is None:
@@ -176,15 +216,25 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
             if binary:
                 break
     fmap = maps.get(binary or "")
+    stream_mode = bool(fmap) and fmap.get("format") == "pi-stream"
     sums: dict[str, float] = {}
     envelopes = 0
     for log in logs:
-        env = last_envelope(log.read_text(encoding="utf-8", errors="replace"))
+        text = log.read_text(encoding="utf-8", errors="replace")
+        if stream_mode:
+            got, seen = pi_stream_usage(text)
+            envelopes += 1 if seen else 0
+            for k, v in got.items():
+                sums[k] = sums.get(k, 0.0) + v
+            continue
+        env = last_envelope(text)
         if env is None:
             continue
         envelopes += 1
         if fmap:
             for field, path in fmap.items():
+                if field == "format":
+                    continue
                 v = dig(env, path)
                 if v is not None:
                     sums[field] = sums.get(field, 0.0) + v
