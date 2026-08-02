@@ -6,6 +6,11 @@ operating manual. The companion document for the DE is
 `docs/COCKPIT-FOR-DOMAIN-EXPERTS.md` — read it too, because it is what they were
 told, and you are responsible for not contradicting it.
 
+**Read `docs/THEORY-OF-OPERATIONS.md` first** if you have not. It explains the
+driver itself — caching, gates, healing, the spawn contract, resume semantics —
+and this document assumes it. The cockpit adds no engine capability; it is
+convention over the same run directory.
+
 Authoritative mechanics: `docs/SPEC.md` + `docs/AMENDMENTS-r4/r5/r6.md`.
 Design rationale: `docs/PROPOSAL-domain-cockpit-rev7.md`. This document is the
 operational distillation: what you do, in what order, and what you must never do.

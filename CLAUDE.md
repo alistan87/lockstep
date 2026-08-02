@@ -4,6 +4,10 @@ Harness-agnostic driver for headless coding agents: executes a taskgraph
 (`*.tg.json`) DAG whose nodes are prompts to agent harnesses or plain
 subprocesses. The driver never calls a model and never holds a credential.
 
+**Orientation:** `docs/THEORY-OF-OPERATIONS.md` explains why the driver behaves
+as it does (caching, gates, healing, the spawn contract, resume) — read it
+before changing engine behaviour or authoring a flow.
+
 **The spec is authoritative:** `docs/SPEC.md` (revision 3) as amended by
 `docs/AMENDMENTS-r4.md`, `-r5.md`, and `-r6.md` (all adopted; the LATER
 revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).

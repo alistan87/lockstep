@@ -9,6 +9,9 @@ a git repo.
 - **`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md`** — two pages, no jargon. Give this to
   the person who will actually use the system. It is the only document they
   need.
+- **`docs/THEORY-OF-OPERATIONS.md`** — what lockstep is and why it behaves the
+  way it does: caching, gates, healing, budgets, resume. Read this before
+  authoring or adapting any flow.
 - **`docs/COCKPIT-THEORY-OF-OPERATIONS.md`** — the operating manual for the
   assistant that drives lockstep on their behalf. Point your agent session at
   it before the first session.
