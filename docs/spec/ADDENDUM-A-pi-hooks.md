@@ -1,3 +1,8 @@
+---
+type: addendum
+title: Lockstep Addendum A — Pi Extension Hooks Integration
+resource: docs/spec/ADDENDUM-A-pi-hooks.md
+---
 > **Adopted as informative 2026-07-26, with the reconciliation notes below**
 > (the addendum was drafted against spec revision 3; this repo has since adopted
 > AMENDMENTS r4–r6). **Revised in place 2026-07-31** after a three-lens
@@ -56,7 +61,7 @@
 
 # Lockstep Addendum A — Pi Extension Hooks Integration
 
-**Status:** Informative addendum: it does not amend the frozen Lockstep v1 spec (`docs/SPEC.md`, revision 3, as amended by AMENDMENTS r4–r6), and `lockstep verify` enforces none of it. Nothing here changes the taskgraph format, CLI contract, exit codes, or phase lifecycle; the driver-side support it motivated (the `{phase_dir}` argv placeholder, node-identity env vars) is additive executor-config and spawn-environment surface, logged in the preamble. Within its scope this document is a binding working agreement for ALL Lockstep-driven nodes on the `pi` executor — not only Mimir flows — and for Mimir's interactive sessions: it records how Pi coding-agent extension hooks relate to Lockstep and constrains how extensions may be used so that harness replaceability is preserved.
+**Status:** Informative addendum: it does not amend the frozen Lockstep v1 spec (`docs/spec/SPEC.md`, revision 3, as amended by AMENDMENTS r4–r6), and `lockstep verify` enforces none of it. Nothing here changes the taskgraph format, CLI contract, exit codes, or phase lifecycle; the driver-side support it motivated (the `{phase_dir}` argv placeholder, node-identity env vars) is additive executor-config and spawn-environment surface, logged in the preamble. Within its scope this document is a binding working agreement for ALL Lockstep-driven nodes on the `pi` executor — not only Mimir flows — and for Mimir's interactive sessions: it records how Pi coding-agent extension hooks relate to Lockstep and constrains how extensions may be used so that harness replaceability is preserved.
 
 **Applies to:** Lockstep harness nodes executed via the `pi` executor, and interactive Mimir sessions run in Pi outside Lockstep entirely.
 

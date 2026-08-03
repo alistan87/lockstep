@@ -39,7 +39,7 @@ import okf  # noqa: E402
 # Never rewritten: build outputs, run dirs, the venv, caches — and TESTS.
 #
 # `tests/` is excluded because a path inside a test is a FIXTURE, not a
-# reference. The first apply proved it: `catalog.classify("docs/SPEC.md")` is an
+# reference. The first apply proved it: `catalog.classify("docs/spec/SPEC.md")` is an
 # input to a rule matcher, and rewriting it to "docs/spec/SPEC.md" silently
 # changed what the test exercised — two tests went red, and had they been
 # written less strictly they would instead have gone quietly meaningless.
@@ -122,7 +122,7 @@ def check_manifest(entries: list[dict]) -> list[str]:
 def rewrite_references(moves: dict[str, str], apply: bool) -> tuple[int, int]:
     """Replace every occurrence of each source path with its target.
 
-    Longest-first so `docs/SPEC.md` cannot be partially rewritten by a shorter
+    Longest-first so `docs/spec/SPEC.md` cannot be partially rewritten by a shorter
     key, and both separators are handled because Windows paths appear in prose.
     """
     ordered = sorted(moves.items(), key=lambda kv: -len(kv[0]))

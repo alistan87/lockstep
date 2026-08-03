@@ -19,7 +19,7 @@ Procedure:
    infrastructure (429 session limit, AV PermissionError, timeout), contract
    (model emitted non-conforming output), flow authoring (verification or
    interpolation error), and driver bug (only after excluding the others —
-   check `docs/DEVIATIONS.md` and CLAUDE.md's deliberate non-bugs first).
+   check `docs/spec/DEVIATIONS.md` and CLAUDE.md's deliberate non-bugs first).
 4. Recommend exactly one recovery: `resume <run_dir>` (default — hash-skips
    done work; it replays the flow copy archived IN the run dir, not an edited
    flow file), `resume <run_dir> --force-unlock` (cross-host lock),

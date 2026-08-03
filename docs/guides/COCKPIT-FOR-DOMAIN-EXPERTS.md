@@ -1,3 +1,8 @@
+---
+type: guide
+title: How this works, and what you do
+resource: docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md
+---
 # How this works, and what you do
 
 You are going to get substantial engineering work done by describing what you

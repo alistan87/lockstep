@@ -1,7 +1,12 @@
+---
+type: specification
+title: Lockstep — a harness-agnostic driver for headless coding agents
+resource: docs/spec/SPEC.md
+---
 # Lockstep — a harness-agnostic driver for headless coding agents
 
 > **Revision 4 note:** this file is the Revision 3 text, preserved verbatim. Revision 4 is a delta —
-> see `docs/AMENDMENTS-r4.md`, which is adopted and wins wherever the two disagree.
+> see `docs/spec/AMENDMENTS-r4.md`, which is adopted and wins wherever the two disagree.
 
 **Revision 3 (final pre-build).** Supersedes revisions 1–2 and the earlier `ratatoskr` / `tfdrive` drafts. Revision 2 applied the first adversarial review (§0.1, §0.2). Revision 3 applies four further review loops (§0.3): heal-snapshot sequencing, resume-fingerprint semantics, readonly enforcement, explicit heal targets, cascade invalidation, and assorted hardening. The spec is now frozen for v1 implementation; further defects should be found by pytest, not by review.
 
@@ -508,7 +513,7 @@ argv lists only, `shell=False` everywhere. No network from the driver; no creden
 6. `roles.py` — work → gate → heal → map → approval (tests 4, 5, and the lifecycle half of 8).
 7. `cli.py`, `status`, `init`, watch script, README quickstart, `lockstep.toml.example` with three stanzas and VERIFY comments; then `doctor` and the live smoke test on whatever harness the machine has.
 
-Working agreement: TDD per step (write the listed tests first), full suite after every change, `pydantic` remains the only runtime dependency, prefer deleting a feature over adding a dependency, and **stop and ask before deviating from any MUST, exit code, or stated guarantee.** Record deviations in `docs/DEVIATIONS.md` (what, why, date).
+Working agreement: TDD per step (write the listed tests first), full suite after every change, `pydantic` remains the only runtime dependency, prefer deleting a feature over adding a dependency, and **stop and ask before deviating from any MUST, exit code, or stated guarantee.** Record deviations in `docs/spec/DEVIATIONS.md` (what, why, date).
 
 ---
 

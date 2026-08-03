@@ -1,20 +1,48 @@
-# Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and unattended mode
+---
+type: proposal
+title: "Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and shippable setup"
+resource: docs/proposals/PROPOSAL-domain-cockpit-rev7.md
+---
+# Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and shippable setup
 
-**Status:** revision 6 — revision 5 (itself a consolidation of revs 2–4)
-plus a **readiness pass against the implementation**: every load-bearing
-engine claim in the document was re-verified against `src/lockstep/` and
-holds (citations in the review log), and three defects that would have
-surfaced during implementation are fixed here — **R-B1** (the pilot gate
-named no owner and no default branch, leaving steps 4 and 6b
-unschedulable), **R-B2** (multi-run deliverables had no run-set identity,
-so the cost rollup was unrecoverable after an orchestrator death), and
-**R-B3** (the two checks the document calls "mechanical" — B2 quiescence
-and L-B1 send-text integrity — lived in prose an agent was trusted to
-follow, and are now code with exit codes). Targets lockstep v0.3.x.
-Nothing here touches a frozen surface without an explicit amendment note;
-every driver change is additive and lands behind config.
+**Status:** revision 7 — revision 6 (the readiness pass: R-B1 pilot fork,
+R-B2 lineage identity, R-B3 mechanized checks) with the six outstanding
+owner decisions resolved and their consequences applied. **Targets
+lockstep v0.3.x, packaged as a wheel and installed on the work laptop —
+this revision is the first to treat the work laptop as the deployment
+target rather than a second dev machine.**
 
-**Implementation state at rev 6:** step 0 (envelope probe) and step 1
+Decisions resolved (detail in the review log):
+
+1. **The domain expert is a persona, not a named pilot:** *Lam Product
+   Engineer* — a non-programmer colleague who will receive this repo.
+   Design proceeds against the persona (branch A); **validation moves to
+   first contact** with a real colleague, after packaging (§ step 3).
+2. **Deployment target: the work laptop** — WezTerm hosting pwsh, pi.dev,
+   GitHub Copilot enterprise, credentials, and an existing repo with
+   access to proprietary data. The dev machine mirrors most of that
+   (verified: wezterm 20240203, pi 0.83.0), so the cockpit CAN be
+   rehearsed here; what it cannot exercise is the **Copilot enterprise
+   stanza** and **anything domain-specific**. Hence a new
+   **setup-verification deliverable** (§ step 2b): assumed-similar
+   becomes checked-similar, on the machine the author never sees.
+3. **No driver-side cost capture.** `cost_report.py` is sufficient — on
+   the condition that spend is **visible in a pane while the run is
+   executing**, not only after it finishes (§B v0.5). This retires the
+   `usage_fields` half of the r7 batch.
+4. **Moot** — it existed only if (3) had gone the other way. The
+   stanza-digest exclusion rule is no longer a prerequisite of anything,
+   and the hash boundary goes untouched.
+5. **Unattended mode split out** to `docs/proposals/PROPOSAL-unattended-mode.md`.
+6. **Planted-defect design deferred to first contact**, since it depends
+   on the colleague's domain and on the proprietary-data repo that only
+   exists on the work laptop.
+
+Nothing here touches a frozen surface at all — with (3) and (4) resolved,
+the plan no longer requires an r7 amendment to proceed. Every deliverable
+is a contrib script, a doc, a flow fragment, or a skill.
+
+**Implementation state at rev 7:** step 0 (envelope probe) and step 1
 (`contrib/cost_report.py` + sidecar field maps + offline tests) are
 LANDED (`af8b950`, `c1367fd` — the latter adds pi's `--mode json` stream
 parser, probed against pi 0.83.0). Everything else below is unbuilt.
@@ -31,16 +59,20 @@ make this sustainable:
 
 1. **Per-node cost tracking** — every run reports what each node spent
    (spawns, tokens, wall time — dollars only where a harness actually
-   reports them), visible to both the DE and the orchestrator.
+   reports them), **visible in a pane while the run is executing**, not
+   only in a post-mortem (rev-7 decision 3).
 2. **Gate-driven improvement** — the friction the system already records
    (gate blocks, heal rounds, corrective re-spawns) is aggregated across
    runs, turned into concrete human-approved improvements, and
    **measured**: every applied improvement is checked against
    before/after cohorts.
-3. **Unattended mode (§D)** — a run may proceed past most *intermediate*
-   human gates on system-rendered, evidence-citing judgment with deferred
-   human review — under earned, per-class, excursion-revocable
-   qualification, and never across the egress/spend/sensitivity floor.
+3. **A setup that verifies itself** — the DE receives this repo as a
+   wheel on a machine the author cannot inspect, so "is this installed
+   correctly" must be answerable by the DE alone, mechanically, before
+   any flow is run (rev-7 decision 2; § step 2b).
+
+Unattended mode, previously goal 3, is now a separate deferred document
+(`docs/proposals/PROPOSAL-unattended-mode.md`).
 
 ## Non-goals
 
@@ -52,24 +84,31 @@ make this sustainable:
   **permanent non-goal** per §16.2/r6, which this design respects rather
   than works around).
 - No change to frozen surfaces: exit codes, `format_version` 1.x
-  semantics, §7 fencing/footer, hash composition (M3). Where a feature
-  touches the hash boundary (the `usage_fields` stanza-digest rule, §B)
-  the amendment text is named as a prerequisite, not assumed.
-- No autonomous self-modification: improvement proposals are applied only
-  through the existing reviewed-and-approved SDLC flows, and unattended
-  mode structurally excludes self-modifying flows (§D, U-M2).
-- **The human channel is never forged** (§D, U-B1): interactive approvals
-  are answered only by a human at a real TTY; no mode, extension, or
-  automation ever types into an approval prompt.
+  semantics, §7 fencing/footer, hash composition (M3). **At rev 7 this
+  is absolute, not conditional**: decision 3 retired the `usage_fields`
+  stanza key, so nothing in this plan approaches the hash boundary and
+  no r7 amendment is a prerequisite of any step.
+- No autonomous self-modification: improvement proposals are applied
+  only through the existing reviewed-and-approved SDLC flows.
+- **The human channel is never forged:** interactive approvals are
+  answered only by a human at a real TTY; no mode, extension, or
+  automation ever types into an approval prompt. This is enforced by
+  construction (§A.3 L-B1: the approval pane RUNS the approval script; the
+  cockpit contains no `send-text` code path at all), and it is the
+  guarantee the deferred unattended design is required to preserve.
+- **Nothing this repo ships reads proprietary data.** The tool is
+  generic; the data lives in the DE's own repo on the work laptop.
+  Fixtures, tests, and anything committed here stay synthetic (§ step
+  2b, § step 3).
 
 ## Personas and trust model
 
 | Principal | Does | Never does |
 |---|---|---|
-| Domain expert (DE) | Talks to the orchestrator; answers domain questions; presses Enter on pre-typed commands; types `a`/`r` at approval prompts; says STOP | git, JSON, flow authoring, composing CLI commands, judgment calls about locks/resumes |
-| Orchestrator (interactive pi session) | Authors/runs flows per `docs/DRIVING-LOCKSTEP.md`; runs them **detached** (§A); translates run state; relays domain questions; manages panes per §A.3; owns recovery; writes the cockpit journal (§A.2) | Approvals (structurally cannot — non-TTY auto-reject; in unattended mode, judgment is rendered by judge *gates*, never by the orchestrator); editing live lineages; spending without stated budgets |
-| Agent nodes (headless spawns) | The engineering; in unattended mode, judge gates render triage verdicts citing mechanical evidence (§D) | Control flow beyond sanctioned gate blocks; asking questions directly (see §A.1) |
-| Human engineer (occasional) | Reviews improvement batches and deferred-approval ledgers; owns `lockstep.toml`, personas, sidecar configs, and the r7 amendment | — |
+| **Lam Product Engineer** (the DE persona) | Talks to the orchestrator; answers domain questions; presses Enter on pre-typed commands; types `a`/`r` at approval prompts; says STOP; runs the setup check after install | git, JSON, flow authoring, composing CLI commands, judgment calls about locks/resumes |
+| Orchestrator (interactive pi session) | Authors/runs flows per `docs/guides/DRIVING-LOCKSTEP.md`; runs them **detached** (§A); translates run state; relays domain questions; manages panes per §A.3; owns recovery; writes the cockpit journal (§A.2) | Approvals (structurally cannot — non-TTY auto-reject); editing live lineages; spending without stated budgets |
+| Agent nodes (headless spawns) | The engineering | Control flow beyond sanctioned gate blocks; asking questions directly (see §A.1) |
+| Human engineer (the author, remote) | Ships the wheel; reviews improvement batches; owns `lockstep.toml.example`, personas, sidecar configs, and flow authoring | Sit at the work laptop, see the proprietary repo, or reproduce a DE failure directly — hence every diagnosis must be possible from a run dir and a setup-check report alone |
 
 Ground truth stays the run dir. The DE's *primary* trust anchor is not
 citations they cannot read — it is (a) a mechanical, summary-free DE-tier
@@ -127,12 +166,17 @@ decisions and domain questions.
   by the cockpit script from the run dir — `state.json` for statuses plus
   the run's `flow.tg.json` copy for the denominators ("of 2" heal rounds,
   "of 25" budget) — fixed glossary (`running / waiting / sent back for
-  rework (1 of 2) / needs you / done`, plus the unattended glossary line
-  per §D, U-M1), spend line (`agent tasks used 9 of 25` always;
-  tokens/dollars when available), and for map nodes a collapsed line
+  rework (1 of 2) / needs you / done`), **the live spend line** (`agent
+  tasks used 9 of 25` always; tokens and wall time where the envelope
+  carries them, `no envelope` where it does not — rendered by
+  `cost_report.py --watch` against the *in-flight* run dir, rev-7
+  decision 3, so "what has this cost so far" is answerable during the
+  run and not only in a post-mortem), and for map nodes a collapsed line
   (`files checked: 12 of 40, 1 redone`). Bottom: the raw `lockstep
   status` table. The DE-tier text is summary-free by construction (field
-  mapping, no model), which is what makes it a trust anchor.
+  mapping, no model), which is what makes it a trust anchor — and the
+  spend line inherits that status, since it too is arithmetic over run
+  files with no model in the path.
 - The orchestrator is the pane manager (`wezterm cli`
   split/kill/set-title) under the §A.3 rules: "show me the reviewer" → a
   titled request-tail pane. Map fan-outs get ONE newest-active-item pane,
@@ -173,7 +217,8 @@ decisions and domain questions.
 - `contrib/cockpit.ps1 <run_dir>` — pwsh successor to
   `src/lockstep/watch/wezterm-watch.sh` (port it; don't start blank)
   implementing the layout, the DE-tier renderer, the `Tail-RunFile`
-  primitive, `Send-PreTyped` (L-B1), and the reader rules (§A.3).
+  primitive, the verified approval-pane launcher (L-B1), and the reader
+  rules (§A.3).
   Invoked by the orchestrator/launcher, never typed by the DE. Fallback
   without wezterm: plain status loop.
 - Starter fragments in `flows/starter/`: the clarify-gate fragment
@@ -189,8 +234,8 @@ decisions and domain questions.
    runs a **budget-consent beat**: it states the cap in honest units ("up
    to 25 agent tasks; on this machine I can count tasks, not dollars —
    last week's similar run was about $N on the bill"), states the mode
-   (attended by default; unattended per §D requires its own consent
-   terms), and waits for an explicit go. The consent is journaled (§A.2)
+   (attended — the only mode this document defines), and waits for an
+   explicit go. The consent is journaled (§A.2)
    under a deliverable slug the orchestrator derives from the intent
    (the tab title's lineage name); that slug opens the lineage index
    (R-B2) that every later segment appends to.
@@ -218,19 +263,33 @@ decisions and domain questions.
    reaches the approval and auto-rejects — exit 6 is the *designed
    handoff signal*, narrated as "ready for your decision."
 
-   **The evidence rule (B1).** A DE-facing approval node MUST render its
-   evidence into its own TTY output, so the APPROVAL pane shows the DE
-   what they are approving — never a narrated summary of it. Evidence is
+   **The evidence rule (B1).** A DE-facing approval MUST put its evidence
+   in front of the DE in the APPROVAL pane — never a narrated summary of
+   it. Evidence is
    a mechanical extract of the deliverable produced by the flow, not by
    the orchestrator: the plan's headings and per-section first lines, a
    diff stat, the gate's findings table, or the full document when it is
    short. The flow author chooses the extract; the extraction is
-   deterministic (shell/compute node output rendered by the approval
-   prompt), so the evidence channel has the same trust status as the
-   MISSION DE tier. The orchestrator MAY gloss the evidence in CHAT but
-   the DE is briefed: *decide from the pane, not the chat.* A flow whose
-   approval shows no evidence is unsuitable for the cockpit — same
+   deterministic, so the evidence channel has the same trust status as
+   the MISSION DE tier. The orchestrator MAY gloss the evidence in CHAT
+   but the DE is briefed: *decide from the pane, not the chat.* A flow
+   whose approval shows no evidence is unsuitable for the cockpit — same
    register as the `sdlc-e2e` exclusion.
+
+   **ERRATUM (found in implementation, 2026-08-02).** Every revision
+   through rev 7 said the approval node renders evidence "into its own
+   TTY output". **It cannot.** A shell node's stdout goes to
+   `phases/<node>/stdout.log`, not to the terminal, and the engine's
+   approval prompt is a bare one-line `input()` (`roles.py:1096`). With
+   no other mechanism the pane shows a naked `[approval:x] [a]pprove /
+   [r]eject / [e]dit:` and the DE decides from chat narration — the exact
+   outcome this rule exists to forbid. As built: the evidence node writes
+   `<run_dir>/approval-evidence.txt`, and the pane runs
+   **`contrib/approve.ps1`**, which prints that file, prints the briefing
+   line, and only then calls `lockstep resume`. One pre-typed command,
+   evidence first, prompt second. `cockpit.ps1 -Approve` warns loudly
+   when the file is absent, and `approve.ps1` tells the DE that a missing
+   evidence file is a flow defect whose safe answer is `r`.
 
    **The quiescence check (B2, mandatory, mechanical — R-B3).** Before
    spawning the APPROVAL pane it MUST be verified, from run-dir state
@@ -263,10 +322,9 @@ decisions and domain questions.
    dirs.
 
    The orchestrator then spawns a titled APPROVAL pane with `lockstep
-   resume <run_dir>` **pre-typed**, via `cockpit.ps1`'s `Send-PreTyped`
-   and never a raw `wezterm cli send-text`, under the §A.3
-   target-integrity rule (L-B1: only into a pane spawned and
-   title-verified in the same action sequence) — the DE presses Enter,
+   resume <run_dir>` running as the pane's own program (see the L-B1
+   erratum: pre-typing was replaced because a spawned pane cannot be
+   assumed to be a shell) — the DE presses Enter,
    the blocked approval re-runs on a real TTY, and the DE answers the
    actual prompt, which is `[a]pprove / [r]eject / [e]dit` (documented
    verbatim; the DE is briefed "type a or r, then Enter — never e"; if
@@ -281,10 +339,11 @@ decisions and domain questions.
    button: closing the APPROVAL pane or pressing Ctrl-C in a run pane
    kills that process; the boot protocol makes this recoverable, and the
    DE docs say so — "closing the laptop never loses paid work.") STOP
-   semantics are mode-independent (§D).
+   semantics are unconditional.
 6. Completion: the flow's final shell node copies the deliverable OUT of
    sensitive `runs/` into a designated `Deliverables/` folder — always
-   behind a human approval (§D, U-B4: egress is never unattended); the
+   behind a human approval — egress is never automated, the one floor
+   the deferred unattended design also inherits; the
    orchestrator opens it (`Start-Process`) and appends the cost table.
    The run dir itself remains internal.
 7. **Queued asks:** one deliverable per tab; a second ask while one runs
@@ -338,7 +397,8 @@ it (it is cockpit convention, not driver schema — no r7 text needed).
 Entry kinds:
 
 - `consent` — budget-consent beat: cap stated, units, mode
-  (`attended|unattended` with the §D terms when unattended), DE's go,
+  (`attended`; the deferred unattended design adds its own terms here),
+  DE's go,
   timestamp, plus (R-B2) `deliverable: <slug>` and `segment: k of n` —
   the back-reference that lets an orphaned run dir name its own lineage.
 - `clarify` — the full M3 triple: gate finding text (verbatim), the
@@ -389,18 +449,46 @@ prohibited. Enter is never sent under any circumstances. A failed
 round-trip aborts the handoff and falls back to CHAT narration + a
 freshly spawned pane on the next attempt.
 
-**The rule is enforced by construction, not by discipline.**
-`cockpit.ps1` exports **`Send-PreTyped -RunDir <dir> -CommandText <str>
--Title <str>`**, which performs the whole sequence internally —
-split-pane → set-title → list → match → send-text — and **accepts no
-pane-id parameter**, so there is no argument by which a caller can aim it
-at a preexisting pane. It sends text only; it has no code path that emits
-a newline. On round-trip mismatch it kills the pane it just created,
-returns failure, and writes nothing. The orchestrator issues no raw
-`wezterm cli send-text` at all — that is the checkable rule (and, per
-§D/U-B1, the same construction is what makes "the human channel is never
-forged" mechanically auditable rather than merely promised: there is no
-callable surface that types into an approval prompt).
+**ERRATUM (found in implementation, 2026-08-02): pre-typing was the wrong
+mechanism, and the rule is stronger without it.**
+
+As specified, the cockpit spawned a shell pane and pre-typed the resume
+command into it. On the first real machine the spawned pane *did not stay a
+shell*: a PowerShell profile auto-starts an interactive agent inside a project
+workspace, so `pwsh -NoExit` became that agent and the "command" was typed into
+a **chat composer**. The specified verification (set a title, confirm the pane
+lists) caught nothing — it authenticated the pane's *identity*, never its
+*program* — and because a WezTerm tab is shared by every pane in it, setting a
+tab title also renamed the operator's own tab. Had the human pressed Enter they
+would have sent a shell command to a language model instead of approving.
+
+As built, `cockpit.ps1` spawns a pane that **runs `contrib/approve.ps1` as its
+program**, and there is no `send-text` anywhere in the cockpit. That is
+strictly stronger than the rule it replaces: L-B1 asked that no automation type
+into an approval prompt, and the way to guarantee that is to have no code path
+that types at all. The human's only input remains `a`/`r` at the genuine
+prompt, so "the human channel is never forged" now holds by construction rather
+than by discipline. Three supporting rules, each earned by a failure observed
+during the build:
+
+- **`-NoProfile` on every cockpit pane.** A cockpit pane is infrastructure, not
+  the operator's interactive shell, and must not inherit startup customisation
+  that can substitute its program.
+- **Handshake verification, not title verification.** The pane's program writes
+  a file naming its per-handoff marker and its `WEZTERM_PANE` (which WezTerm
+  sets inside every pane it spawns); the cockpit requires both to match the
+  pane it just created. A pane *title* cannot carry this signal — a title
+  follows the foreground process, so it becomes `python.exe` the moment
+  `lockstep resume` starts, and a correct handoff would look like a failure.
+- **Verification failure kills the pane and aborts** to CHAT narration rather
+  than leaving a decision surface nobody can vouch for.
+
+`lockstep doctor --setup` reports whether shell profiles are present, stating
+plainly that cockpit panes ignore them and that a terminal opened BY HAND may
+not be a plain shell. It deliberately does not *probe* this: the substitution
+occurs only in an interactive console, so a probe with piped stdio returns
+control normally and would report "ok" on exactly the machines that have the
+hazard — false assurance being worse than a stated fact.
 
 **L-B2 — one tail primitive.** `cockpit.ps1` ships a single
 `Tail-RunFile` primitive — FileStream opened with `FileShare
@@ -468,10 +556,35 @@ is the one sanctioned exception to binding.)
   them, labeled notional (both machines actually bill in quota/limits).
   Executors with no envelope print "no envelope", never a fake 0. Field
   maps live in an operator-owned sidecar config (not hardcoded — and not
-  in `lockstep.toml` yet: the stanza model is `extra="forbid"`),
-  pre-proving the v1 shape. Flows may append a final shell node running
-  it (it derives the run dir from `LOCKSTEP_PHASE_DIR/../..` — no
-  `{run_dir}` interpolation form exists — and excludes its own cost).
+  in `lockstep.toml`: the stanza model is `extra="forbid"`). Flows may
+  append a final shell node running it (it derives the run dir from
+  `LOCKSTEP_PHASE_DIR/../..` — no `{run_dir}` interpolation form
+  exists — and excludes its own cost).
+
+- **v0.5 — live pane mode (rev-7 decision 3, the condition on which
+  driver capture was declined).** `cost_report.py --watch` renders a
+  compact spend block against a run dir that is **still executing**, on
+  the MISSION poll interval. Three requirements follow, and they are the
+  whole of the work:
+  - **Mid-flight tolerance.** Running nodes have no end timestamp, the
+    current attempt's `stdout.log` may be partially written or absent,
+    and `state.json` may be mid-replace (atomic-replace + AV retries,
+    per the ops notes). Every one of these renders as `in progress` or
+    the last good value — never a crash, never a fake 0, never a
+    number that jumps backwards. Reads go through the same
+    reader-rule discipline as §A.3 L-B2.
+  - **Compact rendering.** A pane block of a few lines (`agent tasks
+    used 9 of 25 · 2 rework rounds · 41 m elapsed · tokens: 1.2 M (pi)
+    / no envelope (copilot)`), not the full per-node table. `--watch`
+    implies the compact form; the full table stays the default.
+  - **Cheap to re-run.** It is invoked every poll, so it walks the run
+    dir without holding handles and without re-parsing envelopes it
+    has already seen (mtime/size short-circuit).
+
+  This is why no `usage` event, no `usage_fields` stanza key, and no
+  driver change are needed: the numbers the DE needs are already on
+  disk, and the only thing missing was reading them *early* rather than
+  *late*.
 
 - **R-B2 — deliverable identity (the run-set mechanic).** Segmentation
   (§A step 4) makes the multi-run case the NORMAL case, not the
@@ -496,24 +609,32 @@ is the one sanctioned exception to binding.)
   list. The index is cockpit convention — the engine neither writes nor
   reads it, so no r7 text is needed. Retro (§C) keys deliverable-level
   rollups off the same slug.
-- **v1 — driver capture, additive, behind config — with the digest rule
-  named.** Stanza key `usage_fields = {...}`; extraction after each
-  attempt; a new `usage` event kind; per-node accumulation in
-  `state.json`; a spend column in `status`. **Hash impact is NOT "none"**
-  (rev-1 error): the harness fingerprint includes the whole-stanza digest
-  (r5 B1), so adding the field to the model — even unset — would change
-  every stanza's digest and silently re-bill every cached node on
-  upgrade. The r7 amendment MUST therefore redefine the stanza digest to
-  exclude `usage_fields` (defensible: it changes what the driver reads
-  back, never what the spawn does) or explicitly adopt the one-time
-  invalidation; the digest rule is amendment text on the hash-composition
-  boundary, not an implementation detail. `doctor` extends to check
-  configured `usage_fields` resolve against a real probe envelope.
+- **v1 — driver capture: DECLINED at rev 7 (decision 3), not deferred.**
+  The design was: stanza key `usage_fields = {...}`, extraction after
+  each attempt, a `usage` event kind, per-node accumulation in
+  `state.json`, a spend column in `status`. It is dropped because v0.5
+  delivers the only thing it was wanted for — spend visible during the
+  run — without touching the driver, and because its cost was
+  disproportionate: the harness fingerprint includes the **whole-stanza
+  digest** (r5 B1; verified at rev 6 against `harness.py:115-119`, where
+  `stanza_digest()` is a `model_dump()` of the entire stanza), so adding
+  the field to the model *even unset* would change every stanza's digest
+  and silently re-bill every cached node on upgrade. Avoiding that
+  required amendment text on the hash-composition boundary. Trading a
+  frozen-surface amendment and a re-bill for a number already derivable
+  from `stdout.log` was the wrong trade.
+
+  **Revisit only if** a future harness reports usage *only* in a channel
+  the driver consumes and discards (i.e. the number stops being
+  recoverable from the phase dir after the fact). That is the sole
+  condition that changes the arithmetic; absent it, v0/v0.5 is the
+  permanent answer.
 - **v2 — token/cost budgets** (`budget.max_tokens`/`max_cost`, exit 4):
-  deferred until v1 numbers prove out; needs §9.5 amendment text, which
-  must state that enforcement is executor-dependent (only metered stanzas
-  bind). Until then `max_agent_spawns` stays the lever — it already
-  counts heal rounds and correctives.
+  now unreachable — it depended on v1's in-driver numbers, and enforcing
+  a cap on numbers a contrib script reads after the fact is not a thing.
+  `max_agent_spawns` remains the lever, and it is the honest one on both
+  machines anyway: it already counts heal rounds and correctives, and
+  both harnesses bill in quota rather than dollars.
 
 ### C. Gate-driven improvement (feature)
 
@@ -534,7 +655,7 @@ never rotated) — marker match only, bodies never shipped.
   every applied improvement changes `flow_hash`, so before/after cohorts
   come free. **Privacy projection specified:** node ids, gate ids,
   counts, rounds, severities, `Finding.category`, cost numbers, triage
-  classes and qualification states (§D) — `claim`/`evidence`/`reason`/
+  approval outcomes — `claim`/`evidence`/`reason`/
   heal-text bodies are stripped or hard-truncated (they routinely quote
   code and prompts; "metadata only" must be enforced by projection, not
   assumed). The aggregator skips pi `--session-dir` transcript subtrees
@@ -546,8 +667,7 @@ never rotated) — marker match only, bodies never shipped.
   metric moved across cohorts. The feature's success metric:
   heal-rounds-per-run and blocks-per-gate for a touched flow decline
   within N runs of an applied batch — and a regression is a first-class
-  retro finding. For unattended cohorts (§D): overturn rate and
-  time-in-class per (flow_hash, approval-class).
+  retro finding.
 - **Consumption path, default-first:** the orchestrator reads the
   friction report and *discusses* improvements with the human; upheld
   ones ride `plan-adversarial` → `implement-heal` with approval, one
@@ -576,130 +696,17 @@ control flow through extensions; retro reading past run dirs is cross-run
 forensics as fenced data, which A.3.3 anticipates — not the intra-lineage
 re-run contamination note 4 prohibits.
 
-### D. Unattended mode (feature)
+### D. Unattended mode — split out (rev 7)
 
-Unattended mode lets a run proceed past most *intermediate* human gates
-using judgment rendered by the system itself, with deferred human review.
-It is designed under three non-negotiables:
+Moved to **`docs/proposals/PROPOSAL-unattended-mode.md`**, unchanged, with its own
+risks and open question. It was ~40 % of this document, is double-gated
+on things that do not yet exist (a cockpit in real use, plus an attended
+retro cohort to concord against), and was crowding out work that is
+about to be built. Its two structural guarantees still bind here and are
+restated in place: **the human channel is never forged** (non-goals) and
+**egress is always human-approved** (§A step 6).
 
-1. **The human channel is never forged (U-B1).** The structural
-   guarantee — interactive approvals answered only by a human at a real
-   TTY — stays intact. Unattended mode is implemented by *removing*
-   interactive approval nodes from the flow, never by answering them.
-   Sending keystrokes into an approval prompt (by the orchestrator, an
-   extension, or any automation) is a prohibited pattern, same standing
-   as Addendum-A's; §A.3's L-B1 spawn-only send rule makes it
-   mechanically checkable.
-2. **Autonomy is earned per class, and revocable (U-B3).** No judge
-   auto-accepts anything until it has demonstrated concordance with human
-   decisions on that exact flow and approval class — and one overturn
-   revokes it.
-3. **Egress is never unattended (U-B4).** Nothing leaves `runs/` — no
-   `Deliverables/` copy, no external side effect, no spend-cap increase,
-   no artifact carrying a sensitivity label above the workspace's floor —
-   without a human approval. Unattended mode removes *intermediate*
-   approvals only.
-
-**Mechanism (v0 — no engine change):**
-
-- **`contrib/make_unattended.py <flow.tg.json>`** — a deterministic
-  transform producing the unattended variant of a DE-facing flow: each
-  intermediate approval node is replaced by a **judge gate** (a normal
-  gate; model judgment gating control flow is already-sanctioned
-  mechanics) followed by a shell node appending to the ledger. Terminal
-  egress approvals are left untouched (U-B4). The transform is
-  deterministic and diffable; the variant's `flow_hash` differs from the
-  attended flow's, so retro cohorts separate attended and unattended for
-  free.
-- **Judge gates consume evidence (U-B3).** The judge's prompt includes
-  the same B1 mechanical extract the human would have seen, and its
-  contract requires the Verdict to cite it. A judge whose Verdict does
-  not reference the evidence is a contract violation (block), not a
-  pass.
-- **Triage classes** (judge contract output, enum, closed):
-  - `auto-accept` — proceed; permitted only for qualified classes.
-  - `proceed-flagged` — proceed; ledger entry marked for priority
-    review.
-  - `hold` — gate blocks (exit 2); the orchestrator queues it for the
-    human like any needs-you beat. This is the starting class for
-    everything.
-  - `escalate` — gate blocks AND the orchestrator raises it in CHAT
-    immediately as urgent (judge saw something anomalous: contradictory
-    evidence, scope drift, sensitivity ambiguity).
-- **The ledger — `<run_dir>/deferred-approvals.jsonl`** (append-only,
-  flow-written via the shell node, journal-style reader/writer
-  discipline): approval id, class, judge triage + verdict summary,
-  evidence extract reference, **downstream cost-at-risk** (the set of
-  descendant nodes that will consume the artifact, with their historical
-  cost from the cost report where available), qualification state at
-  decision time.
-
-**U-B2 — deferral vs. steer-permanence.** A post-hoc rejection of a
-deferred item invalidates every descendant that already ran; with
-segmentation gone (unattended chains segments automatically), one bad
-early auto-accept cascades into the whole lineage — and steer-permanence
-means true retraction is `--fresh`, re-billing everything. Rule:
-`auto-accept` and `proceed-flagged` are legal only when the ledger's
-computed downstream cost-at-risk is at or below a configured cap
-(`unattended.max_cost_at_risk`, sidecar config beside the cost field
-maps); above the cap, the judge's best available class is `hold`. The cap
-is stated at the consent beat in the same honest units as the budget
-("I'll pause for review whenever more than ~N tasks of work would ride on
-an unreviewed decision").
-
-**Qualification — skip-lot sampling for approvals (U-B3, operative
-rule).** Per **(flow_hash, approval-class)** pair:
-
-- Start at `hold` — 100 % inspection. The judge still runs and renders a
-  proposed verdict; the human decides. Every human decision recorded
-  against the judge's proposal is a **concordance sample** — the hold
-  phase *is* the qualification data source (no chicken-and-egg).
-- `N_flag` consecutive concordant samples ⇒ class may render
-  `proceed-flagged`. `N_auto` further concordant reviews of flagged
-  items ⇒ `auto-accept` permitted. (Defaults `N_flag = 5`,
-  `N_auto = 5`; operator-owned in the sidecar config.)
-- **Any overturn — a human reversing a judge's accepted/flagged decision
-  at review — is an excursion: the class reverts to `hold`
-  immediately**, and the overturn is a first-class retro finding with
-  the judge's cited evidence attached.
-- The retro computes overturn rate and time-in-class per cohort; a class
-  that cannot hold `auto-accept` across two consecutive cohorts is
-  flagged for judge-contract rework, not for threshold loosening.
-- The **planted-defect discipline extends to judges (m1 extension):**
-  before a class first enters `proceed-flagged`, one seeded
-  domain-visible defect must pass through it and the judge must `hold`
-  or `escalate` it. A missed plant blocks qualification for that class
-  and files as a blocker against the judge's contract.
-
-**U-M1 — consent, rendering, and STOP.** Unattended mode is entered only
-per-run, at the budget-consent beat, and journaled: the `consent` entry
-gains `mode: attended|unattended`, the cost-at-risk cap, and a
-restatement of the never-auto floor. MISSION's DE tier renders unattended
-decisions mechanically and distinctly: `auto-approved (review pending:
-3)` with its own glossary line; the count comes from the ledger, never
-from narration. STOP semantics are unchanged and mode-independent. The
-review beat itself is a needs-you moment: the orchestrator presents
-ledger items **with their evidence extracts** (never summaries alone —
-B1 applies to async review too), the human answers `a`/`r` per item, and
-an `r` triggers the rework conversation with its cost stated (steer vs
-`--fresh`, per §A.1's permanence rules).
-
-**U-M2 — the improvement loop stays human.** The gate-driven improvement
-loop (§C) is outside unattended scope entirely: improvement batches
-modify flows and judges themselves, and a system auto-approving changes
-to its own judges is the textbook runaway. `make_unattended.py` refuses
-to transform any flow whose nodes write to `flows/`, `contrib/`, or
-`lockstep.toml`. (Consistent with the standing non-goal: no autonomous
-self-modification.)
-
-**r7 note (deferred, recorded).** If unattended mode proves out, the
-engine-native form is an `approval.policy` stanza + a `deferred` event
-kind, batched with the existing r7 items. The ledger and transform
-pre-prove the shape, same pattern as cost tracking's v0 → v1. Not
-implemented before the v0 loop has closed at least once with real
-qualification data.
-
-## Step-by-step changes (resequenced: mechanics and pilot before polish)
+## Step-by-step changes (rev 7: build for the persona, validate at first contact)
 
 0. ~~**Envelope probe on both machines**~~ — **DONE** (`af8b950`);
    pi `--mode json` stream shape probed against 0.83.0 (`c1367fd`). *(B)*
@@ -711,8 +718,12 @@ qualification data.
    writer convention, `cost_report.py --runs-from <slug-or-file>`, journal
    `consent.deliverable`/`segment` fields, and an index-rebuild-from-journals
    path; offline tests for slug resolution, a missing index, and a run dir
-   listed twice. Small, independent of the pilot, and a prerequisite for the
-   boot protocol's spend restatement. *(B-v0)*
+   listed twice. *(B-v0)*
+1c. **`--watch` live pane mode** (§B v0.5, decision 3): compact rendering,
+   mid-flight tolerance (running nodes, partial `stdout.log`, `state.json`
+   mid-replace), and re-run cheapness. This is now a **prerequisite of the
+   cockpit**, not a nicety: MISSION's spend line is its only source, and
+   declining driver-side capture is only defensible if this exists. *(B-v0.5)*
 2. Clarification-gate pattern + approval rules + journal + **the B2
    predicate as code** (R-B3): starter fragments (clarify gate,
    evidence-bearing approval), `contrib/quiescent.py` + offline tests
@@ -721,75 +732,109 @@ qualification data.
    `FLOW-AUTHORING.md`/`DRIVING-LOCKSTEP.md` sections (evidence rule,
    **the quiescence CALL** — not a procedure to follow by hand — dead-pid
    force-unlock rule, exit-6-as-handoff narration, echo-confirm with
-   verbatim finding), journal spec + boot-protocol journal replay.
-   Pre-pilot, no driver change. *(A)*
-3. **Pilot fork — decide before scheduling anything below.** The pilot
-   is a hard gate on steps 4 and 6b, and rev 5 left it with no owner and
-   no default, which is what made the back half of this plan
-   unschedulable (R-B1). It is now an explicit fork with a decision
-   point, not an aspiration:
+   verbatim finding), journal spec + boot-protocol journal replay. No
+   driver change. *(A)*
+2b. **Packaging + setup verification — new at rev 7 (decision 2).** The
+   DE receives a wheel on a machine the author cannot inspect, so
+   "assume we have a similar setup" has to become a check the DE can run
+   alone and a report the author can read remotely.
 
-   - **Owner:** the human engineer (§ personas table) — the same
-     principal who owns `lockstep.toml`, personas, and the r7 amendment.
-   - **Decision point:** at the completion of step 2. The engineer
-     either **names a person** (recorded, with their domain, in this
-     document's step-3 line) or declares branch B. No third state:
-     "we'll find someone" is branch B until a name exists.
-   - **Branch A (named):** run the attended-only pilot — success/abort
-     criteria written *before* the session, incl. the planted-defect
-     criterion (Test plan). Steps 4 and 6b unlock on its findings.
-   - **Branch B (default, unnamed):** workstream A terminates at the
-     step-2 pattern docs, which stand on their own — they serve the
-     maintainer driving lockstep by hand, and `quiescent.py` +
-     `--runs-from` are useful with or without a DE. Steps 4 and 6b are
-     **struck from the plan**, not deferred: `cockpit.ps1` is the
-     largest deliverable in the document, has no automated tests, and
-     exists solely to serve a persona that does not exist under branch
-     B. §D is unreachable in branch B by construction (it is gated on
-     the pilot), so unattended mode goes with it. Effort redirects to
-     C-v0 (step 5), which is pilot-independent.
+   - **Wheel build + install path**: `lockstep` installed from a wheel
+     into a venv on the work laptop, with `lockstep.toml` derived from
+     `lockstep.toml.example` for that machine's stanzas (pi.dev, GitHub
+     Copilot enterprise). Note copilot-cli has no JSON mode — its nodes
+     render `no envelope` in every cost view, by design, and the DE
+     must never read that as an error.
+   - **`lockstep doctor` extension**: today it probes harness stanzas
+     (the only check that catches flag drift). Extend it to the cockpit
+     prerequisites — WezTerm present and `wezterm cli` responsive, pwsh
+     version, the configured `Deliverables/` target writable, the
+     personas dir and cost-fields sidecar resolvable, `runs/` present
+     and gitignored. Each check emits a one-line pass/fail the DE can
+     read and the author can be pasted.
+   - **`/getting-started` skill** (repo skill, alongside
+     `/flow-authoring` and `/debug-run`): walks the DE's orchestrator
+     through first-run setup, invokes `doctor`, explains failures in DE
+     register, and stops at the first hard failure rather than
+     proceeding into a run that will fail later and less legibly.
+   - **Setup-check report**: the artifact the DE sends back when
+     something is wrong. It must be safe to send — machine facts and
+     check results only, never repo contents, never paths inside the
+     proprietary repo beyond their existence.
 
-   Branch B is the honest default, and naming it as such is the fix: it
-   converts an indefinite block into a shipped, coherent, smaller
-   deliverable. *(A)*
-4. **[branch A only]** `contrib/start-cockpit.cmd` +
-   `contrib/cockpit.ps1` (port `src/lockstep/watch/wezterm-watch.sh`):
-   DE-tier renderer, `Tail-RunFile`, pane state machine + hysteresis,
-   **`Send-PreTyped`** (L-B1 by construction — no pane-id parameter,
-   R-B3), boot/recovery protocol with journal replay, lineage-index
-   read, and pane re-listing; + scripted manual test protocol
-   (rotation-under-tail drill, stale-pane-id handoff drill,
-   non-quiescent handoff drill). *(A)*
+   This step is what makes remote support possible at all: per the
+   personas table, the author can never reproduce a DE failure directly.
+   *(A, new)*
+3. **First contact — validation, not a pilot gate (decision 1).** The
+   DE is a **persona** — *Lam Product Engineer* — not a named individual,
+   so rev 6's "name a person or strike the cockpit" fork resolves to
+   **branch A with the validation moved after packaging**: build steps
+   1c/2/2b/4 against the persona, ship the wheel, and treat the **first
+   real colleague session** as the pilot.
+
+   What this costs, stated plainly: `cockpit.ps1` gets built before any
+   real user has touched the design, so its UX claims are unvalidated
+   at build time. That is a genuine risk rev 6 was written to avoid, and
+   it is accepted here for a reason rev 6 did not have — the tool is
+   being *distributed* to several colleagues rather than demonstrated to
+   one, so there is no single session to gate on, and the persona is the
+   only thing that can be designed against until the first colleague
+   actually sits down.
+
+   What does NOT change: the success criteria still get written **before**
+   the first session, not after — (a) zero moments where the DE composes
+   a command or reads JSON; (b) comprehension spot-checks (the DE states
+   what is running / blocked / spent, compared against state files, zero
+   discrepancies); (c) recovery of a deliberately killed run via the
+   double-click path alone; (d) the planted-defect criterion, whose
+   design is deferred to that session per decision 6 (it needs the
+   colleague's domain and the proprietary repo, neither of which exists
+   on the dev machine). A missed plant is a named blocker against B1's
+   extract design.
+
+   Mitigation for building unvalidated: keep step 4 minimal — the pane
+   grammar (§A.3) is already specified tightly enough to implement
+   without UX guesswork, and anything beyond it waits for first contact.
+   *(A)*
+4. `contrib/start-cockpit.cmd` + `contrib/cockpit.ps1` (port
+   `src/lockstep/watch/wezterm-watch.sh`): DE-tier renderer **including
+   the live spend line from `cost_report.py --watch`**, `Tail-RunFile`,
+   pane state machine + hysteresis, **the handshake-verified approval
+   pane** (L-B1 by construction — the pane runs the script, nothing is
+   typed, R-B3), boot/recovery protocol
+   with journal replay, lineage-index read, and pane re-listing; +
+   scripted manual test protocol (rotation-under-tail, stale-pane-id
+   handoff, non-quiescent handoff). **The drills run on the dev machine
+   first** — it has wezterm and pi, so the pane grammar, the reader
+   rules, and the handoff choreography are all genuinely testable here
+   against fake/shell nodes at zero token cost — **and are re-run on the
+   work laptop** before first contact, where the Copilot stanza and the
+   real repo enter the picture. *(A)*
 5. `contrib/retrospect.py` + offline tests (synthetic run dirs derived
    from a sanitized real run; blocks, heals, corrective markers,
    cohorts, told-vs-state comparator, clarify-triple fidelity tripwire).
    *(C-v0)*
 6. `flows/starter/retrospect.tg.json` + README row (adoption gated per
    §C). *(C-v1)*
-6b. **[branch A only]** `contrib/make_unattended.py` + ledger writer +
-   sidecar qualification state + offline tests (transform determinism;
-   egress nodes untouched; cost-at-risk computation; qualification state
-   machine incl. excursion revert; refusal on self-modifying flows).
-   **Gated on: the pilot passed AND the retro has produced at least one
-   attended cohort** (the overturn comparator needs somewhere to live).
-   Unreachable under branch B — qualification data is human-decision
-   data, and branch B has no recurring human decisions to concord
-   against. *(D-v0)*
-7. r7 amendment batch: `usage_fields` stanza key + **stanza-digest
-   exclusion rule**, new event kinds reserved against §10.1 (`usage`,
-   `corrective`, `steer-consumed`, `deferred`), state accumulation +
-   status column, `approval.policy` (recorded, not implemented before
-   D-v0 closes) — batched with the two r7 items DEVIATIONS already
-   queues. Implement only after adoption. *(B-v1, D-r7)*
-8. Defer: token budgets (B-v2), `report` verb (C-v2), monolithic-flow
-   approval mechanic (r7 candidate).
+7. **r7 amendment batch — shrunk to nothing load-bearing.** Decision 3
+   removed `usage_fields`, the stanza-digest exclusion rule, the `usage`
+   event, state accumulation, and the status spend column; decision 5
+   moved `approval.policy` to the unattended document. What remains is
+   optional bookkeeping that blocks no step: reserving `corrective` and
+   `steer-consumed` event kinds against §10.1, batched with the two r7
+   items `DEVIATIONS.md` already queues. Do it when something else needs
+   an amendment; do not open one for this alone. *(bookkeeping)*
+8. Struck rather than deferred: token budgets (B-v2, unreachable without
+   v1), `report` verb (C-v2, contrib scripts remain the shape).
+   Still open: the monolithic-flow approval mechanic (r7 candidate;
+   segmentation is the rule until then).
 
 ## Test plan
 
 - Contrib scripts: offline unit tests against synthetic fixtures (no
   tokens); existing suite stays green throughout; flow verification for
-  the retro flow, the clarify fragment, the evidence-approval fragment,
-  and unattended transforms.
+  the retro flow, the clarify fragment, and the evidence-approval
+  fragment.
 - **`quiescent.py` (R-B3):** offline cases pinning each exit code —
   quiescent-except-approval (0); unconsumed steer mail against a done
   target, a pending non-approval node, a failed-retryable node, an
@@ -802,18 +847,23 @@ qualification data.
   `consent.deliverable` entries and produces the same rollup; a run dir
   appended twice is counted once; a segment whose journal is absent is
   reported as unknown, never silently dropped from the total.
-- B-v1 (post-amendment): fake-executor envelopes with usage fields; a
-  stanza-digest test pinning that adding/setting `usage_fields` does NOT
-  change cached-node hashes; live smoke (`LOCKSTEP_LIVE`) reconciling v0
-  totals against provider-reported envelope numbers — not merely
-  asserting parse success.
-- Cockpit (branch A): scripted manual protocol (spawn, refresh across
+- **`--watch` live mode (§B v0.5):** fixtures for a run dir captured
+  *mid-flight* — a node with no end timestamp, a truncated `stdout.log`,
+  a `state.json` replaced between two polls, a `*.tmp` sibling present.
+  Pass = renders every time, never crashes, never emits a fake 0, and
+  never reports a total lower than the previous poll. Plus a live smoke
+  (`LOCKSTEP_LIVE`) on the work laptop reconciling the watched total
+  against the post-run report.
+- Cockpit: scripted manual protocol, **rehearsed on the dev machine
+  (wezterm + pi are present; use fake/shell nodes so it costs nothing)
+  and re-run on the work laptop before first contact** (spawn, refresh across
   waves, map collapse, reader-rule compliance under a running engine,
   fallback path, boot-recovery against a killed run with a held lock,
   **rotation-under-tail** — force a heal round while ACTIVITY tails the
   target's progress file; pass = rotation succeeds, pane re-points —
-  **stale-pane-id handoff** — pass = `Send-PreTyped`'s round-trip
-  failure kills its own pane and aborts to CHAT + fresh pane — and
+  **substituted-pane-program handoff** — spawn into an environment whose
+  profile replaces the shell; pass = the handshake never matches, the pane
+  is killed, and the handoff aborts to CHAT — and
   **non-quiescent handoff** — steer an answered clarification, then
   reach the approval; pass = `quiescent.py` exits 1 naming the steered
   target, the orchestrator resumes detached first, and the APPROVAL
@@ -822,32 +872,40 @@ qualification data.
   renderer re-derives status semantics from `state.json` outside `src/`,
   so an engine state-shape change drifts it silently and no test pins
   that — the manual protocol is the only detector.
-- **Pilot session (step 3, attended-only):** a named non-programmer runs
-  the `plan-adversarial` → `implement-heal` chain end-to-end using only
+- **Setup verification (step 2b):** `doctor`'s new checks tested against
+  a deliberately broken config — missing stanza, wezterm absent,
+  unwritable `Deliverables/`, unresolvable personas dir — each producing
+  a one-line failure a non-programmer can act on. Plus one end-to-end
+  install rehearsal: fresh venv, wheel install, `lockstep.toml` from the
+  example, `/getting-started`, first flow. Rehearse on the dev machine
+  for mechanics; the real check is the work laptop.
+- **First contact (step 3):** the first colleague runs the
+  `plan-adversarial` → `implement-heal` chain end-to-end using only
   CHAT, the pre-typed APPROVAL pane, and STOP. Success bar: (a) zero
   moments where the DE composes a command or reads JSON; (b) N
   comprehension spot-checks — the DE states what is running / blocked /
   spent, compared against the state files, zero discrepancies; (c) the
-  DE can recover a deliberately killed run via the double-click path
-  alone; (d) one approval in the pilot chain is seeded with a **planted
-  domain-visible defect** in the deliverable (wrong unit, wrong chamber
-  set, inverted acceptance limit — chosen by the engineer with the
-  pilot's domain in mind, written down before the session); success
-  requires the DE rejects it based on the APPROVAL pane's evidence
-  alone, with CHAT glossing disabled for that beat. A caught plant
-  validates the evidence rule; a missed plant is a named blocker against
-  B1's extract design, not against the pilot. Abort criteria written
-  with the pilot's name.
-- Unattended (step 6b): qualification state-machine tests incl.
-  excursion revert; the judge planted-defect gate before any class first
-  enters `proceed-flagged`.
+  DE recovers a deliberately killed run via the double-click path alone;
+  (d) one approval is seeded with a **planted domain-visible defect** in
+  the deliverable (wrong unit, wrong chamber set, inverted acceptance
+  limit — designed at that point per decision 6, since it needs the
+  colleague's domain and the proprietary repo, and written down before
+  the session); success requires the DE rejects it from the APPROVAL
+  pane's evidence alone, with CHAT glossing disabled for that beat. A
+  caught plant validates the evidence rule; a missed plant is a named
+  blocker against B1's extract design. **Criteria are written before the
+  session even though the session is no longer a gate** — otherwise
+  "first contact" degrades into a demo, which validates nothing.
 
 ## Risks and mitigations
 
-- **pi envelope carries no usage fields** — cost on the work machine
-  degrades to spawns/wall-time. Mitigated by design: spawns are always
-  tracked, units policy never promises dollars the envelope can't back,
-  and step 0 resolves the unknown before code is written.
+- **Copilot nodes report no usage at all** — copilot-cli has no JSON
+  mode, so its nodes render `no envelope` permanently while pi nodes
+  report tokens. A DE reading a half-populated cost pane may take it for
+  breakage. Mitigated by the units policy (spawns and wall time are the
+  primary columns and always present) and by `/getting-started`
+  explicitly teaching that `no envelope` is a property of the harness,
+  not a fault.
 - **Narration drift** — mitigated structurally: the DE-tier MISSION text
   is script-generated (not narrated), narrations must cite run-dir
   artifacts, approvals decide from pane-rendered evidence (B1), and the
@@ -861,34 +919,36 @@ qualification data.
   finding), the journaled triple, and the done-node warning; accepted
   residual: a confirmed-but-wrong answer costs a fresh lineage.
 - **Improvement-loop instability** — one batch per cycle,
-  approval-gated, provenance trailers, cohort measurement that makes a
-  regressing batch visible in the next report, and unattended mode
-  structurally excluded from touching flows or judges (U-M2).
-- **Judge evidence ceiling (unattended)** — the judge sees the B1
-  extract, not the DE's domain knowledge; the clarification a DE would
-  have volunteered at an attended approval does not exist in unattended
-  mode. `escalate` and the planted-defect gate mitigate but cannot close
-  this; the consent beat states it plainly. Accepted residual of the
-  mode.
-- **Qualification sample-size at small scale** — every applied
-  improvement changes `flow_hash` and resets cohorts, so actively
-  improved flows may never qualify for auto-accept. Arguably correct
-  (a changed process re-qualifies), but it means unattended value
-  depends on flow stabilization; see open question 6.
-- **Hold-heavy unattended runs** — a poorly qualified flow in unattended
-  mode is attended mode plus judge-spawn cost. The retro's time-in-class
-  metric makes it visible; flows that stay hold-heavy should stay
-  attended.
-- **No pilot user is ever named (R-B1)** — the likeliest outcome, and
-  now a planned branch rather than an open block: branch B ships the
-  step-2 pattern docs, `quiescent.py`, and the lineage index, and
-  strikes steps 4 and 6b. The residual is that the cockpit's UX claims
-  go untested, which is exactly why they are not built under branch B.
+  approval-gated, provenance trailers, and cohort measurement that makes
+  a regressing batch visible in the next report.
+- **Building the cockpit before any real user touches it (new at rev 7,
+  decision 1)** — the persona replaces the named pilot, so `cockpit.ps1`
+  ships unvalidated. Mitigated by keeping step 4 to exactly what §A.3
+  already specifies (the pane grammar is tight enough to implement
+  without UX guesswork), by writing first-contact criteria in advance,
+  by the fact that distribution to several colleagues makes a single
+  gating session impossible anyway, and — materially — by the dev
+  machine having wezterm and pi, so every *mechanical* claim (pane
+  choreography, reader rules under rotation, handoff sequencing) is
+  rehearsable before shipping. Accepted residual is narrower than it
+  first appears: what goes untested is whether a non-programmer finds
+  the result legible, not whether it works.
+- **The author cannot reproduce a DE failure (new at rev 7, decision
+  2)** — narrower than the whole stack, since the dev machine has
+  wezterm and pi: the irreducible gaps are the **Copilot enterprise
+  stanza**, the colleague's credentials, and a proprietary repo the
+  author must not see. Everything diagnosable must
+  therefore be diagnosable from a run dir plus a setup-check report,
+  which is the real requirement behind step 2b and the reason
+  `/debug-run` and the setup report must both produce sendable,
+  non-sensitive output. Residual: a failure that reproduces only against
+  proprietary data can be triaged but not fixed remotely.
 - **Two-machine maintenance of contrib scripts** — pwsh-first for panes
   (both machines are Windows), Python for anything testable offline
   (`cost_report.py`, `quiescent.py`, `retrospect.py`), field maps in
-  config not code, and the pilot fork keeps the surface small until the
-  loop is proven.
+  config not code. The asymmetry is narrower than rev 7 first assumed:
+  the dev machine runs the tests AND the cockpit; only the Copilot
+  stanza and the domain work are work-laptop-only.
 - **Session limits kill long runs** (known) — the boot protocol makes
   recovery a double-click (journal replay restores the conversation, not
   just the run); approval segmentation keeps DE-owned processes
@@ -902,18 +962,34 @@ qualification data.
    resume only; heal text is engine-owned (§A.1).
 3. Deliverables handoff beyond `Deliverables/` + `Start-Process` — does
    the DE need email/share integration, and who owns that boundary?
-   (Explicitly out of scope for v0.3; revisit at the pilot. Note: any
-   such integration is egress and sits on the never-auto floor.)
+   (Out of scope for v0.3; revisit at first contact. Any such
+   integration is egress and stays human-approved.)
 4. Concurrent runs for one DE: queued-by-default policy is set (§A step
    7); whether MISSION ever needs a cross-run overview waits for real
    demand.
 5. Approval mechanic for monolithic flows (mid-flow approvals without
    run ownership transfer) — r7 candidate; until then segmentation is
    the rule.
-6. **Qualification survival across `flow_hash` changes** — should
-   qualification persist when an applied improvement does not touch the
-   approval's upstream subgraph? Needs a subgraph-hash mechanic that
-   does not exist yet; the strict reset stands until one is specified.
+6. ~~Qualification survival across `flow_hash` changes~~ → moved to
+   `docs/proposals/PROPOSAL-unattended-mode.md` with the rest of §D.
+7. **New at rev 7 — how do several colleagues share one repo?** Decision
+   1 says the wheel goes to *colleagues*, plural. Each has their own
+   work laptop, their own credentials, and their own proprietary-data
+   repo, so `runs/`, `lockstep.toml`, and `runs/lineages/` are all
+   per-person and none of it is shared — but the *flows*, personas, and
+   fragments are, and they are the thing worth improving centrally
+   (§C). Whether that means a git remote each colleague pulls, a wheel
+   re-issued per improvement batch, or something looser is unanswered,
+   and it decides where the gate-driven improvement loop's output
+   actually lands. Answer it before the second colleague, not the first.
+8. **New at rev 7 — does the retro ever leave the work laptop?** §C's
+   friction report is aggregate metadata by projection (node ids,
+   counts, categories — bodies stripped), which is exactly the shape
+   that *could* travel back to the author. Whether it may, given it
+   summarizes work done against proprietary data, is the colleague's
+   call and their employer's, not a design decision. Until answered,
+   assume it stays local and the improvement discussion happens on the
+   work laptop.
 
 ## Review log (cumulative)
 
@@ -1012,8 +1088,68 @@ quiescence and L-B1 send-text integrity were called "mechanical" while
 living in prose an agent was trusted to follow, making the document's
 two strongest safety claims its two weakest enforcements; quiescence is
 now `contrib/quiescent.py` (exit 0/1/2, shipped in step 2 so it does
-not inherit the pilot gate) and L-B1 is now `Send-PreTyped`, which takes
-no pane-id parameter and therefore cannot be aimed at a preexisting
-pane. Also recorded: steps 0 and 1 are landed; the DE-tier renderer's
+not inherit the pilot gate) and L-B1 is now a launcher that runs the
+approval script AS the pane's program, so no code path types anywhere
+(see the L-B1 erratum for the failure that forced this). Also recorded: steps 0 and 1 are landed; the DE-tier renderer's
 `state.json` coupling is a named unfixed hazard with the manual protocol
 as its only detector.
+
+**rev 6 → rev 7** (owner decisions applied). Six decisions rev 6 left to
+the owner were answered, and this revision is their consequences rather
+than a new review pass.
+
+*Decision 1 — persona, not named pilot.* The DE is *Lam Product
+Engineer*, a stand-in for non-programmer colleagues who will receive
+this repo. This does NOT satisfy rev 6's R-B1 gate on its own terms — a
+persona cannot sit at a keyboard, catch a planted defect, or fail a
+comprehension spot-check — so rather than pretend the gate is met, rev 7
+**moves validation instead of removing it**: build against the persona,
+ship, and treat first contact with a real colleague as the pilot, with
+criteria written beforehand. Rev 6's branch B is withdrawn (distribution
+to colleagues is a real commitment, not an aspiration), and the cost is
+recorded as a first-class risk: `cockpit.ps1` now ships unvalidated, and
+step 4 is deliberately confined to what §A.3 already specifies so there
+is minimal UX guesswork to be wrong about.
+
+*Decision 2 — the work laptop is the deployment target.* WezTerm/pwsh,
+pi.dev, Copilot enterprise, credentials, and a proprietary-data repo all
+live on a machine the author never touches; the personal machine builds
+and tests but cannot run the system. New **step 2b** (packaging + setup
+verification: wheel install path, `doctor` extended to cockpit
+prerequisites, a `/getting-started` skill, and a sendable non-sensitive
+setup report), new non-goal (nothing this repo ships reads proprietary
+data; fixtures stay synthetic), rewritten personas row (the author can
+never reproduce a DE failure — everything must be diagnosable from a run
+dir plus a setup report), and the cockpit drills move to the work laptop
+since a green run on the dev machine proves only that the script parses.
+
+*Decision 3 — no driver-side cost capture, conditional on live
+visibility.* §B v1 moves from "deferred" to **declined**, with the
+revisit condition named (a harness that reports usage only in a channel
+the driver consumes and discards). In exchange, **§B v0.5** is now a
+prerequisite of the cockpit rather than a nicety: `cost_report.py
+--watch` renders a compact spend block against an in-flight run dir with
+mid-flight tolerance, and MISSION's spend line has no other source. Goal
+1 was rewritten around during-run visibility, and v2 token budgets are
+struck as unreachable without v1.
+
+*Decision 4 — moot.* With v1 declined, the stanza-digest exclusion rule
+is no longer a prerequisite of anything; the "no frozen surfaces"
+non-goal becomes unconditional and step 7 shrinks to optional event-kind
+reservations that block nothing.
+
+*Decision 5 — §D split out* to `docs/proposals/PROPOSAL-unattended-mode.md`,
+unchanged, with its three residual risks and its open question moved
+with it, plus explicit entry conditions. Its two guarantees are restated
+here in place (human channel never forged; egress always human-approved)
+since they bind this document regardless.
+
+*Decision 6 — planted-defect design deferred* to first contact, since it
+requires the colleague's domain and the proprietary repo. The criterion
+itself stays mandatory and pre-registered.
+
+Two new open questions fall out of distributing to *several* colleagues
+rather than one: how flows and personas are shared and re-issued across
+per-person installs (7), and whether the retro's metadata projection may
+travel back to the author at all (8) — the latter being the colleague's
+call and their employer's, not a design decision.

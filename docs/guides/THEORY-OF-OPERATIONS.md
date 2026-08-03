@@ -1,3 +1,8 @@
+---
+type: theory-of-ops
+title: "Theory of operations: lockstep"
+resource: docs/guides/THEORY-OF-OPERATIONS.md
+---
 # Theory of operations: lockstep
 
 **What it is:** a driver that executes a taskgraph — a DAG whose nodes are
@@ -10,8 +15,8 @@ reads what they leave on disk, and decides what runs next.
 
 This document explains *why* it is built this way, because most of the surprising
 behaviour follows from a small number of deliberate positions. For the grammar of
-writing a flow see `docs/FLOW-AUTHORING.md`; for driving one on a human's behalf
-see `docs/COCKPIT-THEORY-OF-OPERATIONS.md`; the normative text is `docs/SPEC.md`
+writing a flow see `docs/guides/FLOW-AUTHORING.md`; for driving one on a human's behalf
+see `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md`; the normative text is `docs/spec/SPEC.md`
 plus the adopted amendments.
 
 ---
@@ -292,8 +297,8 @@ whether the record really is complete. If the cockpit had needed a driver change
 to show a human what was happening, the observation surface would have been
 inadequate.
 
-See `docs/COCKPIT-THEORY-OF-OPERATIONS.md` (for the agent driving it) and
-`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md` (for the human).
+See `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` (for the agent driving it) and
+`docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` (for the human).
 
 ---
 

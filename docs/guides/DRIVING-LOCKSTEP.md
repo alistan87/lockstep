@@ -1,3 +1,8 @@
+---
+type: guide
+title: Driving lockstep (orchestrator protocol)
+resource: docs/guides/DRIVING-LOCKSTEP.md
+---
 # Driving lockstep (orchestrator protocol)
 
 Paste this section into your repo's agent instructions (`AGENTS.md`,
@@ -15,7 +20,7 @@ expresses with caching, healing, and budgets built in.
 ## The drive loop
 
 ```
-# author: adapt the closest template in flows/starter/ (see docs/FLOW-AUTHORING.md)
+# author: adapt the closest template in flows/starter/ (see docs/guides/FLOW-AUTHORING.md)
 lockstep verify flows/x.tg.json            # loop until "ok"; exit 5 lists ALL named errors
 lockstep run flows/x.tg.json --dry-run --arg k=v    # inspect waves; costs nothing
 lockstep run flows/x.tg.json --arg k=v     # only with budget.max_agent_spawns set
@@ -169,11 +174,11 @@ nodes, do not resume, and report what was spent.
 - `lockstep doctor` after any harness upgrade and weekly — the only check
   that catches harness flag drift. Probes spend small model calls.
 - Executors are stanzas in `lockstep.toml` (see `lockstep.toml.example`);
-  authoring guidance: `docs/FLOW-AUTHORING.md`; worked examples + per-flow
+  authoring guidance: `docs/guides/FLOW-AUTHORING.md`; worked examples + per-flow
   caveats: `flows/starter/README.md`.
 - Every spawned node carries `LOCKSTEP_NODE_ID/_ROLE/_WORKSPACE_SCOPE/
   _VERDICT_FILE/_PHASE_DIR/_CONTRACT` in its environment; on pi with the
   project-local extension, out-of-scope writes are blocked in-session and
   recorded to `verdicts.jsonl` (read by verdict-file gates). Extensions only
   enforce — never route control flow through them
-  (`docs/ADDENDUM-A-pi-hooks.md`).
+  (`docs/spec/ADDENDUM-A-pi-hooks.md`).

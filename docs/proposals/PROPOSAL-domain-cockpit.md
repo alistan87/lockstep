@@ -1,3 +1,10 @@
+---
+type: proposal
+title: "Proposal: the domain-expert cockpit — cost tracking and gate-driven improvement"
+resource: docs/proposals/PROPOSAL-domain-cockpit.md
+status: deprecated
+superseded_by: PROPOSAL-domain-cockpit-rev7.md
+---
 # Proposal: the domain-expert cockpit — cost tracking and gate-driven improvement
 
 **Status:** revision 2, after a three-lens adversarial review (non-programmer
@@ -46,7 +53,7 @@ sustainable:
 | Principal | Does | Never does |
 |---|---|---|
 | Domain expert (DE) | Talks to the orchestrator; answers domain questions; presses Enter on pre-typed commands; types `a`/`r` at approval prompts; says STOP | git, JSON, flow authoring, composing CLI commands, judgment calls about locks/resumes |
-| Orchestrator (interactive pi session) | Authors/runs flows per `docs/DRIVING-LOCKSTEP.md`; runs them **detached** (below); translates run state; relays domain questions; manages panes; owns recovery | Approvals (structurally cannot — non-TTY auto-reject); editing live lineages; spending without stated budgets |
+| Orchestrator (interactive pi session) | Authors/runs flows per `docs/guides/DRIVING-LOCKSTEP.md`; runs them **detached** (below); translates run state; relays domain questions; manages panes; owns recovery | Approvals (structurally cannot — non-TTY auto-reject); editing live lineages; spending without stated budgets |
 | Agent nodes (headless spawns) | The engineering | Control flow; asking questions directly (see clarification gates) |
 | Human engineer (occasional) | Reviews improvement batches; owns `lockstep.toml`, personas, and the r7 amendment | — |
 

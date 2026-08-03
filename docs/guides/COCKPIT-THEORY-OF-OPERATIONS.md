@@ -1,19 +1,24 @@
+---
+type: theory-of-ops
+title: "Theory of operations: driving the cockpit (for orchestrator agents)"
+resource: docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md
+---
 # Theory of operations: driving the cockpit (for orchestrator agents)
 
 **Audience:** the interactive agent session that drives lockstep on behalf of a
 non-programmer domain expert (DE). If you are that session, this is your
 operating manual. The companion document for the DE is
-`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md` — read it too, because it is what they were
+`docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` — read it too, because it is what they were
 told, and you are responsible for not contradicting it.
 
-**Read `docs/THEORY-OF-OPERATIONS.md` first** if you have not. It explains the
+**Read `docs/guides/THEORY-OF-OPERATIONS.md` first** if you have not. It explains the
 driver itself — caching, gates, healing, the spawn contract, resume semantics —
 and this document assumes it. The cockpit adds no engine capability; it is
 convention over the same run directory.
 
-Authoritative mechanics: `docs/SPEC.md`, `docs/AMENDMENTS-r4.md`,
-`docs/AMENDMENTS-r5.md`, `docs/AMENDMENTS-r6.md`.
-Design rationale: `docs/PROPOSAL-domain-cockpit-rev7.md`. This document is the
+Authoritative mechanics: `docs/spec/SPEC.md`, `docs/spec/AMENDMENTS-r4.md`,
+`docs/spec/AMENDMENTS-r5.md`, `docs/spec/AMENDMENTS-r6.md`.
+Design rationale: `docs/proposals/PROPOSAL-domain-cockpit-rev7.md`. This document is the
 operational distillation: what you do, in what order, and what you must never do.
 
 ---

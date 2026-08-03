@@ -1,3 +1,10 @@
+---
+type: proposal
+title: "Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and unattended mode"
+resource: docs/proposals/PROPOSAL-domain-cockpit-rev5.md
+status: deprecated
+superseded_by: PROPOSAL-domain-cockpit-rev7.md
+---
 # Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and unattended mode
 
 **Status:** revision 5 — a **consolidation-only** merge of revision 2 with
@@ -57,7 +64,7 @@ make this sustainable:
 | Principal | Does | Never does |
 |---|---|---|
 | Domain expert (DE) | Talks to the orchestrator; answers domain questions; presses Enter on pre-typed commands; types `a`/`r` at approval prompts; says STOP | git, JSON, flow authoring, composing CLI commands, judgment calls about locks/resumes |
-| Orchestrator (interactive pi session) | Authors/runs flows per `docs/DRIVING-LOCKSTEP.md`; runs them **detached** (§A); translates run state; relays domain questions; manages panes per §A.3; owns recovery; writes the cockpit journal (§A.2) | Approvals (structurally cannot — non-TTY auto-reject; in unattended mode, judgment is rendered by judge *gates*, never by the orchestrator); editing live lineages; spending without stated budgets |
+| Orchestrator (interactive pi session) | Authors/runs flows per `docs/guides/DRIVING-LOCKSTEP.md`; runs them **detached** (§A); translates run state; relays domain questions; manages panes per §A.3; owns recovery; writes the cockpit journal (§A.2) | Approvals (structurally cannot — non-TTY auto-reject; in unattended mode, judgment is rendered by judge *gates*, never by the orchestrator); editing live lineages; spending without stated budgets |
 | Agent nodes (headless spawns) | The engineering; in unattended mode, judge gates render triage verdicts citing mechanical evidence (§D) | Control flow beyond sanctioned gate blocks; asking questions directly (see §A.1) |
 | Human engineer (occasional) | Reviews improvement batches and deferred-approval ledgers; owns `lockstep.toml`, personas, sidecar configs, and the r7 amendment | — |
 

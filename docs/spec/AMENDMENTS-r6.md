@@ -1,3 +1,8 @@
+---
+type: amendment
+title: Lockstep spec — Revision 6 amendments
+resource: docs/spec/AMENDMENTS-r6.md
+---
 # Lockstep spec — Revision 6 amendments
 
 **Status: adopted.** Delta from Revision 5; authority order r6 > r5 > r4 >

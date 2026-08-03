@@ -1,3 +1,8 @@
+---
+type: report
+title: Instruction-File Audit Report (2026-07-25)
+resource: docs/audits/AUDIT-DOCS-2026-07-25.md
+---
 # Instruction-File Audit Report
 
 **Verdict:** PASS

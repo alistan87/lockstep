@@ -8,8 +8,8 @@ noted.
 
 All ten flows pass `lockstep verify` and are meant as **templates** — edit
 prompts, check commands, and budgets to fit the target repo, then re-verify.
-Authoring grammar: `docs/FLOW-AUTHORING.md`. Drive protocol for agents (exit
-codes, run-dir diagnosis, approval rules): `docs/DRIVING-LOCKSTEP.md`.
+Authoring grammar: `docs/guides/FLOW-AUTHORING.md`. Drive protocol for agents (exit
+codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
 
 ## The flows
 
