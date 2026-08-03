@@ -199,12 +199,18 @@ def write_indexes(entries: list[dict], root: Path, apply: bool) -> list[str]:
             "",
             BUNDLE_BLURB.get(name, ""),
             "",
-            "| document | type | title |",
-            "|---|---|---|",
+            "| document | type | status | title |",
+            "|---|---|---|---|",
         ]
         for e in sorted(items, key=lambda e: e["target_path"]):
             fn = Path(e["target_path"]).name
-            lines.append(f"| [{fn}]({fn}) | `{e['okf_type']}` | {e.get('title', '')} |")
+            # A superseded revision listed as an undifferentiated peer of the
+            # live one is the trap this column exists to close.
+            status = e.get("status") or "current"
+            if e.get("superseded_by"):
+                status = f"superseded by [{e['superseded_by']}]({e['superseded_by']})"
+            lines.append(
+                f"| [{fn}]({fn}) | `{e['okf_type']}` | {status} | {e.get('title', '')} |")
         lines.append("")
         target = Path(bundle) / "index.md"
         written.append(target.as_posix())
@@ -251,6 +257,20 @@ def verify(entries: list[dict], root: Path) -> list[str]:
             problems.append(f"{dst}: {issue}")
         if Path(e["path"]).is_file():
             problems.append(f"{e['path']}: still present after move")
+
+    # Any surviving docs/<file>.md reference that does not resolve is either a
+    # form the rewriter could not match (a glob, a compressed `-r5.md`
+    # continuation) or a genuine typo. Both used to fail silently and leave a
+    # reader pointed at an emptied directory; now they fail the run.
+    ref = re.compile(r"docs/[A-Za-z0-9_.\-]+\.md")
+    for f in repo_files():
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for hit in set(ref.findall(text)):
+            if not Path(hit).is_file():
+                problems.append(f"{f.as_posix()}: reference {hit} does not resolve")
 
     # Zero dangling references: no file may still point at an old location.
     stale = {e["path"] for e in entries}

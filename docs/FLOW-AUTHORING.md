@@ -3,7 +3,8 @@
 For any agent or human writing `*.tg.json` flows. Harness-agnostic: nothing
 here assumes which coding agent authored the flow or which executor runs it.
 Authoritative grammar: `docs/SPEC.md` §4–§7 as amended by
-`docs/AMENDMENTS-r4/r5/r6.md` (later revision wins). This file is the distilled
+`docs/AMENDMENTS-r4.md`, `docs/AMENDMENTS-r5.md`, `docs/AMENDMENTS-r6.md`
+(later revision wins). This file is the distilled
 working subset.
 
 **The method: imitate, then compile.** Start from the closest template in

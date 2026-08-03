@@ -14,7 +14,7 @@ before changing engine behaviour or authoring a flow.
 revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
 Implementation-level departures are logged in `docs/DEVIATIONS.md` — check it
 before reporting a spec mismatch. Adversarial audit reports live in
-`docs/AUDIT-*.md`. `docs/ADDENDUM-A-pi-hooks.md` (informative) governs pi
+`docs/audits/`. `docs/ADDENDUM-A-pi-hooks.md` (informative) governs pi
 extension use: extensions may only ENFORCE, never enable — deleting one must
 not change what a correct agent can accomplish on any executor.
 

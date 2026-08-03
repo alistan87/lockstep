@@ -60,10 +60,11 @@ RULES = [
 # Vendored third-party references are not ours to reorganise or annotate.
 EXCLUDE_DIRS = {"okf"}
 
-# Any heading level. Two audits open with an H2, and an H1-only rule gave them
-# an empty title and a blank cell in the generated index — a document whose own
-# listing cannot name it is not catalogued, it is just moved.
-TITLE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+# H1 only. Falling back to any heading level looked like a fix and was worse:
+# two audits open with `## Verdict: PASS`, so they got titled by their outcome
+# rather than their subject. A document with no H1 is named from its filename,
+# which is at least about what it covers.
+TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 # OKF lifecycle. A superseded revision that sits as an undifferentiated peer of
 # the current one is a trap: the reader has no way to tell which is live. The
@@ -119,7 +120,9 @@ def title_of(path: Path) -> str:
         m = TITLE.search(path.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return ""
-    return m.group(1) if m else ""
+    if m:
+        return m.group(1)
+    return path.stem.replace("-", " ").replace("_", " ")
 
 
 def write_mission(line: str) -> None:
