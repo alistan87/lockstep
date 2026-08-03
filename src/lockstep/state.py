@@ -98,12 +98,108 @@ class RunState(BaseModel):
 _events_lock = threading.Lock()
 
 
+def _chain_link(prev: str, payload: str) -> str:
+    """One link: sha256 over the predecessor's digest and this line's bytes."""
+    return hashlib.sha256(f"{prev}\n{payload}".encode("utf-8")).hexdigest()
+
+
+def _last_head_unlocked(run_dir: Path) -> str:
+    """The chain head recorded in the file: the last COMPLETE line's `h`.
+
+    Read from the tail rather than the whole file so appending stays O(1) in
+    run length. Deliberately not cached: a run dir can be replaced underneath
+    us (a --fresh run, a restored backup), and a stale head would silently
+    fork the chain.
+    """
+    path = Path(run_dir) / "events.jsonl"
+    if not path.exists():
+        return ""
+    size = path.stat().st_size
+    if size == 0:
+        return ""
+    window = 65536
+    while True:
+        start = max(0, size - window)
+        with open(path, "rb") as f:
+            f.seek(start)
+            tail = f.read(size - start).decode("utf-8", errors="replace")
+        head, found = "", False
+        for line in tail.splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a partial first line in the window, or a torn tail
+            found = True
+            head = record.get("h", "") or ""
+        if found or start == 0:
+            return head
+        window *= 4  # one event longer than the window; widen and retry
+
+
+def chain_head(run_dir: Path) -> str:
+    """The current head of the run's event chain ("" if unchained/empty)."""
+    with _events_lock:
+        return _last_head_unlocked(Path(run_dir))
+
+
 def append_event(run_dir: Path, event: dict) -> None:
     event = {"ts": utcnow(), "kind": event.pop("kind", "transition"), **event}
-    line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
+    event.pop("h", None)  # never re-chain a digest carried in by a caller
     with _events_lock:
+        prev = _last_head_unlocked(Path(run_dir))
+        payload = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
+        # `h` is appended LAST so a verifier can pop it and re-serialize the
+        # remaining keys in insertion order to reproduce these exact bytes.
+        event["h"] = _chain_link(prev, payload)
+        line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
         with open(run_dir / "events.jsonl", "a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
+    """Recompute the event chain. Returns (ok, head, first_bad_line, detail).
+
+    `first_bad_line` is 1-indexed for humans. A torn trailing line is tolerated
+    (SPEC §10.3). A file whose lines carry no `h` is UNCHAINED — reported as
+    such, never as verified.
+
+    This is tamper EVIDENCE, not tamper proofing: whoever can rewrite the file
+    can also re-chain it. What the chain gives is that no *partial* edit — one
+    line changed, dropped, or appended — survives, and that a head digest
+    recorded elsewhere pins the whole file.
+    """
+    path = Path(run_dir) / "events.jsonl"
+    if not path.exists():
+        return True, "", None, "no events.jsonl"
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    prev, chained, total = "", 0, 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            if i == len(lines) - 1:
+                continue  # torn trailing line after a crash (§10.3)
+            return False, prev, i + 1, f"line {i + 1} is not valid JSON"
+        total += 1
+        recorded = record.pop("h", None)
+        if recorded is None:
+            continue  # predates chaining; counted by `total`, not by `chained`
+        chained += 1
+        payload = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+        expected = _chain_link(prev, payload)
+        if expected != recorded:
+            return False, prev, i + 1, (
+                f"line {i + 1} does not match the chain "
+                f"(expected {expected[:12]}…, found {str(recorded)[:12]}…)"
+            )
+        prev = recorded
+    if chained == 0 and total:
+        return True, "", None, f"unchained: {total} events carry no chain digest"
+    return True, prev, None, f"{chained} events verified"
 
 
 def read_events(run_dir: Path) -> list[dict]:
@@ -125,10 +221,111 @@ def read_events(run_dir: Path) -> list[dict]:
     return out
 
 
+_span_lock = threading.Lock()
+_span_target: Path | None = None
+_span_run_id: str = ""
+
+# Kinds that actually invoke a model. Shell nodes are deliberately excluded
+# from the GenAI attributes below: a subprocess spends no tokens, and labelling
+# it a model call would make every cost dashboard downstream wrong.
+_AGENT_KINDS = ("harness", "fake")
+
+
+def configure_spans(path: Path | None, run_id: str) -> None:
+    """Point `emit_span` at a file, or turn it off again with None."""
+    global _span_target, _span_run_id
+    with _span_lock:
+        _span_target = Path(path) if path else None
+        _span_run_id = run_id
+
+
+def _unix_nanos(ts: str | None) -> int:
+    if not ts:
+        return 0
+    try:
+        return int(_dt.datetime.fromisoformat(ts).timestamp() * 1_000_000_000)
+    except ValueError:
+        return 0
+
+
+def _attr(key: str, value) -> dict:
+    if isinstance(value, bool):
+        return {"key": key, "value": {"boolValue": value}}
+    if isinstance(value, int):
+        return {"key": key, "value": {"intValue": str(value)}}
+    return {"key": key, "value": {"stringValue": str(value)}}
+
+
 def emit_span(record: PhaseRecord) -> None:
-    """No-op OpenTelemetry seam (SPEC §10.3). A tracing backend maps:
-    lockstep.run_id, lockstep.node_id, lockstep.role, lockstep.kind,
-    lockstep.input_hash, status, duration (started_at..ended_at), attempts."""
+    """Append one OTLP/JSON span for a finished node (SPEC §10.3, §16.3).
+
+    Off unless `configure_spans` has been called, so the seam stays a no-op by
+    default. The shape is a full ExportTraceServiceRequest per line, which a
+    collector ingests directly — and writing it by hand is what keeps
+    `pydantic` the only runtime dependency.
+
+    Advisory only. Like structured progress (§16.1), a span never influences
+    scheduling, hashing, gating, budgets, or retries.
+    """
+    with _span_lock:
+        target, run_id = _span_target, _span_run_id
+    if target is None:
+        return
+    from . import __version__
+
+    trace_id = hashlib.sha256(f"trace:{run_id}".encode("utf-8")).hexdigest()[:32]
+    span_id = hashlib.sha256(
+        f"span:{run_id}:{record.node_id}:{record.heal_round}:{record.attempts}".encode("utf-8")
+    ).hexdigest()[:16]
+    start = _unix_nanos(record.started_at)
+    end = _unix_nanos(record.ended_at) or start
+    attributes = [
+        _attr("lockstep.run_id", run_id),
+        _attr("lockstep.node_id", record.node_id),
+        _attr("lockstep.role", record.role),
+        _attr("lockstep.kind", record.kind),
+        _attr("lockstep.status", record.status),
+        _attr("lockstep.attempts", record.attempts),
+        _attr("lockstep.heal_round", record.heal_round),
+    ]
+    if record.input_hash:
+        attributes.append(_attr("lockstep.input_hash", record.input_hash))
+    if record.kind in _AGENT_KINDS and record.role != "approval":
+        attributes.append(_attr("gen_ai.operation.name", "invoke_agent"))
+        attributes.append(_attr("gen_ai.agent.name", record.node_id))
+    envelope = {
+        "resourceSpans": [
+            {
+                "resource": {"attributes": [_attr("service.name", "lockstep")]},
+                "scopeSpans": [
+                    {
+                        "scope": {"name": "lockstep", "version": __version__},
+                        "spans": [
+                            {
+                                "traceId": trace_id,
+                                "spanId": span_id,
+                                "name": record.node_id,
+                                "kind": 1,  # SPAN_KIND_INTERNAL
+                                "startTimeUnixNano": str(start),
+                                "endTimeUnixNano": str(end),
+                                "attributes": attributes,
+                                "status": (
+                                    {"code": 2, "message": record.error or record.status}
+                                    if record.status in ("failed", "blocked")
+                                    else {"code": 1}
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    line = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
+    with _span_lock:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 # --- state.json ----------------------------------------------------------------

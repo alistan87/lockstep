@@ -37,12 +37,14 @@ from .state import (
     ItemRecord,
     append_event,
     compose_hash,
+    emit_span,
     mark_mailbox_consumed,
     read_mailbox,
     render_steering,
     utcnow,
 )
 from .store import FileStore
+from .workspace import WorkspaceError, path_in_scope
 from .taskgraph import Node, TaskGraph
 from .workspace import GitWorkspace, WorkspaceError
 
@@ -210,6 +212,8 @@ class Engine:
             rec.ended_at = utcnow()
         self.store.record(rec)
         append_event(self.store.run_dir, {"node": node_id, "status": status, "error": error})
+        if status in ("done", "failed", "skipped", "blocked"):
+            emit_span(rec)  # advisory; a no-op unless spans are configured
 
     def _token_lock(self, token: str) -> threading.Lock:
         with self._locks_guard:
@@ -570,12 +574,53 @@ class Engine:
             pass  # prompt.txt written by the executor at execute time
         tokens = sorted(set(node.exclusive) | set(work.exclusive))
         locks = self._acquire(tokens)
+        scope = [str(w) for w in (node.spec.get("writes") or [])]
+        scope_ref = None
         try:
             self._maybe_snapshot(node)
+            if scope and "tree" in tokens:
+                # Only while serialized on the tree: otherwise a concurrent
+                # node's writes would be attributed to this one, and a false
+                # accusation is worse than no check. `verify` warns when a
+                # declared scope lands on an unserialized node.
+                scope_ref = self._scope_baseline(node)
             raw = self._execute_with_retries(node, executor, work, phase_dir)
         finally:
             self._release(locks)
+        if scope_ref is not None:
+            violations = self._scope_violations(scope_ref, scope)
+            if violations:
+                self._set_status(
+                    node.id,
+                    "failed",
+                    error=(
+                        f"write scope violated: declares writes={scope} but wrote "
+                        f"{', '.join(violations)} — files left in place, since rollback "
+                        f"never deletes (SPEC §0.1 item 2)"
+                    ),
+                )
+                return
         self._finish(node, executor, work, phase_dir, raw)
+
+    def _scope_baseline(self, node: Node) -> SnapshotRef | None:
+        """Baseline for write-scope detection. A non-git tree cannot diff, so
+        detection is off there — the same honest limitation M6 states for
+        external-edit detection."""
+        try:
+            return self.workspace.snapshot()
+        except WorkspaceError:
+            self.log(
+                f"write scope: {node.id!r} declares one, but this workspace cannot "
+                f"snapshot (not a git tree) — detection is off for this node"
+            )
+            return None
+
+    def _scope_violations(self, since: SnapshotRef, scope: list[str]) -> list[str]:
+        try:
+            changed = self.workspace.changed_paths(since)
+        except WorkspaceError:
+            return []
+        return sorted(p for p in changed if not path_in_scope(p, scope))
 
     def _maybe_snapshot(self, node: Node) -> None:
         """Baseline snapshot is PROACTIVE: taken immediately before the first
@@ -704,7 +749,16 @@ class Engine:
         try:
             return validate_result(raw2.result_text or "", ref), raw2.result_text or ""
         except ContractError as e2:
-            rec.error = f"contract validation failed twice: {e2}"
+            # If the re-spawn never RAN, that is the diagnosis. Reporting the
+            # ContractError instead sends the operator hunting a schema bug in
+            # a process that produced no output because it never started —
+            # r5 A2's inflated corrective prompt makes this the likely failure
+            # on argv-passed stanzas (ROADMAP-NOTES 2026-07-28, defect 2).
+            rec.error = (
+                f"corrective re-spawn did not run: {raw2.error}"
+                if raw2.error
+                else f"contract validation failed twice: {e2}"
+            )
             return None
 
     def _finish(self, node: Node, executor, work: PlannedWork, phase_dir: Path, raw: RawResult) -> None:
@@ -1010,7 +1064,12 @@ class Engine:
                             text = raw2.result_text or ""
                         except ContractError as e2:
                             irec.status = "failed"
-                            irec.error = f"contract validation failed twice: {e2}"
+                            # Same masking fix as the single-node path above.
+                            irec.error = (
+                                f"corrective re-spawn did not run: {raw2.error}"
+                                if raw2.error
+                                else f"contract validation failed twice: {e2}"
+                            )
                             errors[i] = irec.error
                             self.store.record(rec)
                             return

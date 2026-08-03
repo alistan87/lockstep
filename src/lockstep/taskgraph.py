@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -388,6 +388,47 @@ def verify_flow(
             warn("contract-ignored", f"node {n.id!r} names a contract but output is \"text\"")
         if n.over is not None and not _OVER_RE.match(n.over):
             err("over-not-json", f"node {n.id!r}: `over` must be a {{steps.X.json...}} reference, got {n.over!r}")
+
+    # 7b. write-scope permits (spec.writes)
+    for n in tg.nodes:
+        writes = n.spec.get("writes")
+        if not writes:
+            continue
+        if not isinstance(writes, list):
+            err("bad-write-scope", f"node {n.id!r}: spec.writes must be a list of paths")
+            continue
+        for w in writes:
+            if not isinstance(w, str) or not w.strip():
+                err("bad-write-scope", f"node {n.id!r}: spec.writes has an empty entry")
+            elif w.startswith(("/", "\\")) or PurePosixPath(w.replace("\\", "/")).is_absolute():
+                err(
+                    "bad-write-scope",
+                    f"node {n.id!r}: spec.writes entry {w!r} is absolute; scopes are "
+                    f"relative to the repo root",
+                )
+            elif ".." in PurePosixPath(w.replace("\\", "/")).parts:
+                err(
+                    "bad-write-scope",
+                    f"node {n.id!r}: spec.writes entry {w!r} escapes the repo root",
+                )
+        if n.role == "map":
+            err(
+                "write-scope-on-map",
+                f"map node {n.id!r} declares spec.writes; per-item write scopes are not "
+                f"supported (the items share one tree and one diff)",
+            )
+        elif "tree" not in n.exclusive and not (
+            n.role != "approval" and n.kind in ("harness", "fake") and not n.spec.get("readonly")
+        ):
+            # The declaration still reaches the spawn as LOCKSTEP_WRITE_SCOPE,
+            # so an in-harness extension can enforce it; only the driver's
+            # after-the-fact detection needs serialization.
+            warn(
+                "write-scope-unenforced",
+                f"node {n.id!r} declares spec.writes but does not hold the 'tree' token, so a "
+                f"concurrent node's writes would be misattributed and driver-side detection "
+                f"is off; add exclusive: [\"tree\"] to enable it",
+            )
 
     # §8.1: the Policy seam is consulted at verify time too (audit r6.2 nit).
     if policy is not None:

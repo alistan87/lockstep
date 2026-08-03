@@ -30,6 +30,16 @@ def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
         "LOCKSTEP_NODE_ID": str(work.meta.get("node_id", "")),
         "LOCKSTEP_ROLE": str(work.meta.get("role", "")),
         "LOCKSTEP_WORKSPACE_SCOPE": str(work.meta.get("cwd", "")),
+        # The declared write scope as a JSON array, empty string when the node
+        # declares none. A NEW variable rather than a change to
+        # WORKSPACE_SCOPE: that one is documented as a single directory
+        # (ADDENDUM-A preamble note 2) and lockstep-guard.ts prefix-matches
+        # against it, so repurposing it would silently break the extension.
+        "LOCKSTEP_WRITE_SCOPE": (
+            json.dumps(work.meta["writes"], ensure_ascii=False)
+            if work.meta.get("writes")
+            else ""
+        ),
         "LOCKSTEP_VERDICT_FILE": str((phase_dir / "verdicts.jsonl").resolve()),
         "LOCKSTEP_CONTRACT": str(work.meta.get("contract", "")),
     }
@@ -39,6 +49,10 @@ class ShellSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cmd: list[str]
     cwd: str = "."  # relative to the invocation directory / --repo-root (SPEC §4)
+    # Declared write scope, repo-root-relative. Empty = unconstrained (the v1
+    # behavior). The driver DETECTS violations after the fact; an in-harness
+    # extension can PREVENT them from LOCKSTEP_WRITE_SCOPE.
+    writes: list[str] = []
 
 
 def resolve_ctx_of(ctx: RenderCtx) -> ResolveCtx:
@@ -85,7 +99,7 @@ class ShellExecutor:
             costs_tokens=False,
             exclusive=[],
             meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role,
-                  "contract": node.contract or ""},
+                  "contract": node.contract or "", "writes": list(spec.writes)},
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:

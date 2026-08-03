@@ -19,6 +19,43 @@ class PathEscapeError(Exception):
     """A configured path resolves outside the repo root (SPEC §11)."""
 
 
+class ArgvTooLong(OSError):
+    """The assembled command line exceeds the platform limit.
+
+    Subclasses OSError deliberately: both executors already funnel a failed
+    spawn into RawResult(exit_code=127, error=...), so the guard rides the
+    existing path instead of crashing the run.
+    """
+
+
+# Windows CreateProcess caps the ENTIRE command line at 32,767 chars. POSIX
+# exec is bounded by ARG_MAX (typically ~2 MB); the conservative floor below
+# is what a single argv element may safely carry there.
+ARGV_LIMIT = 32_767 if sys.platform == "win32" else 2_097_152
+
+
+def argv_overflow(argv: list[str]) -> str | None:
+    """Diagnose an unspawnable command line, or None if it fits.
+
+    r5 A2 makes a corrective prompt several times larger than the original
+    (it embeds the original prompt AND the invalid output), so this is
+    reachable on any node passing its prompt through argv — which is why the
+    message names the remedy rather than only the limit.
+    """
+    # Each element costs its length plus a separator and two quotes once the
+    # platform re-quotes the list into a single command line.
+    total = sum(len(a) + 3 for a in argv)
+    if total <= ARGV_LIMIT:
+        return None
+    worst = max(range(len(argv)), key=lambda i: len(argv[i])) if argv else 0
+    return (
+        f"assembled command line is {total} chars, over this platform's "
+        f"{ARGV_LIMIT}-char limit (argv[{worst}] alone is {len(argv[worst])} chars); "
+        f'set prompt_via = "stdin" on the executor stanza to pass the prompt '
+        f"off the command line"
+    )
+
+
 def resolve_inside(repo_root: Path, rel: str) -> Path:
     """Resolve `rel` against repo_root; lexical + realpath containment check."""
     root = Path(repo_root).resolve()
@@ -37,6 +74,11 @@ def spawn(
     stdin_text: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen:
+    overflow = argv_overflow(argv)
+    if overflow is not None:
+        # Fail BEFORE the platform does: CreateProcess reports a generic
+        # parameter error that says nothing about which knob fixes it.
+        raise ArgvTooLong(overflow)
     env = dict(os.environ)
     if extra_env:
         env.update(extra_env)

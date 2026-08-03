@@ -73,6 +73,88 @@ file records implementation-level departures below that bar.
   (retry, heal round, resume of a blocked gate) returned its own previous
   answer: a blocked shell gate could never pass again. Found by the
   starter-flow adversarial review; pinned by `tests/test_result_rotation.py`.)*
+- **2026-08-02 — `events.jsonl` lines carry a chain digest `h`**, and
+  `lockstep verify-trace <run_dir>` recomputes it. Why: the cockpit's whole
+  case rests on evidence a domain expert can rely on, and the journal had no
+  integrity check at all — an approval that registered, an evidence copy that
+  failed silently, and a journal missing both is a real observed failure. Each
+  line's `h` is `sha256(prev_digest + "\n" + line_bytes)` with `h` appended
+  last so a verifier can pop it and re-serialize the remaining keys to
+  reproduce the exact bytes. Additive: readers that ignore `h` are unaffected,
+  and lines predating the change verify as UNCHAINED rather than as broken.
+  This is tamper EVIDENCE, not tamper proofing — whoever can rewrite the file
+  can re-chain it, which is why the head digest is printed at run end and
+  `--head` pins it. §10.3's telemetry text should acquire the rule at r7.
+- **2026-08-02 — `emit_span` optionally writes OTLP/JSON**, instead of being a
+  pure no-op (SPEC §10.3, §16.3's deferred "OTel exporter"). Why: the GenAI
+  semantic conventions stabilized for client spans in early 2026, so there is
+  now a real attribute vocabulary to target; writing the envelope by hand
+  keeps `pydantic` the only runtime dependency. Off unless `--otel-file` is
+  passed. Spans are ADVISORY on the same terms as structured progress (§16.1):
+  never an input to scheduling, hashing, gating, budgets, or retries. GenAI
+  attributes are attached only to `harness`/`fake` nodes — labelling a shell
+  subprocess a model call would corrupt any downstream cost view.
+- **2026-08-02 — nodes may declare `spec.writes`**, a repo-root-relative write
+  scope, as an optional key inside the per-kind spec model rather than a new
+  first-class node field. Why: this is the r7 "dedicated per-node write-scope
+  field" candidate, and a first-class field would bump `format_version` 1.0 →
+  1.1 (§15) for a feature that per-kind specs already accommodate. Empty means
+  unconstrained, so every existing flow is unaffected. The driver DETECTS
+  violations after the node finishes (it never sees tool calls) and only while
+  the node holds the `tree` token — otherwise a concurrent node's writes would
+  be misattributed, and `verify` emits `write-scope-unenforced` rather than
+  guessing. Violations fail the node and leave the files in place: rollback
+  never deletes (§0.1 item 2). A new `LOCKSTEP_WRITE_SCOPE` env var carries the
+  scope as a JSON array; `LOCKSTEP_WORKSPACE_SCOPE` is deliberately UNCHANGED
+  because ADDENDUM-A preamble note 2 documents it as a single directory and
+  `lockstep-guard.ts` prefix-matches against it.
+- **2026-08-02 — `lockstep run --replay <run_dir>`** serves recorded results
+  instead of spawning. Why: every node is already content-addressed by
+  `input_hash` with its result persisted, so replay is a lookup rather than a
+  simulation — it gives zero-token flow regression tests, and it lets a
+  failure be reproduced from a run dir someone sent you, which rev 7 lists as
+  an irreducible support gap. Implemented as a run FLAG wrapping the existing
+  executors, not a new `kind`, so `format_version` does not move. Strict by
+  default: a recording whose `input_hash` no longer matches is refused, since
+  serving it would turn a regression test green for the wrong reason;
+  `--replay-any` relaxes that and logs every stale hit.
+- **2026-08-02 — `lockstep run --estimate`** prints a cost floor from prior
+  runs before spending anything. Why: the consent beat states a budget in
+  "agent tasks", and until now that number came from nowhere. Estimates only in
+  units the driver actually owns — token-costing spawns and wall time — and
+  says so; harness-reported tokens and dollars stay in `contrib/cost_report.py`
+  with the envelope field maps. Reports a FLOOR, never a forecast: nodes with
+  no history contribute nothing, and a flow matched only by name (its
+  definition has changed) is labelled as such.
+- **2026-08-02 — a JSON STRING leaf renders raw into shell argv** (`fence=False`
+  in `interpolate.py`), instead of §7's "parsed, compact-re-serialized". Why: an
+  argv element is already a discrete string, so the compact-JSON quotes became
+  part of the value — a path arrived as `"docs/x.json"` and the program opened a
+  file whose name started with a quote, surfacing as a file-not-found far from
+  the flow file. Non-string values (numbers, booleans, arrays, objects) still
+  compact-serialize, and BOTH prompts (`fence=True`, the §7 footer contract) and
+  `when` (`eval_when`, a separate code path) are untouched — so comparison
+  semantics and prompt fencing do not move. §7 is a frozen surface: this was
+  adopted by explicit decision rather than unilaterally, and an r7 amendment
+  should state the rule. Shell nodes are `cacheable=False`, so the changed
+  rendered argv invalidates no cache. Pinned by `tests/test_r7_fixes.py` and
+  `tests/test_interpolate.py::TestForms::test_steps_json_and_path`.
+- **2026-08-02 — the assembled command line is checked before every spawn**
+  (`proc.argv_overflow` / `ArgvTooLong`, raised from `proc.spawn`). Why: Windows
+  `CreateProcess` caps a command line at 32,767 chars, and r5 A2 deliberately
+  makes a corrective prompt several times larger than the original, so any
+  argv-passed stanza can reach the cap on a re-spawn; observed live at 59,028
+  chars. `ArgvTooLong` subclasses `OSError` so it rides the executors' existing
+  failed-spawn path (exit 127) rather than crashing the run, and the message
+  names `prompt_via = "stdin"` as the remedy instead of leaving the operator
+  with CreateProcess's generic parameter error.
+- **2026-08-02 — a failed corrective re-spawn reports the SPAWN error, not the
+  contract error.** Why: `_validate_with_respawn` (and the map path) discarded
+  `raw2.error` and reported only `validate_result("")`, so a process that never
+  started was diagnosed as `result is not valid JSON: Expecting value: line 1
+  column 1` — the second defect of the 2026-07-28 roadmap note, and the one that
+  made the first expensive to find. The ordinary case (re-spawn ran, output
+  still invalid) is unchanged and still reports "failed twice".
 - **2026-07-31 — the harness fingerprint hashes the argv TEMPLATE, not §9.2's
   "rendered argv"**: `{prompt}` stays intact (the prompt is hashed separately;
   expansion would double-embed it) and `{phase_dir}` stays intact (run-specific
