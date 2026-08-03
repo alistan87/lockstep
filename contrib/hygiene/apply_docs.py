@@ -43,8 +43,11 @@ import okf  # noqa: E402
 # input to a rule matcher, and rewriting it to "docs/spec/SPEC.md" silently
 # changed what the test exercised — two tests went red, and had they been
 # written less strictly they would instead have gone quietly meaningless.
-# Synthetic paths like `docs/NOPE.md` live there too, and they are SUPPOSED not
-# to resolve. Rewriting a repo must not edit the code that checks the repo.
+# Tests also contain deliberately non-existent doc paths, which are SUPPOSED not
+# to resolve — the verifier would flag every one. (No literal example is written
+# here: this file is itself scanned, and the first version of this very comment
+# failed the run it was explaining.) Rewriting a repo must not edit the code
+# that checks the repo.
 SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__",
               "node_modules", "tests"}
 
