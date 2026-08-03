@@ -231,3 +231,28 @@ def test_tests_directory_is_never_rewritten():
     """
     assert "tests" in apply_docs.SKIP_PARTS
     assert not any(p.parts and p.parts[0] == "tests" for p in apply_docs.repo_files())
+
+
+# --- the evidence pane must not lie -------------------------------------------
+
+def _evidence():
+    return _load("render_docs_evidence")
+
+
+def test_the_pane_does_not_claim_documents_are_unedited():
+    """The pane told a human 'nothing is edited, and no text inside any document
+    changes' while the apply rewrote ~100 references INSIDE those documents. A
+    false statement at the moment of decision is the evidence rule's central
+    failure, and it was approved on."""
+    text = _evidence().render({"placed": [entry()], "files": [], "conflicts": []}, None)
+    assert "nothing is edited" not in text.lower()
+    assert "no text inside any document" not in text.lower()
+    # It must state the edits that DO happen.
+    assert "header" in text.lower() and "updated" in text.lower()
+
+
+def test_the_pane_and_the_indexes_share_one_source_of_truth():
+    """Three rounds of corrections reached apply_docs.BUNDLE_BLURB and never
+    reached the pane, because the pane kept its own copy. The surface a human
+    reads and the artefact that gets published must not be able to disagree."""
+    assert _evidence().BLURB is apply_docs.BUNDLE_BLURB

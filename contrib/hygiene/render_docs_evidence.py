@@ -23,13 +23,12 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-BLURB = {
-    "spec": "the contract - changing these changes what the software may do",
-    "guides": "how to use it - wrong-but-fixable, no promises broken",
-    "proposals": "under consideration, NOT authoritative",
-    "audits": "point-in-time findings, never edited after the fact",
-    "notes": "working material, no stability promise",
-}
+# Imported, never copied. A duplicate of this text is exactly how three rounds
+# of corrections reached the generated bundle indexes while the pane a human
+# actually reads kept publishing the wording those rounds had identified as
+# false. The evidence pane and the artefact must not be able to disagree.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from apply_docs import BUNDLE_BLURB as BLURB  # noqa: E402
 
 
 def render(manifest: dict, verdict: dict | None) -> str:
@@ -45,8 +44,11 @@ def render(manifest: dict, verdict: dict | None) -> str:
     w("=" * 76)
     w("")
     w(f"{len(entries)} documents move into {len(by_bundle)} groups.")
-    w("Nothing is deleted, nothing is edited, and no text inside any document")
-    w("changes. Each document gains a small header describing what it is.")
+    w("Nothing is deleted and no document is rewritten. Two mechanical edits DO")
+    w("change text inside files, and neither changes what any document SAYS:")
+    w("  - each document gains a small header describing what it is;")
+    w("  - links and paths that pointed at the old locations are updated to the")
+    w("    new ones, across this project - roughly 100 of them.")
     w("")
     w("The grouping is by AUTHORITY - how much you can rely on a document -")
     w("rather than by subject. The question that drove it: 'can I trust this?'")
