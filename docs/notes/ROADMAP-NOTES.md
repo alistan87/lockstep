@@ -12,8 +12,11 @@ resource: docs/notes/ROADMAP-NOTES.md
 > (16.1) and steer/cancel (16.2) are the recommended next items.
 
 **r7 candidates from ADDENDUM-A adoption (2026-07-26):** a dedicated
-per-node write-scope field (`LOCKSTEP_WORKSPACE_SCOPE` currently carries the
-resolved `spec.cwd`); and reconciling §6.11 with extension-based readonly
+per-node write-scope field — *implemented 2026-08-02 as the optional
+`spec.writes` key plus a new `LOCKSTEP_WRITE_SCOPE` env var, deliberately
+NOT by repurposing `LOCKSTEP_WORKSPACE_SCOPE` (which stays the resolved
+`spec.cwd`, since the reference extension prefix-matches a single directory
+against it); see DEVIATIONS* — and reconciling §6.11 with extension-based readonly
 enforcement (an argv-visible flag that loads the enforcing hook), which would
 finally allow `spec.readonly` nodes on pi.
 
@@ -29,7 +32,9 @@ non-input. Related: run dirs under the repo root are visible to agents with
 read tools; consider defaulting `--runs-dir` outside the audited tree.
 
 **New r7 candidate (2026-07-28) — a corrective re-spawn can exceed the Windows
-command-line limit, and the spawn error is then masked.** Observed live: an
+command-line limit, and the spawn error is then masked.** *Both defects fixed
+2026-08-02 (see DEVIATIONS); an r7 amendment should still state the argv rule
+in §8.5.* Observed live: an
 extract node emitted an 11 KB result that failed contract validation; r5 A2's
 corrective prompt (original prompt + invalid output + validation error) came to
 59,028 chars; the stanza used `prompt_via = "argv"`; Windows `CreateProcess`
@@ -56,7 +61,8 @@ whenever the re-spawn itself failed. Workaround today is config-only — set
 `prompt_via = "stdin"` on any stanza whose nodes can produce large outputs.
 
 **New r7 candidate (2026-07-27) — a JSON string interpolated into shell argv
-carries its quotes.** §7 defines `{steps.X.json.field}` as "parsed,
+carries its quotes.** *Fixed 2026-08-02 by explicit decision to touch §7 (see
+DEVIATIONS); an r7 amendment should formalize it.* §7 defines `{steps.X.json.field}` as "parsed,
 compact-re-serialized", so a STRING field renders as `"…"`. That is right for a
 prompt (the value is data) and required for `when` comparison semantics, but a
 shell node's argv element is already a discrete string, so the quotes become part

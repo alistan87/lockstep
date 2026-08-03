@@ -9,6 +9,7 @@ rollback never deletes (SPEC §0.1 item 2).
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import shutil
@@ -20,6 +21,23 @@ from pathlib import Path
 from .protocols import SnapshotRef
 
 MAX_FINGERPRINT_FILE_BYTES = 1_000_000  # SPEC §9.2: content-hash skip above 1 MB
+
+
+def path_in_scope(rel_path: str, scope: list[str]) -> bool:
+    """Is a changed path covered by a declared write scope?
+
+    An entry matches when the path equals it, sits under it (the entry read as
+    a directory), or matches it as a glob. Separators are normalized so a
+    scope written `src/x` works on Windows.
+    """
+    p = rel_path.replace("\\", "/").strip("/")
+    for entry in scope:
+        e = str(entry).replace("\\", "/").strip("/")
+        if not e:
+            continue
+        if p == e or p.startswith(e + "/") or fnmatch.fnmatch(p, e):
+            return True
+    return False
 
 
 class WorkspaceError(Exception):

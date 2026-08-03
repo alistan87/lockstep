@@ -30,11 +30,18 @@ class FakeSpec(BaseModel):
     # raw result text; anything else is JSON-serialized.
     outputs: list[Any] = []
     readonly: bool = False
+    writes: list[str] = []  # declared write scope; see ShellSpec.writes
     write_files: dict[str, str] = {}  # rel path -> content, written on execute
     exit_code: int = 0
     costs_tokens: bool = True
     sleep_s: float = 0.0
     empty_result: bool = False  # emit no result at all (tests the auto-retry)
+    # A spawn that never starts (argv over the platform limit, missing binary):
+    # RawResult carries `error` and no result, exactly as the real executors
+    # report OSError. spawn_error_after is the zero-based attempt it starts at,
+    # so a node can produce invalid output first and fail to re-spawn second.
+    spawn_error: str = ""
+    spawn_error_after: int = 0
     progress: list[dict] = []  # ProgressEvent dicts appended to progress.jsonl (r6 C1)
     write_phase_files: dict[str, str] = {}  # rel path -> content, written into the
     # PHASE dir on execute — e.g. a verdicts.jsonl, simulating an in-harness
@@ -106,6 +113,11 @@ class FakeExecutor:
             attempt = self._counts.get(node_id, 0)
             self._counts[node_id] = attempt + 1
             self.calls.append(call)
+        if spec.spawn_error and attempt >= spec.spawn_error_after:
+            call.ended = time.monotonic()
+            return RawResult(
+                exit_code=127, result_text=None, source="none", error=spec.spawn_error
+            )
         if spec.progress:
             with open(phase_dir / "progress.jsonl", "a", encoding="utf-8") as f:
                 for ev in spec.progress:

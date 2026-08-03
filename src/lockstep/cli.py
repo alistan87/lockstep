@@ -19,6 +19,7 @@ from . import (
 )
 from .contracts import ContractError
 from .doctor import run_doctor
+from .estimate import estimate_flow, render_estimate
 from .executors.fake import FakeExecutor
 from .executors.harness import HarnessError
 from .executors.proc import PathEscapeError
@@ -32,12 +33,15 @@ from .state import (
     PhaseRecord,
     RunState,
     acquire_lock,
+    chain_head,
+    configure_spans,
     find_attachable_run,
     load_state,
     new_run_dir,
     read_events,
     release_lock,
     utcnow,
+    verify_trace,
     write_state,
 )
 from .store import FileStore
@@ -146,7 +150,18 @@ def _print_plan(tg: TaskGraph, config: LockstepConfig) -> None:
                 print(f"    (serialized on {token!r}: {', '.join(holders)})")
 
 
-def _run_engine(tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path, max_workers: int, resume: bool) -> int:
+def _run_engine(
+    tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path,
+    max_workers: int, resume: bool, replay: str | None = None, replay_any: bool = False,
+    otel_file: str | None = None,
+) -> int:
+    if otel_file is not None:
+        # Bare flag ⇒ alongside the run's other artifacts; a path ⇒ a shared
+        # file a collector already watches. The run id is the trace id's seed,
+        # so a resume joins the same trace.
+        target = Path(otel_file) if otel_file else run_dir / "spans.jsonl"
+        configure_spans(target, run_dir.name)
+        print(f"otel: OTLP/JSON spans -> {target}")
     workspace = _workspace_for(repo_root)
     store = FileStore(run_dir, state)
     engine = Engine(
@@ -159,6 +174,18 @@ def _run_engine(tg, flow_hash, config, run_dir: Path, state: RunState, repo_root
         repo_root=repo_root,
         max_workers=max_workers,
     )
+    if replay:
+        from .replay import ReplayIndex, wrap_registry
+
+        wrap_registry(
+            engine.registry,
+            ReplayIndex.from_run_dir(Path(replay)),
+            strict=not replay_any,
+            log=engine.log,
+        )
+        print(f"replay: serving recorded results from {replay} — no spawns, no tokens")
+        if replay_any:
+            print("replay: --replay-any is set; stale recordings are served with a warning")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")  # AMENDMENTS M6
     if resume:
@@ -166,6 +193,11 @@ def _run_engine(tg, flow_hash, config, run_dir: Path, state: RunState, repo_root
     write_state(run_dir, state)
     code = engine.run()
     print(f"run dir: {run_dir}")
+    head = chain_head(run_dir)
+    if head:
+        # Record this off-box and `verify-trace --head` pins the whole journal;
+        # without it the chain only proves internal consistency.
+        print(f"trace head: {head}")
     print(f"exit: {code}")
     return code
 
@@ -186,8 +218,13 @@ def cmd_run(ns) -> int:
         args = _parse_args_kv(ns.arg or [], tg)
     except FlowError as e:
         return _fail(str(e), EXIT_VERIFY)
-    if ns.dry_run:
+    if ns.dry_run or ns.estimate:
         _print_plan(tg, config)
+        if ns.estimate:
+            # Deliberately before any run dir exists: a preflight that created
+            # state would already have changed the thing it is estimating.
+            print()
+            print(render_estimate(estimate_flow(tg, Path(ns.runs_dir), flow_hash)))
         return EXIT_OK
     runs_dir = Path(ns.runs_dir)
     workspace_kind = "git" if (repo_root / ".git").exists() else "null"
@@ -211,7 +248,10 @@ def cmd_run(ns) -> int:
     except LockHeld as e:
         return _fail(f"run dir {run_dir} is locked by {e.holder} (exit 8)", EXIT_LOCKED)
     try:
-        return _run_engine(tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers, resume)
+        return _run_engine(
+            tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers, resume,
+            replay=ns.replay, replay_any=ns.replay_any, otel_file=ns.otel_file,
+        )
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
     finally:
@@ -250,7 +290,8 @@ def cmd_resume(ns) -> int:
     except LockHeld as e:
         return _fail(f"run dir {run_dir} is locked by {e.holder} (exit 8)", EXIT_LOCKED)
     try:
-        return _run_engine(tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers, resume=True)
+        return _run_engine(tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers,
+                           resume=True, otel_file=ns.otel_file)
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
     finally:
@@ -318,6 +359,33 @@ def cmd_status(ns) -> int:
         print(f"verdict {gate}: {verdict}")
     if events:
         print(f"events: {len(events)} (last: {events[-1].get('node')} -> {events[-1].get('status')})")
+    return EXIT_OK
+
+
+def cmd_verify_trace(ns) -> int:
+    """Recompute the run journal's hash chain. Exit 5 on a broken chain or a
+    head mismatch — this is verification, and 5 is its frozen code."""
+    run_dir = Path(ns.run_dir)
+    if not (run_dir / "events.jsonl").exists():
+        return _fail(f"{run_dir} has no events.jsonl", EXIT_CONFIG)
+    ok, head, bad, detail = verify_trace(run_dir)
+    if not ok:
+        print(f"lockstep: trace BROKEN at line {bad}: {detail}", file=sys.stderr)
+        print("the journal has been altered since it was written", file=sys.stderr)
+        return EXIT_VERIFY
+    if head:
+        print(f"trace ok: {detail}")
+        print(f"chain head: {head}")
+    else:
+        print(f"trace {detail}")
+    if ns.head:
+        if ns.head != head:
+            print(
+                f"lockstep: head mismatch — expected {ns.head}, computed {head or '(none)'}",
+                file=sys.stderr,
+            )
+            return EXIT_VERIFY
+        print("head matches the expected digest")
     return EXIT_OK
 
 
@@ -454,6 +522,15 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--executor-default", default=None)
     pr.add_argument("--fresh", action="store_true")
     pr.add_argument("--dry-run", action="store_true")
+    pr.add_argument("--estimate", action="store_true",
+                    help="plan plus an honest cost floor from prior runs; spends nothing")
+    pr.add_argument("--replay", default=None, metavar="RUN_DIR",
+                    help="serve results recorded in RUN_DIR instead of spawning; spends nothing")
+    pr.add_argument("--replay-any", action="store_true",
+                    help="with --replay: use recordings whose input_hash no longer matches")
+    pr.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
+                    help="write OTLP/JSON spans (GenAI semantic conventions); "
+                         "bare flag writes <run_dir>/spans.jsonl")
     pr.set_defaults(fn=cmd_run)
 
     pres = sub.add_parser("resume", help="resume a run dir")
@@ -463,6 +540,8 @@ def main(argv: list[str] | None = None) -> int:
     pres.add_argument("--repo-root", default=".")
     pres.add_argument("--max-workers", type=int, default=2)
     pres.add_argument("--force-unlock", action="store_true")
+    pres.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
+                      help="write OTLP/JSON spans; a resume joins the run's existing trace")
     pres.set_defaults(fn=cmd_resume)
 
     pv = sub.add_parser("verify", help="static verification only")
@@ -477,6 +556,12 @@ def main(argv: list[str] | None = None) -> int:
     pst = sub.add_parser("status", help="run status")
     pst.add_argument("run_dir")
     pst.set_defaults(fn=cmd_status)
+
+    pvt = sub.add_parser("verify-trace", help="recompute the run journal's hash chain")
+    pvt.add_argument("run_dir")
+    pvt.add_argument("--head", default=None,
+                     help="the chain head recorded when the run finished; pins the whole journal")
+    pvt.set_defaults(fn=cmd_verify_trace)
 
     pd = sub.add_parser("doctor", help="check the setup, then probe each configured executor")
     pd.add_argument("--config", default=None)

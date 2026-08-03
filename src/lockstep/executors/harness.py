@@ -31,6 +31,10 @@ class HarnessSpec(BaseModel):
     context: list[str] = []
     cwd: str = "."
     readonly: bool = False
+    # Declared write scope, repo-root-relative. Empty = unconstrained (v1
+    # behavior). Detected by the driver, preventable in-harness via
+    # LOCKSTEP_WRITE_SCOPE.
+    writes: list[str] = []
 
 
 class HarnessError(Exception):
@@ -247,6 +251,7 @@ class HarnessExecutor:
             exclusive=[] if spec.readonly else ["tree"],
             meta={
                 "argv_template": argv_template,
+                "writes": list(spec.writes),
                 "prompt_via": stanza.prompt_via,
                 "json_field": stanza.json_field,
                 "output": node.output,

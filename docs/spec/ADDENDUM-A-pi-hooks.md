@@ -20,9 +20,13 @@ resource: docs/spec/ADDENDUM-A-pi-hooks.md
 >    with `doctor` after any pi upgrade; if a pi version auto-resumes, point
 >    the flag at a per-attempt subdirectory instead (else a retried node
 >    inherits its own prior transcript — exactly note 4's contamination class).
-> 2. **`LOCKSTEP_WORKSPACE_SCOPE` source:** v1 nodes declare no write-scope
->    field; the env var carries the resolved `spec.cwd` until an amendment adds
->    a dedicated scope field (r7 candidate, ROADMAP-NOTES). Caveat (A.1): `cwd`
+> 2. **`LOCKSTEP_WORKSPACE_SCOPE` source:** this env var carries the resolved
+>    `spec.cwd`, and continues to — a node's DECLARED write scope now travels
+>    separately in `LOCKSTEP_WRITE_SCOPE` (a JSON array, empty string when the
+>    node declares none; see `spec.writes` and DEVIATIONS 2026-08-02). The two
+>    were kept apart deliberately: this one is documented as a single directory
+>    and `lockstep-guard.ts` prefix-matches against it, so repurposing it would
+>    have broken the extension silently. Caveat (A.1): `cwd`
 >    is a working directory, NOT a write boundary — a correct agent may
 >    legitimately write elsewhere in the repo. Scope enforcement is therefore
 >    per-flow opt-in: enable the extension's hard block only for flows whose

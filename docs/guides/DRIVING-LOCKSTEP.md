@@ -177,7 +177,9 @@ nodes, do not resume, and report what was spent.
   authoring guidance: `docs/guides/FLOW-AUTHORING.md`; worked examples + per-flow
   caveats: `flows/starter/README.md`.
 - Every spawned node carries `LOCKSTEP_NODE_ID/_ROLE/_WORKSPACE_SCOPE/
-  _VERDICT_FILE/_PHASE_DIR/_CONTRACT` in its environment; on pi with the
+  _WRITE_SCOPE/_VERDICT_FILE/_PHASE_DIR/_CONTRACT` in its environment
+  (`_WRITE_SCOPE` is the node's declared `spec.writes` as a JSON array, empty
+  when it declares none); on pi with the
   project-local extension, out-of-scope writes are blocked in-session and
   recorded to `verdicts.jsonl` (read by verdict-file gates). Extensions only
   enforce — never route control flow through them

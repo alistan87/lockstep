@@ -42,8 +42,15 @@ class TestForms:
     def test_steps_json_and_path(self):
         c = ctx()
         assert render("{steps.a.json.ok}", c).prompt_text == "true"
-        assert render("{steps.a.json.items.1}", c).prompt_text == '"y"'
+        # A STRING leaf inserts raw when fence=False (shell argv): the argv
+        # element is already a discrete string, so JSON quotes would become
+        # part of the value (r7 fix; see test_r7_fixes.py). Non-strings and
+        # whole objects keep compact JSON.
+        assert render("{steps.a.json.items.1}", c).prompt_text == "y"
+        assert render("{steps.a.json.items}", c).prompt_text == '["x","y"]'
         assert render("{steps.a.json}", c).prompt_text == '{"ok":true,"items":["x","y"],"name":"foo"}'
+        # fence=True is the §7 prompt contract: quoting stays.
+        assert '"y"' in render("{steps.a.json.items.1}", c, fence=True).prompt_text
 
     def test_item_and_field(self):
         c = ctx(item={"path": "f.py"}, has_item=True)

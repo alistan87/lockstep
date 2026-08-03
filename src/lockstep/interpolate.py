@@ -198,7 +198,14 @@ def render_template(
             value, is_json = None, True
         text = compact_json(value) if is_json else str(value)
         if not fence:
-            return text
+            # A shell argv element is ALREADY a discrete string, so the quotes
+            # from compact-JSON become part of the value: a path arrives as
+            # `"docs/x.json"` and the program opens a file whose name starts
+            # with a quote. Strings therefore render raw here — the same choice
+            # `{item.field}` already makes one function away. Prompts
+            # (fence=True) and `when` (eval_when, a separate path) keep §7's
+            # compact-JSON semantics untouched. r7 candidate; see DEVIATIONS.
+            return str(value) if isinstance(value, str) else text
         if for_hash:
             return fence_block(ref, text)
         if len(text) > max_interp_chars:

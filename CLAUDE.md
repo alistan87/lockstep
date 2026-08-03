@@ -27,6 +27,9 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6)
 .venv\Scripts\lockstep.exe steer <run_dir> <node> "msg"   # consumed at next checkpoint; folds into hash
 .venv\Scripts\lockstep.exe cancel <run_dir> <node>        # kills the node's process tree; no retries
+.venv\Scripts\lockstep.exe run <flow> --estimate   # cost floor from prior runs; spends nothing
+.venv\Scripts\lockstep.exe run <flow> --replay <run_dir>  # serve recorded results; no spawns, no tokens
+.venv\Scripts\lockstep.exe verify-trace <run_dir>  # recompute the journal's hash chain (exit 5 if broken)
 .venv\Scripts\lockstep.exe doctor                  # probes harness stanzas; spends small model calls
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
 ```
