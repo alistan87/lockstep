@@ -76,6 +76,15 @@ SUPERSEDED = {
     "PROPOSAL-domain-cockpit-rev6.md": "PROPOSAL-domain-cockpit-rev7.md",
 }
 
+# Explicit lifecycle where the default would assert something untrue. OKF
+# defaults `status` to `stable`, which for a point-in-time audit would claim
+# currency the document never had, and for a deferred design would claim
+# settledness it explicitly disclaims.
+STATUS = {
+    "PROPOSAL-unattended-mode.md": "draft",       # declares itself unscheduled
+    "repo-hygiene-work-order.md": "stable",       # accepted, partly executed
+}
+
 
 def tracked_docs(root: Path) -> list[Path]:
     """Tracked plus untracked-not-ignored, so a doc written today is catalogued.
@@ -120,9 +129,14 @@ def title_of(path: Path) -> str:
         m = TITLE.search(path.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return ""
-    if m:
-        return m.group(1)
-    return path.stem.replace("-", " ").replace("_", " ")
+    title = m.group(1) if m else path.stem.replace("-", " ").replace("_", " ")
+    # Several audits share a generic H1 ("Spec-vs-Implementation Audit Report").
+    # An index whose rows are indistinguishable does not identify anything, so
+    # fold in the date the filename already carries.
+    stamp = re.search(r"(\d{4}-\d{2}-\d{2})", path.name)
+    if stamp and stamp.group(1) not in title:
+        title = f"{title} ({stamp.group(1)})"
+    return title
 
 
 def write_mission(line: str) -> None:
@@ -155,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             "okf_type": okf_type,
             "title": title_of(p),
             "rule_ref": rule_id,
-            "status": "deprecated" if p.name in SUPERSEDED else None,
+            "status": ("deprecated" if p.name in SUPERSEDED
+                       else STATUS.get(p.name)),
             "superseded_by": SUPERSEDED.get(p.name),
             "sha": hashlib.sha256(p.read_bytes()).hexdigest()[:16],
         }

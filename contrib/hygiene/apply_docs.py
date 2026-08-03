@@ -163,10 +163,11 @@ BUNDLE_BLURB = {
              "adopted amendments bind, the addenda are explicitly informative, and "
              "the deviations register records where implementation departs. Read "
              "each document's `type` before relying on it."),
-    "guides": ("How to use the system. Correcting one of these is expected and "
-               "cheap — but some, like the domain-expert guide, are promises made "
-               "to a reader, and quietly changing what they promise is not the "
-               "same as fixing them."),
+    "guides": ("How to use the system. Some of these are promises made to a "
+               "reader — the domain-expert guide and both theory-of-operations "
+               "documents describe behaviour people rely on. Correct them freely; "
+               "changing what they promise is a different act and belongs in a "
+               "commit that says so."),
     "proposals": ("Design documents and accepted work orders. A proposal carries "
                   "no authority on its own; an accepted plan's authority comes "
                   "from the commit that adopted it, never from sitting here. "
@@ -206,7 +207,10 @@ def write_indexes(entries: list[dict], root: Path, apply: bool) -> list[str]:
             fn = Path(e["target_path"]).name
             # A superseded revision listed as an undifferentiated peer of the
             # live one is the trap this column exists to close.
-            status = e.get("status") or "current"
+            # A point-in-time report has no currency to assert. "current" would
+            # be a claim the document never made.
+            status = e.get("status") or ("as written" if e["okf_type"] == "report"
+                                         else "current")
             if e.get("superseded_by"):
                 status = f"superseded by [{e['superseded_by']}]({e['superseded_by']})"
             lines.append(
