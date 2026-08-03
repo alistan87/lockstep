@@ -36,9 +36,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import okf  # noqa: E402
 
-# Never rewritten: build outputs, run dirs, the venv, and the vendored spec.
+# Never rewritten: build outputs, run dirs, the venv, and caches.
 SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__", "node_modules"}
-REWRITE_SUFFIXES = {".md", ".py", ".json", ".ps1", ".cmd", ".toml", ".lua", ".txt"}
+
+# DENY binaries; try to read everything else as text. An ALLOWLIST of suffixes
+# was the first design and it was the bug: it silently skipped
+# `lockstep.toml.example` and a `.ts` extension file, which between them held
+# five references that would have broken. An allowlist fails closed for
+# correctness but open for coverage — every file type nobody thought of is
+# quietly excluded, and nothing reports it.
+BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".whl", ".exe",
+                   ".dll", ".so", ".dylib", ".ico", ".duckdb", ".db", ".patch"}
 
 
 def git(*args: str, check: bool = True) -> str:
@@ -59,7 +67,7 @@ def repo_files() -> list[Path]:
             p = Path(f)
             if any(part in SKIP_PARTS for part in p.parts):
                 continue
-            if p.suffix in REWRITE_SUFFIXES:
+            if p.suffix.lower() not in BINARY_SUFFIXES:
                 out.add(p)
     return sorted(out)
 
@@ -172,10 +180,11 @@ BUNDLE_BLURB = {
                   "no authority on its own; an accepted plan's authority comes "
                   "from the commit that adopted it, never from sitting here. "
                   "Superseded revisions are marked `status: deprecated`."),
-    "audits": ("Point-in-time findings, kept as they were written — the findings "
-               "are never revised. (The OKF header added to each file describes "
-               "the document; it does not touch the findings, and the body is "
-               "preserved byte for byte.)"),
+    "audits": ("Point-in-time findings. No finding, verdict, or conclusion here "
+               "has been altered. Two mechanical edits DO touch these files and "
+               "neither changes what was found: an OKF header describing the "
+               "document, and updates to paths that moved when the documentation "
+               "was reorganised."),
     "notes": "Working material. No stability promise, and nothing here binds.",
 }
 
