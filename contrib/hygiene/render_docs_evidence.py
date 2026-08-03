@@ -28,11 +28,34 @@ from pathlib import Path
 # actually reads kept publishing the wording those rounds had identified as
 # false. The evidence pane and the artefact must not be able to disagree.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import apply_docs  # noqa: E402
 from apply_docs import BUNDLE_BLURB as BLURB  # noqa: E402
+
+
+# Sentinel: "--verdict was passed but could not be parsed" is a different fact
+# from "no verdict was passed", and silently collapsing them left the pane
+# printing its assurances under a heading with nothing beneath it.
+FAILED_VERDICT: dict = {"__unreadable__": True}
 
 
 def render(manifest: dict, verdict: dict | None) -> str:
     entries = manifest.get("placed", [])
+    if manifest.get("__unreadable__"):
+        # An unreadable manifest used to become an empty one, producing a
+        # complete, reassuring pane describing zero moves - and exit 0, so the
+        # approval proceeded.
+        return "\n".join([
+            "=" * 76,
+            "  !! THE LIST OF CHANGES COULD NOT BE READ",
+            "=" * 76,
+            "",
+            "  This pane cannot show you what would change, because the file",
+            "  describing it is missing or unreadable.",
+            "",
+            "  There is nothing here to approve. The safe answer is r (reject),",
+            "  and tell whoever set this up that the manifest was unreadable.",
+            "",
+        ])
     by_bundle: dict[str, list[dict]] = defaultdict(list)
     for e in entries:
         by_bundle[Path(e["target_path"]).parent.as_posix()].append(e)
@@ -79,19 +102,48 @@ def render(manifest: dict, verdict: dict | None) -> str:
         w("")
 
     w("-- already checked without you " + "-" * 45)
-    if verdict:
+    if verdict is FAILED_VERDICT:
+        w("     !! THE REVIEW RESULT COULD NOT BE READ - DO NOT APPROVE.")
+        w("     !! Something checked this and its answer did not arrive. Reject,")
+        w("     !! and say the review result was unreadable.")
+    elif verdict:
         findings = verdict.get("findings") or []
+        # Severity order BEFORE truncating: the cap used to drop findings in
+        # whatever order a model emitted them, so a blocker could vanish from
+        # the only surface a human decides from.
+        rank = {"blocker": 0, "major": 1, "minor": 2, "nit": 3}
+        findings = sorted(findings, key=lambda f: rank.get(f.get("severity"), 9))
         w(f"     review: {verdict.get('verdict', '?')} - {verdict.get('reason', '')}")
         for f in findings[:12]:
             w(f"       [{f.get('severity')}] {f.get('file')}: {f.get('claim')}")
-    w("     No two documents land on the same name. Nothing escapes the folder.")
-    w("     Every reference elsewhere in the project is rewritten to match, and")
-    w("     the change is verified afterwards - if any link would break, the")
-    w("     whole thing stops and nothing is merged.")
+        if len(findings) > 12:
+            w(f"       ... and {len(findings) - 12} more findings, lowest severity first")
+    w("     No two documents land on the same name. Nothing escapes the folder,")
+    w("     and no document lands on top of another.")
     w("")
-    w("     It lands on a separate branch. Merging it is a second, separate")
-    w("     decision you make later, with the full diff in front of you.")
+    w("     References are rewritten across the project EXCEPT inside tests/ and")
+    w("     the reorganiser's own code, where a path is an example being")
+    w("     discussed rather than a link - those are covered by the test suite")
+    w("     instead. Afterwards every remaining reference is checked, and if any")
+    w("     would break the run stops and nothing is merged.")
     w("")
+    w("     It is committed on a separate branch - pass or fail, so a failure")
+    w("     leaves something to inspect. Merging is a second, separate decision")
+    w("     you make later with the full diff in front of you.")
+    w("")
+    # The tamper check exists to bind an approval to a SPECIFIC manifest. Until
+    # this line existed there was nothing to bind to: the digest was only ever
+    # computed by the unchecked apply run itself, so the check attested
+    # continuity from the last apply rather than from the approval.
+    try:
+        digest = apply_docs.manifest_digest(entries)
+        w(f"-- this exact set of changes is  {digest}  " + "-" * 26)
+        w(f"     Applying it runs with --arg approved_sha={digest}; if the list")
+        w("     changes after you approve, that run refuses to start.")
+        w("")
+    except Exception:                                   # noqa: BLE001 - display only
+        pass
+
     w("-" * 76)
     w("Decide from this pane. The merge review is your second chance, not your first.")
     w("")
@@ -108,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = json.loads(Path(ns.manifest).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        manifest = {"placed": [], "files": [], "conflicts": []}
+        manifest = {"__unreadable__": True}
         print(f"warning: manifest unreadable ({e})", file=sys.stderr)
 
     verdict = None
@@ -118,9 +170,11 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(verdict, str):
                 verdict = json.loads(verdict)
         except ValueError:
-            verdict = None
+            verdict = FAILED_VERDICT
+        if not isinstance(verdict, dict):
+            verdict = FAILED_VERDICT
 
-    text = render(manifest, verdict if isinstance(verdict, dict) else None)
+    text = render(manifest, verdict)
 
     out_path = Path(ns.out) if ns.out else None
     if out_path is None:

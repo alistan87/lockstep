@@ -27,7 +27,9 @@ about than a clearly broken one.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -49,7 +51,13 @@ import okf  # noqa: E402
 # failed the run it was explaining.) Rewriting a repo must not edit the code
 # that checks the repo.
 SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__",
-              "node_modules", "tests"}
+              "node_modules", "tests", "hygiene"}
+# `hygiene` (contrib/hygiene) joins the list for the same reason as `tests`: in
+# THIS directory a path is a subject being discussed, not a location being
+# referenced. The rewriter proved the point by mangling the comment above —
+# which explains why it must not do that — turning "rewriting it to X" into
+# "rewriting it to X". A tool that reorganises a repo must not edit either the
+# code that checks the repo or the code that does the reorganising.
 
 # DENY binaries; try to read everything else as text. An ALLOWLIST of suffixes
 # was the first design and it was the bug: it silently skipped
@@ -59,6 +67,23 @@ SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__",
 # quietly excluded, and nothing reports it.
 BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".whl", ".exe",
                    ".dll", ".so", ".dylib", ".ico", ".duckdb", ".db", ".patch"}
+
+
+def manifest_digest(entries: list[dict]) -> str:
+    """Digest every field the apply engine CONSUMES.
+
+    The first version hashed three of six, so a post-approval edit to `title`,
+    `status`, or `superseded_by` passed the tamper check and still changed what
+    got published. A digest that covers less than the executor reads is a
+    signature on a document somebody else can still edit.
+    """
+    canonical = json.dumps(
+        sorted((e.get("path"), e.get("target_path"), e.get("okf_type"),
+                e.get("title"), e.get("status"), e.get("superseded_by"))
+               for e in entries),
+        separators=(",", ":"), default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def git(*args: str, check: bool = True) -> str:
@@ -116,6 +141,26 @@ def check_manifest(entries: list[dict]) -> list[str]:
             problems.append(f"{src}: does not exist")
         if not e.get("okf_type"):
             problems.append(f"{src}: no okf_type")
+    # A target that already exists on disk is a collision the entry-vs-entry
+    # check cannot see: `git mv` refuses it, and it refuses PART WAY THROUGH the
+    # move loop, leaving a half-reorganised tree. Detected before anything moves.
+    sources = {e["path"] for e in entries}
+    for e in entries:
+        dst = e["target_path"]
+        if Path(dst).exists() and dst not in sources:
+            problems.append(f"{dst}: already exists and is not being moved away")
+    # An untracked source cannot be `git mv`'d, and the failure surfaces as an
+    # uncaught RuntimeError mid-loop rather than a refusal.
+    try:
+        tracked = {p.strip().replace("\\", "/")
+                   for p in git("-c", "core.quotepath=off", "ls-files").splitlines()
+                   if p.strip()}
+        for e in entries:
+            if e["path"].replace("\\", "/") not in tracked:
+                problems.append(f"{e['path']}: untracked — `git mv` cannot move it; "
+                                f"`git add` it first")
+    except RuntimeError:
+        pass    # no git here; check_manifest is still useful without this one
     return problems
 
 
@@ -209,6 +254,30 @@ def write_indexes(entries: list[dict], root: Path, apply: bool) -> list[str]:
     for e in entries:
         bundles.setdefault(Path(e["target_path"]).parent.as_posix(), []).append(e)
 
+    # An index must describe the BUNDLE, not this run's manifest. Building rows
+    # from `entries` alone meant a second, incremental run silently dropped
+    # every previously indexed document — and nothing noticed, because verify
+    # never inspects an index. Fold in whatever is already on disk, reading its
+    # own frontmatter for the truth about it.
+    if apply:
+        for bundle in list(bundles):
+            listed = {Path(e["target_path"]).name for e in bundles[bundle]}
+            for existing in sorted(Path(bundle).glob("*.md")):
+                if existing.name in okf.RESERVED or existing.name in listed:
+                    continue
+                try:
+                    fm, _ = okf.parse(existing.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    fm = None
+                f = fm.fields if fm and fm.present else {}
+                bundles[bundle].append({
+                    "target_path": f"{bundle}/{existing.name}",
+                    "okf_type": f.get("type", "?"),
+                    "title": f.get("title", existing.stem),
+                    "status": f.get("status"),
+                    "superseded_by": f.get("superseded_by"),
+                })
+
     for bundle, items in sorted(bundles.items()):
         name = Path(bundle).name
         lines = [
@@ -287,7 +356,11 @@ def verify(entries: list[dict], root: Path) -> list[str]:
     # form the rewriter could not match (a glob, a compressed `-r5.md`
     # continuation) or a genuine typo. Both used to fail silently and leave a
     # reader pointed at an emptied directory; now they fail the run.
-    ref = re.compile(r"docs/[A-Za-z0-9_.\-]+\.md")
+    # `/` MUST be inside the class. Without it this matched only FLAT
+    # `docs/<file>.md` references — the one form that no longer exists after a
+    # reorganisation — so the check was blind to every path it was added to
+    # protect, and let a real broken reference through.
+    ref = re.compile(r"docs(?:/[A-Za-z0-9_.+\-]+)+\.md")
     for f in repo_files():
         try:
             text = f.read_text(encoding="utf-8")
@@ -365,8 +438,32 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     problems = verify(entries, Path(ns.root))
+
+    # COMMIT, pass or fail. Leaving the result as uncommitted working-tree state
+    # was self-defeating: a restore discards it, a branch switch carries it off
+    # the branch, and the tool's own dirty-tree guard then refuses the next run.
+    # "Left for autopsy" is only true if the autopsy has something to open.
+    trailers = (f"\nHygiene-Run: {os.environ.get('LOCKSTEP_PHASE_DIR', 'manual')}"
+                f"\nManifest-Sha: {manifest_digest(entries)}\n")
+    try:
+        git("add", "-A")
+        if problems:
+            git("commit", "-q", "-m",
+                "wip: docs reorganisation FAILED verification - do not merge\n"
+                "\nLeft for autopsy. See the verify output in the run dir." + trailers)
+        else:
+            git("commit", "-q", "-m",
+                f"docs: reorganise into OKF bundles ({len(entries)} documents)\n"
+                f"\nApplied by contrib/hygiene/apply_docs.py from an approved manifest."
+                f"\nVerified: zero dangling references, all documents conformant."
+                + trailers)
+        print(f"committed on {git('rev-parse', '--abbrev-ref', 'HEAD').strip()}")
+    except RuntimeError as e:
+        print(f"warning: could not commit ({e}) - the tree holds the result", file=sys.stderr)
+
     if problems:
-        print("\nVERIFY FAILED - branch left for autopsy, nothing merged:", file=sys.stderr)
+        print("\nVERIFY FAILED - committed to the branch for autopsy, nothing merged:",
+              file=sys.stderr)
         for p in problems[:40]:
             print(f"  - {p}", file=sys.stderr)
         return 3

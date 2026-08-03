@@ -18,27 +18,29 @@ is the honest shape for a first run where no digest was captured yet.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import apply_docs  # noqa: E402
 
 
 def manifest_sha(path: Path) -> str:
     """Digest the SEMANTIC content — the moves — not the file bytes.
 
-    Re-running the catalog reformats or reorders nothing of consequence, but it
-    does rewrite timestamps and shas of unchanged files elsewhere in the JSON.
-    Hashing raw bytes would cry tamper at a no-op, and a tamper check that fires
+    Re-running the catalog rewrites timestamps and shas of unchanged files, so
+    hashing raw bytes would cry tamper at a no-op, and a tamper check that fires
     on nothing is one people learn to bypass.
+
+    Delegates to apply_docs.manifest_digest so the check and the executor cannot
+    disagree about what was approved. They previously did: this covered three
+    fields, the executor consumed six, and edits to `title`, `status`, or
+    `superseded_by` passed the gate and still changed what got published.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
     entries = data.get("placed", []) if isinstance(data, dict) else data
-    canonical = json.dumps(
-        sorted(((e.get("path"), e.get("target_path"), e.get("okf_type")) for e in entries)),
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    return apply_docs.manifest_digest(entries)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,7 +66,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as e:
         return verdict("block", f"manifest unreadable: {e}")
 
-    if ns.approved_sha in ("-", ""):
+    if ns.approved_sha == "":
+        # `--arg approved_sha=` is what an unexpanded variable looks like. It
+        # used to turn the only tamper gate in the apply flow into a pass.
+        return verdict("block",
+                       "approved_sha is EMPTY — this is what an unexpanded shell "
+                       "variable produces, not a decision. Pass `-` to skip the "
+                       f"check deliberately, or the digest {actual} to enforce it.",
+                       [{"severity": "blocker", "category": "tamper", "file": str(path),
+                         "line": None, "claim": "empty approved_sha is not a sentinel",
+                         "evidence": "deterministic check",
+                         "fix_hint": f"--arg approved_sha={actual}"}])
+    if ns.approved_sha == "-":
         return verdict("pass",
                        f"NO approved digest supplied — applying {actual} unchecked. "
                        f"Pass --arg approved_sha={actual} to make the next run tamper-evident.")

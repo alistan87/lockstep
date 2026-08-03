@@ -95,14 +95,18 @@ def tracked_docs(root: Path) -> list[Path]:
             proc = subprocess.run(["git", "-c", "core.quotepath=off", *extra, str(root)],
                                   capture_output=True, encoding="utf-8", errors="replace")
         except OSError as e:
-            print(f"git unavailable: {e}", file=sys.stderr)
-            return []
+            raise RuntimeError(f"git unavailable: {e}") from e
         if proc.returncode == 0:
             found.update(f.strip() for f in proc.stdout.split("\x00") if f.strip())
     out = []
     for f in sorted(found):
         p = Path(f)
-        if p.suffix != ".md" or p.name in ("index.md", "log.md"):
+        # Every file, not just `.md`. The suffix allowlist was the same defect
+        # class already fixed in apply_docs: a `.MD` or a `.txt` under docs/ was
+        # neither placed NOR reported as residue, and nothing anywhere said it
+        # had been skipped. Non-markdown now falls through to `unknown` and is
+        # surfaced by the validator like any other unplaceable file.
+        if p.name.lower() in ("index.md", "log.md"):
             continue
         if any(part in EXCLUDE_DIRS for part in p.parts):
             continue
