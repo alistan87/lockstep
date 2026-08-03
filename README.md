@@ -16,11 +16,11 @@ Creed, in order: *plans are data, not prose* · *machine checks before model
 judgment* · *the model authors content, never control flow* · *no session to
 time out* · *harnesses are replaceable config, not dependencies*.
 
-Spec: `docs/SPEC.md` (revision 3) as amended by `docs/AMENDMENTS-r4.md`,
-`docs/AMENDMENTS-r5.md`, and `docs/AMENDMENTS-r6.md` (all adopted; the later
+Spec: `docs/spec/SPEC.md` (revision 3) as amended by `docs/spec/AMENDMENTS-r4.md`,
+`docs/spec/AMENDMENTS-r5.md`, and `docs/spec/AMENDMENTS-r6.md` (all adopted; the later
 revision wins). Implementation
-departures: `docs/DEVIATIONS.md`. Pi extension hooks (informative, binding for
-pi nodes in this repo): `docs/ADDENDUM-A-pi-hooks.md`.
+departures: `docs/spec/DEVIATIONS.md`. Pi extension hooks (informative, binding for
+pi nodes in this repo): `docs/spec/ADDENDUM-A-pi-hooks.md`.
 
 ## Quickstart
 
@@ -74,8 +74,8 @@ its README for the full table and per-flow caveats:
 They double as worked examples of every major feature: shell vs harness nodes,
 contracts, healing vs terminal gates, map, approval, args, budgets. The
 repo's own dogfood flow is `flows/audit-spec.tg.json` (spec-vs-code audit).
-Portable references: `docs/FLOW-AUTHORING.md` (writing flows) and
-`docs/DRIVING-LOCKSTEP.md` (the drive protocol for orchestrator agents —
+Portable references: `docs/guides/FLOW-AUTHORING.md` (writing flows) and
+`docs/guides/DRIVING-LOCKSTEP.md` (the drive protocol for orchestrator agents —
 paste-ready for an `AGENTS.md`).
 
 ## Pi extension hooks (optional, pi executor only)
@@ -83,7 +83,7 @@ paste-ready for an `AGENTS.md`).
 `contrib/pi-extension/lockstep-guard.ts` is an in-session enforcement layer
 for pi: a `tool_call` scope guard that blocks-and-records deterministic
 verdicts (`verdicts.jsonl`, read by a shell gate), and a contract-keyed
-`submit_result` tool. Governing rule (`docs/ADDENDUM-A-pi-hooks.md`):
+`submit_result` tool. Governing rule (`docs/spec/ADDENDUM-A-pi-hooks.md`):
 extensions may only *enforce*, never *enable* — deleting the extension must
 not change what a correct agent can accomplish on any executor. Install
 project-locally (`.pi/extensions/`), then live-verify with
@@ -145,5 +145,5 @@ $ .venv\Scripts\python.exe -m pytest      # offline suite; fake executor, no tok
 $ LOCKSTEP_LIVE=1 pytest tests/live       # live smoke (spends tokens)
 ```
 
-Build order and working agreement: SPEC §14. Deviations: `docs/DEVIATIONS.md`.
+Build order and working agreement: SPEC §14. Deviations: `docs/spec/DEVIATIONS.md`.
 License: MIT.

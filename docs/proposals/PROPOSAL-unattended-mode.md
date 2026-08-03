@@ -1,3 +1,9 @@
+---
+type: proposal
+title: "Proposal: unattended mode (deferred)"
+resource: docs/proposals/PROPOSAL-unattended-mode.md
+status: draft
+---
 # Proposal: unattended mode (deferred)
 
 **Status:** split out of `PROPOSAL-domain-cockpit-rev6.md` §D at rev 7, on

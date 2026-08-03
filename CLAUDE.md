@@ -4,17 +4,17 @@ Harness-agnostic driver for headless coding agents: executes a taskgraph
 (`*.tg.json`) DAG whose nodes are prompts to agent harnesses or plain
 subprocesses. The driver never calls a model and never holds a credential.
 
-**Orientation:** `docs/THEORY-OF-OPERATIONS.md` explains why the driver behaves
+**Orientation:** `docs/guides/THEORY-OF-OPERATIONS.md` explains why the driver behaves
 as it does (caching, gates, healing, the spawn contract, resume) — read it
 before changing engine behaviour or authoring a flow.
 
-**The spec is authoritative:** `docs/SPEC.md` (revision 3) as amended by
-`docs/AMENDMENTS-r4.md`, `docs/AMENDMENTS-r5.md`, and `docs/AMENDMENTS-r6.md`
+**The spec is authoritative:** `docs/spec/SPEC.md` (revision 3) as amended by
+`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, and `docs/spec/AMENDMENTS-r6.md`
 (all adopted; the LATER
 revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
-Implementation-level departures are logged in `docs/DEVIATIONS.md` — check it
+Implementation-level departures are logged in `docs/spec/DEVIATIONS.md` — check it
 before reporting a spec mismatch. Adversarial audit reports live in
-`docs/audits/`. `docs/ADDENDUM-A-pi-hooks.md` (informative) governs pi
+`docs/audits/`. `docs/spec/ADDENDUM-A-pi-hooks.md` (informative) governs pi
 extension use: extensions may only ENFORCE, never enable — deleting one must
 not change what a correct agent can accomplish on any executor.
 
@@ -49,7 +49,7 @@ Live smoke (spends tokens): `$env:LOCKSTEP_LIVE="1"; .venv\Scripts\python.exe -m
 
 Exit codes (`0/2/3/4/5/6/7/8`, see `__init__.py`), `format_version` 1.x
 semantics, the §7 fencing/footer contract, hash composition (M3), and every
-stated guarantee in the spec. Any deviation goes in `docs/DEVIATIONS.md`
+stated guarantee in the spec. Any deviation goes in `docs/spec/DEVIATIONS.md`
 (what, why, date) — silent drift is what the audit gate exists to catch.
 
 ## Working agreement
@@ -89,8 +89,8 @@ failure triage).
 `contrib/` holds a layer for running lockstep on behalf of a domain expert:
 detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. If you are the session driving it, read
-`docs/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
-`docs/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds
+`docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
+`docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds
 what you may say. Three rules that are enforced by code, not discretion:
 
 - **Never answer an approval.** Non-TTY stdin auto-rejects (exit 6) by design;

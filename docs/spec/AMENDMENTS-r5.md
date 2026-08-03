@@ -1,3 +1,8 @@
+---
+type: amendment
+title: Lockstep spec — Revision 5 amendments
+resource: docs/spec/AMENDMENTS-r5.md
+---
 # Lockstep spec — Revision 5 amendments
 
 **Status: adopted.** Delta from Revision 4 (`AMENDMENTS-r4.md`); where documents

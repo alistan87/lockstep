@@ -33,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"findings": findings, "verdict": v, "reason": reason}))
         return 0        # the VERDICT carries the outcome; the node succeeded
 
+    # Parse ONCE and reuse. The second read was wrapped in a bare
+    # `except: pass` that silently discarded every conflict and residue note,
+    # after which the verdict stated a note count it had no basis for.
     try:
+        raw = json.loads(Path(ns.manifest).read_text(encoding="utf-8"))
         entries = apply_docs.load_manifest(ns.manifest)
     except (OSError, ValueError) as e:
         return verdict("block", f"manifest unreadable: {e}", [{
@@ -43,6 +47,20 @@ def main(argv: list[str] | None = None) -> int:
         }])
 
     problems = apply_docs.check_manifest(entries)
+
+    # Run the EXECUTOR in --check mode. The docstring claimed this all along and
+    # it was false: only two pure helpers were called, so every step after
+    # manifest checking — the rewrite, the injection, the index write — was
+    # unverified until the real apply ran it for the first time.
+    import contextlib, io as _io
+    buf = _io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = apply_docs.main(["--manifest", ns.manifest, "--check"])
+    except Exception as e:                      # noqa: BLE001 - any executor fault blocks
+        rc, _ = 1, buf.write(f"{type(e).__name__}: {e}")
+    if rc != 0:
+        problems.append(f"apply --check returned {rc}: {buf.getvalue().strip()[:300]}")
     findings = [{
         "severity": "blocker", "category": "manifest", "file": p.split(":")[0],
         "line": None, "claim": p, "evidence": "deterministic check",
@@ -51,8 +69,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Residue and conflicts are the catalog's own admission that rules were
     # insufficient. Not blocking — a human decides — but never silent.
-    try:
-        raw = json.loads(Path(ns.manifest).read_text(encoding="utf-8"))
+    if True:
         for c in raw.get("conflicts", []):
             findings.append({
                 "severity": "major", "category": "rule-conflict", "file": c["path"],
@@ -68,8 +85,6 @@ def main(argv: list[str] | None = None) -> int:
                 "evidence": "deterministic check",
                 "fix_hint": "add a rule, or place it by hand",
             })
-    except (OSError, ValueError):
-        pass
 
     if problems:
         return verdict("block", f"{len(problems)} blocking violation(s) in "

@@ -1,3 +1,8 @@
+---
+type: report
+title: AUDIT DOCS 2026 07 26 (2026-07-26)
+resource: docs/audits/AUDIT-DOCS-2026-07-26.md
+---
 ## Verdict: PASS
 
 **Reason:** All five findings are documentation drift confirmed against the current tree. None are blockers — the one `major` finding is a frontmatter description whose own agent body states the correct authority order, so no agent following these docs would run a broken command or take a materially wrong action.
@@ -14,7 +19,7 @@
 
 ## Recommended Actions
 
-- `.claude/agents/spec-auditor.md`: reword description to "...against docs/SPEC.md as amended by docs/AMENDMENTS-r4/-r5/-r6.md (later revision wins)."
+- `.claude/agents/spec-auditor.md`: reword description to "...against docs/spec/SPEC.md as amended by docs/AMENDMENTS-r4/-r5/-r6.md (later revision wins)."
 - `.claude/skills/debug-run/SKILL.md`: update shell-node artifact description to mention `pid.txt` and r5 A4 attempt-rotation.
 - `.claude/agents/run-diagnostician.md`: correct the description's recovery list to `(resume / resume --force-unlock / run / run --fresh / wait-then-resume)`.
 - `.claude/skills/flow-authoring/SKILL.md:8`: update grammar reference to cite r4, r5, and r6 (later wins).

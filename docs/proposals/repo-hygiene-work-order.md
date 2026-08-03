@@ -1,3 +1,9 @@
+---
+type: plan
+title: "Work order: `repo-hygiene` — audit, weekly maintenance, and consolidation flows for the work repo"
+resource: docs/proposals/repo-hygiene-work-order.md
+status: stable
+---
 # Work order: `repo-hygiene` — audit, weekly maintenance, and consolidation flows for the work repo
 
 **Status:** handoff plan for a coding agent (Claude Code) building against

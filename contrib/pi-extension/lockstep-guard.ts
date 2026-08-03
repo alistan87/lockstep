@@ -6,7 +6,7 @@
  * whose schema is selected by LOCKSTEP_CONTRACT.
  *
  * STATUS: UNTESTED against a live pi install — written to the hook surface
- * documented in docs/ADDENDUM-A-pi-hooks.md §A.2. Verify against your pi
+ * documented in docs/spec/ADDENDUM-A-pi-hooks.md §A.2. Verify against your pi
  * version before relying on it (the lockstep `doctor` principle applies:
  * the only check that catches API drift is running it).
  *

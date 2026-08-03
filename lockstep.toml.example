@@ -5,13 +5,13 @@
 # any harness upgrade and on a weekly cadence.
 #
 # New to driving lockstep (human or agent)? Read, in order:
-#   docs/DRIVING-LOCKSTEP.md    - the drive loop, exit-code protocol, run-dir
+#   docs/guides/DRIVING-LOCKSTEP.md    - the drive loop, exit-code protocol, run-dir
 #                                 diagnosis; paste-ready for your AGENTS.md
-#   docs/FLOW-AUTHORING.md      - how to write a *.tg.json (node model,
+#   docs/guides/FLOW-AUTHORING.md      - how to write a *.tg.json (node model,
 #                                 verifier trip-wires, interpolation, heal)
 #   flows/starter/README.md     - seven verified template flows + caveats
-# Authoritative spec: docs/SPEC.md + AMENDMENTS r4-r6 (later wins);
-# pi extension rules: docs/ADDENDUM-A-pi-hooks.md.
+# Authoritative spec: docs/spec/SPEC.md + AMENDMENTS r4-r6 (later wins);
+# pi extension rules: docs/spec/ADDENDUM-A-pi-hooks.md.
 
 default = "claude-code"
 

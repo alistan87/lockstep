@@ -1,6 +1,11 @@
+---
+type: amendment
+title: Lockstep spec — Revision 4 amendments
+resource: docs/spec/AMENDMENTS-r4.md
+---
 # Lockstep spec — Revision 4 amendments
 
-**Status: adopted.** This document is the delta from Revision 3 (`docs/SPEC.md`) and freezes the spec
+**Status: adopted.** This document is the delta from Revision 3 (`docs/spec/SPEC.md`) and freezes the spec
 for v1 implementation. Where this document and Revision 3 disagree, this document wins. Amendments
 A1–A5 resolve the five pre-build review findings; M1–M7 are minor gap-fills an implementer would
 otherwise have to invent silently.

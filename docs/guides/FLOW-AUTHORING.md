@@ -1,9 +1,14 @@
+---
+type: guide
+title: Authoring a lockstep taskgraph (portable reference)
+resource: docs/guides/FLOW-AUTHORING.md
+---
 # Authoring a lockstep taskgraph (portable reference)
 
 For any agent or human writing `*.tg.json` flows. Harness-agnostic: nothing
 here assumes which coding agent authored the flow or which executor runs it.
-Authoritative grammar: `docs/SPEC.md` §4–§7 as amended by
-`docs/AMENDMENTS-r4.md`, `docs/AMENDMENTS-r5.md`, `docs/AMENDMENTS-r6.md`
+Authoritative grammar: `docs/spec/SPEC.md` §4–§7 as amended by
+`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, `docs/spec/AMENDMENTS-r6.md`
 (later revision wins). This file is the distilled
 working subset.
 

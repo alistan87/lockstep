@@ -5,7 +5,7 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 
 # Authoring a taskgraph
 
-Full grammar: `docs/SPEC.md` §4–§7 as amended by `docs/AMENDMENTS-r4.md`,
+Full grammar: `docs/spec/SPEC.md` §4–§7 as amended by `docs/spec/AMENDMENTS-r4.md`,
 `-r5.md`, and `-r6.md` (the latest adopted revision wins).
 Always finish with `.venv\Scripts\lockstep.exe verify <flow>` (exit 5 = errors,
 all reported at once with named codes) and `run <flow> --dry-run` to see waves.

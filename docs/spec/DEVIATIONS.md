@@ -1,3 +1,8 @@
+---
+type: register
+title: Deviations log
+resource: docs/spec/DEVIATIONS.md
+---
 # Deviations log
 
 What / why / date, per the SPEC §14 working agreement. Amendments in

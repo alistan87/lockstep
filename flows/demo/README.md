@@ -1,7 +1,7 @@
 # The cockpit demo
 
 `repo-hygiene-demo.tg.json` is segment 1 of the repo-hygiene work order's Flow 1
-(`docs/repo-hygiene-work-order.md` §2), scaled to run on this repo in minutes.
+(`docs/proposals/repo-hygiene-work-order.md` §2), scaled to run on this repo in minutes.
 It exists to exercise **every part of the domain-expert cockpit at once** on
 work that is real rather than staged.
 

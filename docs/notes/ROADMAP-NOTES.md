@@ -1,3 +1,8 @@
+---
+type: notes
+title: Roadmap notes from dogfooding
+resource: docs/notes/ROADMAP-NOTES.md
+---
 # Roadmap notes from dogfooding
 
 > **Status: all four items below were adopted in `AMENDMENTS-r5.md`**

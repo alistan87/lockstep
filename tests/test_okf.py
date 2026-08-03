@@ -231,3 +231,165 @@ def test_tests_directory_is_never_rewritten():
     """
     assert "tests" in apply_docs.SKIP_PARTS
     assert not any(p.parts and p.parts[0] == "tests" for p in apply_docs.repo_files())
+
+
+# --- the evidence pane must not lie -------------------------------------------
+
+def _evidence():
+    return _load("render_docs_evidence")
+
+
+def test_the_pane_does_not_claim_documents_are_unedited():
+    """The pane told a human 'nothing is edited, and no text inside any document
+    changes' while the apply rewrote ~100 references INSIDE those documents. A
+    false statement at the moment of decision is the evidence rule's central
+    failure, and it was approved on."""
+    text = _evidence().render({"placed": [entry()], "files": [], "conflicts": []}, None)
+    assert "nothing is edited" not in text.lower()
+    assert "no text inside any document" not in text.lower()
+    # It must state the edits that DO happen.
+    assert "header" in text.lower() and "updated" in text.lower()
+
+
+def test_the_pane_and_the_indexes_share_one_source_of_truth():
+    """Three rounds of corrections reached apply_docs.BUNDLE_BLURB and never
+    reached the pane, because the pane kept its own copy. The surface a human
+    reads and the artefact that gets published must not be able to disagree."""
+    assert _evidence().BLURB is apply_docs.BUNDLE_BLURB
+
+
+# --- audit findings 8-11: okf.py ----------------------------------------------
+
+def test_block_sequences_are_valid_yaml_not_a_conformance_failure(tmp_path):
+    """`sources:` entries are the format's own documented spelling. Reporting
+    them as unparseable failed documents the spec explicitly permits."""
+    p = tmp_path / "d.md"
+    p.write_text("---\ntype: guide\nsources:\n  - resource: a\n---\nbody\n", encoding="utf-8")
+    assert okf.validate(p) == []
+
+
+def test_unrepresentable_frontmatter_without_a_type_still_fails(tmp_path):
+    p = tmp_path / "d.md"
+    p.write_text("---\nsources:\n  - resource: a\n---\nbody\n", encoding="utf-8")
+    assert okf.validate(p) == ["frontmatter has no non-empty `type`"]
+
+
+def test_reserved_files_are_READ_not_skipped(tmp_path):
+    """A reserved name is exempt from the `type` requirement, not from being
+    opened. Returning before reading meant the repo's own generated indexes
+    could carry broken frontmatter and be reported clean."""
+    p = tmp_path / "index.md"
+    p.write_text("---\nthis: is: not: yaml\n  - and neither is this\n---\nbody\n",
+                 encoding="utf-8")
+    assert okf.validate(p) == []          # still exempt from `type`
+    p2 = tmp_path / "log.md"
+    p2.write_text("# no frontmatter at all\n", encoding="utf-8")
+    assert okf.validate(p2) == []
+
+
+def test_a_quoted_comma_in_a_flow_sequence_is_refused_not_mangled():
+    """Naive comma splitting silently corrupted the value, and render() then
+    wrote the corruption back into the document."""
+    with pytest.raises(okf.Unrepresentable):
+        okf._parse_flat_yaml('tags: ["a, b", c]')
+
+
+def test_render_preserves_a_mixed_newline_body_byte_for_byte(tmp_path):
+    """The newline fix used to run over the whole document, so a body with
+    mixed endings was rewritten — falsifying the module's one hard guarantee,
+    and invisible to a sha test comparing an already-normalised body."""
+    body = "# Title\r\n\r\nCRLF above, LF below.\n\nplain\n"
+    p = tmp_path / "d.md"
+    p.write_text("---\r\ntype: guide\r\n---\r\n" + body, encoding="utf-8", newline="")
+    doc = okf.load(p)
+    out = okf.render(doc, {"title": "T"})
+    assert out.endswith(body), "body was modified"
+
+
+# --- audit findings 1-7, 12-23 ------------------------------------------------
+
+def test_dangling_regex_matches_nested_paths():
+    """`/` was missing from the class, so the check matched only FLAT paths —
+    the one form that no longer exists after a reorganisation. It was blind to
+    every path it existed to protect."""
+    import re
+    rx = re.compile(r"docs(?:/[A-Za-z0-9_.+\-]+)+\.md")
+    assert rx.fullmatch("docs/spec/SPEC.md")
+    assert rx.fullmatch("docs/guides/FLOW-AUTHORING.md")
+    assert rx.fullmatch("docs/SPEC.md")
+
+
+def test_the_reorganisers_own_sources_are_not_rewritten():
+    """In contrib/hygiene a path is a subject being discussed, not a link. The
+    rewriter proved it by mangling the comment that explains this."""
+    assert "hygiene" in apply_docs.SKIP_PARTS
+
+
+def test_a_target_that_already_exists_is_refused(real_file):
+    """git mv refuses it PART WAY THROUGH the loop, leaving a half-moved tree."""
+    (real_file / "docs" / "spec").mkdir(parents=True, exist_ok=True)
+    (real_file / "docs" / "spec" / "A.md").write_text("existing", encoding="utf-8")
+    problems = apply_docs.check_manifest([entry()])
+    assert any("already exists" in p for p in problems)
+
+
+def test_the_digest_covers_every_field_the_engine_consumes():
+    """Hashing 3 of 6 let post-approval edits to title/status/superseded_by
+    pass the tamper check and still change what got published."""
+    base = entry()
+    d0 = apply_docs.manifest_digest([base])
+    for field in ("title", "okf_type", "target_path", "path"):
+        changed = dict(base, **{field: "CHANGED"})
+        assert apply_docs.manifest_digest([changed]) != d0, f"{field} not covered"
+    for field in ("status", "superseded_by"):
+        assert apply_docs.manifest_digest([dict(base, **{field: "x"})]) != d0, \
+            f"{field} not covered"
+
+
+def test_preflight_and_apply_share_one_digest():
+    """Two definitions of 'the approved manifest' is how a tamper check ends up
+    attesting something other than what the executor will read."""
+    preflight = _load("preflight_docs")
+    assert preflight.apply_docs.manifest_digest is apply_docs.manifest_digest
+
+
+def test_an_unreadable_manifest_replaces_the_assurances(tmp_path):
+    """It used to become an empty manifest, producing a complete, reassuring
+    pane describing zero moves — and exit 0, so the approval proceeded."""
+    text = _evidence().render({"__unreadable__": True}, None)
+    assert "COULD NOT BE READ" in text
+    assert "reject" in text.lower()
+    assert "already checked without you" not in text
+
+
+def test_an_unreadable_verdict_says_do_not_approve():
+    ev = _evidence()
+    text = ev.render({"placed": [entry()], "files": [], "conflicts": []},
+                     ev.FAILED_VERDICT)
+    assert "DO NOT APPROVE" in text
+
+
+def test_findings_are_severity_ordered_before_truncation():
+    """A blocker must never be dropped from the only surface a human decides
+    from because a model happened to emit it last."""
+    findings = [{"severity": "nit", "file": f"n{i}", "claim": "x"} for i in range(15)]
+    findings.append({"severity": "blocker", "file": "CRITICAL", "claim": "the bad one"})
+    text = _evidence().render(
+        {"placed": [entry()], "files": [], "conflicts": []},
+        {"verdict": "pass", "reason": "r", "findings": findings})
+    assert "CRITICAL" in text
+    assert "and 4 more findings" in text
+
+
+def test_the_pane_states_what_is_NOT_rewritten():
+    """It promised 'every reference elsewhere in the project is rewritten' while
+    deliberately skipping tests/ and the reorganiser's own code."""
+    text = _evidence().render({"placed": [entry()], "files": [], "conflicts": []}, None)
+    assert "tests/" in text
+
+
+def test_the_pane_carries_the_manifest_digest():
+    """The tamper check binds an approval to a specific manifest; without the
+    digest on the pane there was nothing for it to bind to."""
+    text = _evidence().render({"placed": [entry()], "files": [], "conflicts": []}, None)
+    assert apply_docs.manifest_digest([entry()]) in text
