@@ -20,6 +20,7 @@ Callers act on the exit code and never re-derive the answer themselves.
 What "runnable after resume" means is taken from the engine's own resume pass
 (roles.py `_resume_reset`), not invented here:
   - running / failed / blocked  -> pending   (any node)
+  - skipped                     -> pending   (its `when` re-evaluates, so it CAN run)
   - done approval               -> pending   (approvals are never skipped)
   - done WITH unconsumed mail   -> pending   (r6 C2: a steer re-runs its target)
   - done map node with a pending/failed item -> that item re-runs
@@ -40,7 +41,31 @@ import sys
 from pathlib import Path
 
 # Statuses that the engine's resume pass turns back into `pending`.
-REACTIVATED = ("running", "failed", "blocked")
+#
+# This list MIRRORS roles.py `_resume_reset` and must be kept in step with it.
+# `skipped` was missing for the first several revisions of this file: the engine
+# resets a skipped node to pending so its `when` re-evaluates against
+# (possibly re-run) upstreams, which means a skipped node CAN run after a
+# resume. Omitting it made the check fail open — the one direction it must
+# never fail — and a flow with a `when`-gated node would have been reported
+# safe to hand over.
+#
+# `when` cannot be evaluated here without the engine, the config, and the
+# upstream results, so a skipped node is treated as awaiting. Usually it will
+# just skip again; "usually" is not the standard for a predicate that decides
+# whether a live queue lands in someone's terminal.
+REACTIVATED = ("running", "failed", "blocked", "skipped")
+
+# Two different questions, and conflating them is a bug in both directions:
+#
+#   REACTIVATED — "could this node RUN if we resume?"   (includes skipped)
+#   OUTSTANDING — "is there work left in this run?"     (excludes skipped)
+#
+# A skipped node can run, so it must block a handoff. But a run whose only
+# non-done node is skipped is FINISHED — resuming it would just re-ask an
+# approval the human already answered. Treating skipped as outstanding would
+# re-open every completed run that ever had a `when` on it.
+OUTSTANDING = ("running", "failed", "blocked", "pending")
 
 
 def read_state(run_dir: Path) -> dict:
@@ -120,10 +145,7 @@ def check(run_dir: Path) -> tuple[list[str], list[str]]:
     # quiescent, the cockpit spawns an APPROVAL pane, and the human is asked to
     # decide something they already decided and that was already delivered.
     # "Needs you" has to mean something actually needs them.
-    resumable = any(
-        (rec.get("status") in REACTIVATED or rec.get("status") == "pending")
-        for rec in nodes.values()
-    )
+    resumable = any(rec.get("status") in OUTSTANDING for rec in nodes.values())
     if not resumable:
         return [], ["__finished__"]
 

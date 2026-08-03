@@ -289,3 +289,30 @@ def test_quiet_mode_prints_nothing(tmp_path, capsys):
     assert quiescent.main([str(run), "--quiet"]) == 0
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
+
+
+def test_a_skipped_node_blocks_because_its_when_re_evaluates(tmp_path, capsys):
+    """The engine resets `skipped` to pending on resume so the node's `when`
+    re-evaluates against possibly-re-run upstreams — meaning a skipped node CAN
+    run in the human's terminal. Omitting it from REACTIVATED made this check
+    fail OPEN, the one direction it must never fail."""
+    run = make_run(
+        tmp_path,
+        {"maybe": node(status="skipped"),
+         "approve": node(role="approval", status="blocked")},
+        flow_nodes=[{"id": "maybe"}, {"id": "approve", "depends_on": ["maybe"]}],
+    )
+    assert quiescent.main([str(run)]) == 1
+    assert "maybe" in capsys.readouterr().err
+
+
+def test_reactivated_mirrors_the_engine_reset_set():
+    """Pin the hand-copy against the engine's own source. If _resume_reset
+    grows a status and this list does not, the drift is silent and unsafe."""
+    from pathlib import Path as _P
+    src = _P(__file__).resolve().parents[1] / "src" / "lockstep" / "roles.py"
+    text = src.read_text(encoding="utf-8")
+    assert 'rec.status in ("running", "failed", "blocked")' in text, \
+        "engine reset set changed; re-check contrib/quiescent.py REACTIVATED"
+    assert 'elif rec.status == "skipped"' in text, \
+        "engine no longer resets skipped; re-check contrib/quiescent.py REACTIVATED"
