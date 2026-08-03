@@ -36,8 +36,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import okf  # noqa: E402
 
-# Never rewritten: build outputs, run dirs, the venv, and caches.
-SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__", "node_modules"}
+# Never rewritten: build outputs, run dirs, the venv, caches — and TESTS.
+#
+# `tests/` is excluded because a path inside a test is a FIXTURE, not a
+# reference. The first apply proved it: `catalog.classify("docs/SPEC.md")` is an
+# input to a rule matcher, and rewriting it to "docs/spec/SPEC.md" silently
+# changed what the test exercised — two tests went red, and had they been
+# written less strictly they would instead have gone quietly meaningless.
+# Synthetic paths like `docs/NOPE.md` live there too, and they are SUPPOSED not
+# to resolve. Rewriting a repo must not edit the code that checks the repo.
+SKIP_PARTS = {"build", "dist", "runs", ".venv", ".git", "__pycache__",
+              "node_modules", "tests"}
 
 # DENY binaries; try to read everything else as text. An ALLOWLIST of suffixes
 # was the first design and it was the bug: it silently skipped

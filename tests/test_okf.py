@@ -218,3 +218,16 @@ def test_manifest_without_targets_is_rejected(tmp_path):
     p.write_text(json.dumps({"placed": [{"path": "docs/A.md"}]}), encoding="utf-8")
     with pytest.raises(ValueError):
         apply_docs.load_manifest(str(p))
+
+
+def test_tests_directory_is_never_rewritten():
+    """A path inside a test is a FIXTURE, not a reference.
+
+    The first real apply rewrote `catalog.classify("docs/SPEC.md")` — an input
+    to a rule matcher — into "docs/spec/SPEC.md", changing what the test
+    exercised and turning two tests red. Synthetic paths like `docs/NOPE.md`
+    live in tests too and are supposed not to resolve. A tool that reorganises
+    a repo must not edit the code that checks the repo.
+    """
+    assert "tests" in apply_docs.SKIP_PARTS
+    assert not any(p.parts and p.parts[0] == "tests" for p in apply_docs.repo_files())
