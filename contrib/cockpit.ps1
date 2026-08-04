@@ -248,10 +248,12 @@ function Get-NodeLabels {
     foreach ($p in $doc.nodes.PSObject.Properties) {
       if (-not $labels.ContainsKey($p.Name)) { $labels[$p.Name] = [string]$p.Value }
     }
-    if ($doc.PSObject.Properties['tiers']) {
-      $script:ApprovalTiers = $doc.tiers
-    }
   }
+  # The sidecar's `tiers` section is deliberately NOT read here. A tier belongs
+  # at the decision surface (render_evidence.py renders the banner and enforces
+  # the impact block); MISSION is a status board. An earlier cut stored it in a
+  # script variable nothing ever read, which is worse than not reading it —
+  # it made a dead channel look wired.
   return $labels
 }
 
@@ -531,6 +533,48 @@ function Get-SpendLine {
   return @('(spend unavailable)')
 }
 
+function Get-SpawnCount {
+  <#
+    The one number on the spend line that must never go backwards: "agent tasks
+    used N". Returns $null when the block does not carry one (e.g. the
+    "(spend unavailable)" placeholder), which the caller reads as "no newer
+    truth than what is already on screen".
+  #>
+  param($Block)
+  foreach ($ln in @($Block)) {
+    if ("$ln" -match 'agent tasks used\s+(\d+)') { return [int]$Matches[1] }
+  }
+  return $null
+}
+
+function Update-Spend {
+  <#
+    THE MONOTONIC GUARD (§T1.4). cost_report.py implements this for its own
+    --watch loop and says in the same breath that cockpit.ps1 does not use that
+    loop — it calls --compact once per poll, and a one-shot --compact receives
+    no floor. So the guard has to live here, or it does not exist for the pane
+    a domain expert actually reads.
+
+    Why it matters concretely: `Get-SpendLine` returns '(spend unavailable)' on
+    ANY failure, and on this machine transient AV-induced read failures are a
+    documented standing quirk. Without this, a poll that catches state.json
+    mid-replace replaces a good spend block with a placeholder, or with a
+    smaller count — and the DE was told this number "cannot flatter or round
+    off". A figure that visibly shrinks and comes back destroys that in a way
+    no amount of correctness elsewhere repairs.
+
+    Keeps the LAST GOOD block unless the new one is strictly better evidence:
+    it carries a count, and that count has not gone down.
+  #>
+  param($Current, $Candidate)
+  if (-not $Current) { return @($Candidate) }
+  $now = Get-SpawnCount $Candidate
+  if ($null -eq $now) { return @($Current) }        # placeholder / unparseable
+  $before = Get-SpawnCount $Current
+  if ($null -ne $before -and $now -lt $before) { return @($Current) }
+  return @($Candidate)
+}
+
 function Test-NeedsYou {
   <#
     T2.2 — the transition predicate for the notification. `blocked` is the
@@ -579,7 +623,14 @@ function Show-Mission {
   while ($true) {
     $current = Resolve-RunDir -Given $RunDir
     if (-not $current) {
+      # Paint once, then keep the clock ticking IN PLACE. The first cut
+      # `continue`d before the liveness line, so the pane froze with a stale
+      # wall-clock time — and -Follow's entire purpose is to be on screen
+      # before a run exists, which is exactly when a human is looking at it for
+      # reassurance. "Blank never means dead" has to hold hardest here.
       if ($painted -ne '<waiting>') { Show-WaitingScreen -Label 'MISSION'; $painted = '<waiting>' }
+      Write-Host ("`rwaiting - nothing is spending   $(Get-Date -Format 'HH:mm:ss')   ") `
+        -NoNewline -ForegroundColor DarkGray
       Start-Sleep -Seconds ([Math]::Max(1.0, $Interval))
       continue
     }
@@ -596,7 +647,11 @@ function Show-Mission {
     # spawning python once a second and re-walking every phase directory — the
     # most expensive thing in the cockpit, for the number that changes least.
     if (((Get-Date) - $spendAt).TotalSeconds -ge [Math]::Max(1.0, $SpendInterval)) {
-      $spend = Get-SpendLine -RunDir $RunDirActive -Deliverable $Deliverable
+      # @() around the call: PowerShell unrolls a single-element array on
+      # return, and $spend must stay an array — the frame's colour boundary is
+      # computed from $spend.Count.
+      $spend = @(Update-Spend -Current $spend `
+                   -Candidate (Get-SpendLine -RunDir $RunDirActive -Deliverable $Deliverable))
       $spendAt = Get-Date
     }
 
@@ -651,6 +706,27 @@ function Get-FrontierNode {
     if ($prop.Value.status -eq 'running') { return $prop.Name }
   }
   return $null
+}
+
+function Test-NodeRunning {
+  <#
+    L-M2 hysteresis, asked correctly.
+
+    The release check used to be `Get-FrontierNode -ne $bound` — but
+    Get-FrontierNode returns the FIRST running node in state.json key order, not
+    "is my node still running". Under any parallel wave (the repo's own
+    `--max-workers 3` invocation) a second node starting earlier in key order
+    made the pane flap between two live nodes: each flip cleared the screen,
+    reset the read offset so the new node's whole progress history replayed, and
+    restarted the "working - N m elapsed" clock from zero. A wrong number on the
+    liveness line is the one thing this pane may not produce.
+  #>
+  param([Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$NodeId)
+  $state = Read-RunJson (Join-Path $RunDir 'state.json')
+  if ($null -eq $state) { return $true }   # unreadable: hold the binding
+  $rec = $state.nodes.PSObject.Properties[$NodeId]
+  if (-not $rec) { return $false }
+  return ($rec.Value.status -eq 'running')
 }
 
 function Format-ProgressLine {
@@ -816,8 +892,11 @@ function Show-Activity {
     Write-Host ("`r{0,-78}" -f $beat) -NoNewline -ForegroundColor DarkGray
     $heartbeatOwed = $true
 
-    $still = Get-FrontierNode -RunDir $RunDirActive
-    if ($still -ne $bound) { $bound = $null; $offset = 0L }   # release the binding
+    # Release only when MY node stops running (L-M2), never because some other
+    # node happens to sort earlier.
+    if (-not (Test-NodeRunning -RunDir $RunDirActive -NodeId $bound)) {
+      $bound = $null; $offset = 0L; $heartbeatOwed = $false
+    }
     Start-Sleep -Seconds 1
   }
 }
@@ -1250,7 +1329,11 @@ function Invoke-Boot {
 # --- layout --------------------------------------------------------------------
 
 function Invoke-Layout {
-  param([Parameter(Mandatory)][string]$RunDir)
+  # NOT [Mandatory]. `-Follow` means "no run dir yet, track the newest" — the
+  # synopsis sells it as what lets the cockpit exist before any run does — and
+  # a Mandatory parameter turned that documented invocation into a red binding
+  # error followed by exit 0, so a wrapper read success while nothing was built.
+  param([string]$RunDir)
   $self = $PSCommandPath
   if (-not (Test-Wezterm)) {
     Write-Host 'wezterm not found - falling back to a single status loop.' -ForegroundColor Yellow
@@ -1259,7 +1342,11 @@ function Invoke-Layout {
   }
   # ACTIVITY right, then this process becomes MISSION at the bottom of the
   # column it already owns. CHAT (the pane you are in) is never touched.
-  $act = @($script:PaneShell) + @('-File', $self, '-RunDir', $RunDir, '-Role', 'activity')
+  # The child gets -Follow when we have no run dir. Passing '-RunDir ""' made it
+  # hit its own usage check and exit 2, so the ACTIVITY pane died on exactly the
+  # invocation -Follow exists to serve.
+  $act = @($script:PaneShell) + @('-File', $self, '-Role', 'activity', '-RunsRoot', $RunsRoot)
+  $act += if ($RunDir) { @('-RunDir', $RunDir) } else { @('-Follow') }
   $marker = "LOCKSTEP-ACTIVITY-$([guid]::NewGuid().ToString('N').Substring(0,8))"
   # No -KillOnFailure: a view pane is not a decision surface, so a failed
   # verification is a downgrade rather than an abort — but it is still reported,

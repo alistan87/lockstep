@@ -68,16 +68,27 @@ def newest_run(runs_root: Path) -> Path | None:
     segments — the trust anchor must not blink out of existence exactly when
     somebody is looking at it for reassurance.
     """
+    # The stat() has to be INSIDE the guard, not just the listing. A run dir can
+    # vanish between the is_dir() check and the stat(), and this machine's AV
+    # raises transient PermissionError on stats besides — so the window is not
+    # theoretical. This module promises that every failure returns None rather
+    # than raising, and mission_tui's loop has no other net: an escape here
+    # kills the domain expert's view mid-watch.
+    newest: tuple[float, Path] | None = None
     try:
-        candidates = [
-            d for d in Path(runs_root).iterdir()
-            if d.is_dir() and (d / "state.json").is_file()
-        ]
+        entries = list(Path(runs_root).iterdir())
     except OSError:
         return None
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
+    for d in entries:
+        try:
+            if not d.is_dir() or not (d / "state.json").is_file():
+                continue
+            stamp = d.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or stamp > newest[0]:
+            newest = (stamp, d)
+    return newest[1] if newest else None
 
 
 def load_labels(run_dir: Path, repo_root: Path | None = None) -> dict[str, str]:
@@ -91,8 +102,28 @@ def load_labels(run_dir: Path, repo_root: Path | None = None) -> dict[str, str]:
     The run's own copy wins, so a label edited later cannot rewrite what a
     completed run was displayed as.
     """
-    labels: dict[str, str] = {}
-    tiers: dict[str, str] = {}
+    return _sidecar(run_dir, repo_root, "nodes")
+
+
+def load_tiers(run_dir: Path, repo_root: Path | None = None) -> dict[str, str]:
+    """Approval tiers from the same sidecar (T3.3).
+
+    A SEPARATE function rather than a magic key inside the labels dict. The
+    first cut smuggled these back as `labels["__tiers__"]`, which meant the one
+    consumer that mattered — the evidence renderer — never read them, and a
+    flow author following the documented sidecar shape got a silent no-op on
+    exactly the approvals meant to be loud.
+    """
+    return _sidecar(run_dir, repo_root, "tiers")
+
+
+def _sidecar(run_dir: Path, repo_root: Path | None, section: str) -> dict[str, str]:
+    """One lookup order for every section of the sidecar.
+
+    The run's own copy wins, so a label or tier edited later cannot rewrite what
+    a completed run was displayed as.
+    """
+    out: dict[str, str] = {}
     candidates = [Path(run_dir) / "flow.labels.json"]
 
     state = read_json(Path(run_dir) / "state.json") or {}
@@ -104,12 +135,9 @@ def load_labels(run_dir: Path, repo_root: Path | None = None) -> dict[str, str]:
         doc = read_json(path)
         if not isinstance(doc, dict):
             continue
-        for k, v in (doc.get("nodes") or {}).items():
-            labels.setdefault(str(k), str(v))
-        for k, v in (doc.get("tiers") or {}).items():
-            tiers.setdefault(str(k), str(v))
-    labels["__tiers__"] = json.dumps(tiers) if tiers else ""
-    return labels
+        for k, v in (doc.get(section) or {}).items():
+            out.setdefault(str(k), str(v))
+    return out
 
 
 def label_for(labels: dict[str, str], node_id: str) -> str:
@@ -485,14 +513,22 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None) -> l
         out += ["", "  latest verdict (lossy - per-round truth is in the rotated files)",
                 f"    {verdict}"]
 
+    # Sizes are stat()ed inside the guard for the same reason as newest_run:
+    # the engine ROTATES per-attempt files, so a name listed a moment ago can be
+    # gone by the time it is measured.
     phase = run_dir / "phases" / node_id
+    sized: list[str] = []
     try:
-        files = sorted(p for p in phase.iterdir() if p.is_file())
+        for p in sorted(phase.iterdir()):
+            try:
+                if p.is_file():
+                    sized.append(f"    {p.name:<28} {p.stat().st_size:>8,} bytes")
+            except OSError:
+                continue
     except OSError:
-        files = []
-    if files:
-        out += ["", "  artifacts"]
-        out += [f"    {p.name:<28} {p.stat().st_size:>8,} bytes" for p in files]
+        pass
+    if sized:
+        out += ["", "  artifacts"] + sized
     return out
 
 

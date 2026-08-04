@@ -170,11 +170,20 @@ def test_map_nodes_collapse_to_a_counter(tmp_path):
 
 
 def test_visible_nodes_is_exactly_the_drilldown_index(tmp_path):
+    """Pressing `3` must select the third thing ON SCREEN.
+
+    Asserted against literal expected ids, not against `mission_rows` — since
+    `visible_nodes` is implemented as a filter over `mission_rows`, comparing
+    the two restates the implementation and cannot fail. The rows equality is
+    still checked, but only after the ids are pinned independently.
+    """
     run = make_run(tmp_path, {
-        "done1": rec("done"), "run1": rec("running"), "pend1": rec("pending"),
+        "done1": rec("done"), "run1": rec("running"),
+        "pend1": rec("pending"), "skip1": rec("skipped"), "hurt1": rec("failed"),
     })
-    rows = [nid for nid, _ in mv.mission_rows(run) if nid]
-    assert mv.visible_nodes(run) == rows
+    # done1 collapses, skip1 collapses; the rest are shown in state.json order.
+    assert mv.visible_nodes(run) == ["run1", "pend1", "hurt1"]
+    assert mv.visible_nodes(run) == [nid for nid, _ in mv.mission_rows(run) if nid]
 
 
 def test_heal_round_is_read_from_the_record_not_the_baselines(tmp_path):

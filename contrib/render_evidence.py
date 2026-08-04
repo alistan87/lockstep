@@ -79,6 +79,39 @@ def run_dir_from_env() -> Path | None:
     return Path(phase).resolve().parents[1] if phase else None
 
 
+def tier_from_sidecar(run_dir: Path | None, approval: str | None) -> tuple[str | None, str | None]:
+    """Resolve the approval tier from the flow's labels sidecar (T3.3).
+
+    Returns (tier, complaint). A complaint is a line for the evidence itself:
+    a flow that DECLARED a tier and did not get it applied must not fail
+    silently, because the whole point of `irreversible` is to be loud.
+
+    Refuses to guess. With several tiers declared and no `--approval` naming
+    which one, it says so rather than picking — a banner attached to the wrong
+    decision is worse than no banner.
+    """
+    if run_dir is None:
+        return None, None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from mission_view import load_tiers
+    except ImportError as e:  # pragma: no cover - the module sits beside this one
+        return None, f"(could not read approval tiers: {e})"
+
+    tiers = load_tiers(run_dir, Path(__file__).resolve().parents[1])
+    if not tiers:
+        return None, None
+    if approval:
+        got = tiers.get(approval)
+        if got is None:
+            return None, f"(this flow declares tiers, but none for '{approval}')"
+        return got, None
+    if len(tiers) == 1:
+        return next(iter(tiers.values())), None
+    return None, (f"({len(tiers)} approval tiers are declared and none was named — "
+                  f"pass --approval <node id>; showing the standard framing)")
+
+
 def headings_extract(path: Path, max_sections: int = 40) -> list[str]:
     """Markdown headings plus the first non-empty line under each — the shape
     of the document and what each part claims, without the bulk."""
@@ -113,14 +146,57 @@ def full_extract(path: Path, max_lines: int) -> list[str]:
     return lines[:max_lines] + [f"… {len(lines) - max_lines} more lines; full text at {path}"]
 
 
-def diffstat(cwd: Path) -> list[str]:
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess | None:
     try:
-        proc = subprocess.run(["git", "diff", "--stat", "HEAD"], cwd=str(cwd),
+        return subprocess.run(["git", *args], cwd=str(cwd),
                               capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as e:
-        return [f"(git diff unavailable: {e})"]
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def untracked(cwd: Path) -> list[str]:
+    """Files git is not tracking yet.
+
+    `git diff` — of any flavour, `--stat` or `--name-status` — CANNOT SEE THESE.
+    That is not an edge case here, it is the primary case: the shipped starter
+    flow (`flows/starter/evidence-approval.tg.json`) has an agent write a brand
+    new deliverable, and the evidence pane rendered "(no changes against HEAD)"
+    over it. A human was being shown a categorical denial that anything had
+    happened, on the one surface the design says they must decide from.
+    """
+    proc = _git(cwd, "ls-files", "--others", "--exclude-standard")
+    if proc is None or proc.returncode != 0:
+        return []
+    return [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+
+
+def diffstat(cwd: Path) -> list[str]:
+    proc = _git(cwd, "diff", "--stat", "HEAD")
+    if proc is None:
+        return ["(git diff unavailable)"]
     body = (proc.stdout or "").strip()
-    return body.splitlines() if body else ["(no changes against HEAD)"]
+    out = body.splitlines() if body else []
+
+    new_files = untracked(cwd)
+    if new_files:
+        if out:
+            out.append("")
+        out.append(f"new files, not previously in the project ({len(new_files)}):")
+        out += [f"  {p}" for p in new_files[:40]]
+        if len(new_files) > 40:
+            out.append(f"  ... and {len(new_files) - 40} more")
+    if not out:
+        return ["(no changes against HEAD)"]
+    return out
+
+
+# git status porcelain codes -> the word a non-programmer can weigh. Anything
+# NOT in this table is counted under "other" rather than dropped: see impact().
+_CODE_WORDS = {
+    "?": "new", "A": "new", "M": "edited", "D": "DELETED", "R": "moved",
+    "C": "copied", "T": "replaced", "U": "CONFLICTED",
+}
+_ORDER = ("new", "edited", "moved", "copied", "replaced", "DELETED", "CONFLICTED", "other")
 
 
 def impact(cwd: Path) -> list[str]:
@@ -133,44 +209,52 @@ def impact(cwd: Path) -> list[str]:
     who has never seen a diff can use. `4 files changed, 1 DELETED` is legible
     to anyone.
 
-    Deletion is called out separately and unconditionally, because it is the
-    only change in the set that destroys something.
+    Two rules, both learned from getting this wrong:
+
+    - **`git status`, not `git diff`.** A diff against HEAD cannot see untracked
+      files, which is exactly what an agent writing a new deliverable produces.
+    - **The total always equals the number of entries.** Codes outside the table
+      fall into `other` rather than being skipped. An undercount here is worse
+      than no count: it is a specific, confident, wrong number on the surface a
+      human is told to trust over anything said in the chat.
+
+    Deletion and conflict are called out on their own line: one destroys
+    something, the other means the tree is in a state nobody chose.
     """
-    try:
-        proc = subprocess.run(["git", "diff", "--name-status", "HEAD"], cwd=str(cwd),
-                              capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as e:
-        return [f"scale of the change: unavailable ({e})"]
+    # `-uall`: without it git collapses an untracked DIRECTORY into a single
+    # entry, so the count said "2 new" directly above a list of five new files
+    # on the same pane. Two numbers for the same thing, one of them wrong, is
+    # the failure this whole block exists to prevent.
+    proc = _git(cwd, "status", "--porcelain", "--untracked-files=all")
+    if proc is None:
+        return ["scale of the change: unavailable (could not run git)"]
     if proc.returncode != 0:
         return ["scale of the change: unavailable (not a git working tree)"]
 
-    added = modified = deleted = renamed = 0
+    counts: dict[str, int] = {}
+    total = 0
     for line in (proc.stdout or "").splitlines():
-        code = line.split("\t", 1)[0][:1]
-        if code == "A":
-            added += 1
-        elif code == "M":
-            modified += 1
-        elif code == "D":
-            deleted += 1
-        elif code == "R":
-            renamed += 1
-    total = added + modified + deleted + renamed
+        if not line.strip():
+            continue
+        total += 1
+        # XY: index status then worktree status. Take whichever is not a space —
+        # index first, since a staged rename reported as "R " is a rename.
+        xy = line[:2]
+        code = xy[0] if xy[0] not in (" ", "?") else xy[1]
+        word = _CODE_WORDS.get(code, "other")
+        counts[word] = counts.get(word, 0) + 1
+
     if total == 0:
         return ["scale of the change: nothing changed against the last saved state"]
 
-    parts = []
-    if added:
-        parts.append(f"{added} new")
-    if modified:
-        parts.append(f"{modified} edited")
-    if renamed:
-        parts.append(f"{renamed} moved")
-    if deleted:
-        parts.append(f"{deleted} DELETED")
+    parts = [f"{counts[w]} {w}" for w in _ORDER if counts.get(w)]
     out = [f"scale of the change: {total} file{'s' if total != 1 else ''} - " + ", ".join(parts)]
-    if deleted:
+    if counts.get("DELETED"):
         out.append("  something is deleted by this change - read the list above carefully")
+    if counts.get("CONFLICTED"):
+        out.append("  some files are in a conflicted state - this is not a normal result, reject")
+    if counts.get("other"):
+        out.append("  'other' is a change this tool could not name - ask before approving")
     return out
 
 
@@ -186,8 +270,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="blast radius: how many files, and whether anything is deleted")
     ap.add_argument("--reversible", metavar="TEXT", default=None,
                     help="literal statement of how to undo this; absent renders as 'not stated'")
-    ap.add_argument("--tier", choices=sorted(TIERS), default="standard",
-                    help="approval tier (T3.3); changes presentation and required evidence only")
+    ap.add_argument("--tier", choices=sorted(TIERS), default=None,
+                    help="approval tier (T3.3); changes presentation and required evidence only. "
+                         "Omitted ⇒ read from the flow's labels sidecar, else 'standard'")
+    ap.add_argument("--approval", default=None, metavar="NODE_ID",
+                    help="which approval this evidence is for; disambiguates the sidecar tier")
     ap.add_argument("--max-verdict-lines", type=int, default=MAX_VERDICT_LINES)
     ns = ap.parse_args(argv)
 
@@ -212,11 +299,22 @@ def main(argv: list[str] | None = None) -> int:
     if not body:
         body.append("(nothing requested — pass --headings, --full, or --diffstat)")
 
+    # The tier: explicit flag wins, then the flow's sidecar, then standard. A
+    # flow that DECLARED a tier and did not get it applied says so in the
+    # evidence — the whole point of `irreversible` is that it cannot go quiet.
+    tier, complaint = (ns.tier, None)
+    if tier is None:
+        tier, complaint = tier_from_sidecar(run_dir_from_env(), ns.approval)
+        if tier not in TIERS:
+            if tier is not None:
+                complaint = f"(this flow declares an unknown approval tier {tier!r})"
+            tier = "standard"
+
     # The decision packet: what changes, how much, and whether it can be undone.
     packet: list[str] = []
     if ns.impact:
         packet.extend(impact(Path.cwd()))
-    elif ns.tier == "irreversible":
+    elif tier == "irreversible":
         # An irreversible approval with no impact block is a flow that declined
         # to characterise what it is about to do permanently. Say that, rather
         # than let a silent omission read as "nothing much happens".
@@ -225,8 +323,10 @@ def main(argv: list[str] | None = None) -> int:
         packet.append(f"if this turns out wrong: {ns.reversible}")
     else:
         packet.append("if this turns out wrong: not stated by this flow")
+    if complaint:
+        packet.append(complaint)
 
-    banner = TIERS.get(ns.tier)
+    banner = TIERS.get(tier)
     header = ["=" * 72, f"  {ns.title}"]
     if banner:
         header.append(f"  {banner}")

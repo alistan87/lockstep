@@ -121,7 +121,16 @@ def main(argv: list[str] | None = None) -> int:
     if not gates:
         # Stale cards are worse than no card: a question the human already
         # answered, still on screen, reads as an unanswered one.
-        out_path.unlink(missing_ok=True)
+        #
+        # But only ever delete OUR OWN card. `--out` can name any path, and the
+        # first cut would unlink it — pointed at approval-evidence.txt, the
+        # stale-card cleanup would have eaten the artifact a human decides from.
+        # A tool does not delete a file it did not create.
+        if out_path.name == "question-card.txt":
+            out_path.unlink(missing_ok=True)
+        else:
+            print(f"no blocked gate; leaving {out_path} alone (not a question card)",
+                  file=sys.stderr)
         print("no blocked gate - nothing to ask", file=sys.stderr)
         return 1
     if len(gates) > 1:

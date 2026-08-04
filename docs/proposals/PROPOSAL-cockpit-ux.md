@@ -155,8 +155,12 @@ _watch` does it. A pane that repaints its whole surface once a second destroys a
 human's ability to tell new information from old — the same reasoning that
 already forced ACTIVITY to read incrementally (L-B2's rationale note).
 
-The monotonic guard on spend totals is preserved: the cached block is only
-replaced by a newer one that is not smaller.
+The monotonic guard on spend totals is **implemented here**, in
+`Update-Spend`. It could not be inherited: `cost_report.py` applies it only
+inside its own `--watch` loop, and says in the same breath that the cockpit
+does not use that loop — it calls `--compact` once per poll, and a one-shot
+`--compact` receives no floor. The first cut of this work asserted the guard
+was preserved when nothing preserved it (§13, B3).
 
 ### T1.5 Render `step` and `pct` (F6)
 
@@ -343,7 +347,11 @@ prompts, diffs, and model output.
 
 Every approval is currently equally weighty, which is the standard road to
 rubber-stamping. A flow may declare a tier per approval in the labels sidecar
-(so, again, no format change):
+(so, again, no format change). `render_evidence.py` resolves it — explicit
+`--tier` first, then the sidecar, then `standard` — and refuses to guess when
+several tiers are declared and no `--approval` names one, because a banner
+attached to the wrong decision is worse than no banner. (The first cut parsed
+the section and gave it no reader anywhere; §13, B2.)
 
 | tier | evidence header | behaviour |
 |---|---|---|
@@ -436,10 +444,15 @@ flow file written today stops verifying.
   auto-rejects on non-TTY stdin.
 - `tests/test_rejection_reason.py` — `rejection.txt` shape; skip writes no file;
   `retrospect.py` reports an unrelayed rejection as drift.
-- `tests/test_mission_render.py` — pure render functions: monotonic spend,
-  repaint-on-change, collapse rules, `pct`/`step` rendering with fields absent.
-- `tests/test_mission_server.py` — loopback default, no write routes, renders
-  from the same functions.
+- `tests/test_mission_render.py` — pure render functions: collapse rules,
+  headline, `pct`/`step` rendering with fields absent, label resolution.
+- The read-only page (loopback default, no write routes, renders from the same
+  functions) is covered inside `tests/test_cockpit_ux.py` rather than a file of
+  its own.
+- `tests/test_cockpit_blockers.py` — every defect the adversarial review found
+  (§13), including the first PowerShell behaviour in this repo ever put under
+  test: the monotonic spend guard, exercised by extracting the real functions
+  out of `cockpit.ps1` so the test cannot drift from the shipped code.
 - PowerShell paths remain untested by pytest, as today. T3.1 exists partly to
   move the view layer into the tested half of the repo.
 
@@ -473,8 +486,8 @@ rendered line back to a node by string prefix, which would mis-select the moment
 a label changed. `mission_rows()` now returns `(node_id, text)` pairs, so the
 number beside a line and the node a keypress selects are one fact.
 
-**T3.3 is in the labels sidecar, as planned, but tiers do strictly less than the
-table implied.** No tier alters the prompt or the flow. `irreversible` adds a
+**T3.3 is in the labels sidecar, but the first cut wired only half of it** — see
+§13 B2. As shipped now, tiers do strictly less than the table implied. No tier alters the prompt or the flow. `irreversible` adds a
 banner and turns a missing `--impact` into an explicit *"NOT CHARACTERISED"*;
 `routine` adds a label. That is the whole mechanism, and it is deliberate: the
 moment a tier can quiet an approval, a flow author can remove the human by
@@ -484,8 +497,103 @@ declaring one.
 behavioural evidence (§10) remain deferred for the reasons given there.
 
 Tests: `tests/test_mission_render.py` (31), `tests/test_cockpit_ux.py` (25),
-`tests/test_approval_cockpit.py` (7), `tests/test_rejection_reason.py` (7).
-The last test in `test_mission_render.py` parses the glossary out of
-`cockpit.ps1` and requires it to equal `mission_view.GLOSSARY` — two
-implementations of the domain expert's trust anchor are only tolerable if they
-cannot drift apart quietly.
+`tests/test_cockpit_blockers.py` (23), `tests/test_approval_cockpit.py` (9),
+`tests/test_rejection_reason.py` (7) — 95 in all, suite at 433.
+
+One test in `test_mission_render.py` parses the glossary out of `cockpit.ps1`
+and requires it to equal `mission_view.GLOSSARY` — two implementations of the
+domain expert's trust anchor are only tolerable if they cannot drift apart
+quietly.
+
+---
+
+## 13. What the adversarial review found (2026-08-04)
+
+Four reviewers were run against the implementation commit. Three finished; the
+fourth was cut short by a session limit and its territory (claims-versus-code)
+was closed by hand afterwards. **The engine changes came back clean** — no
+blockers, no majors, and five deliberate mutations each caught by the tests.
+Everything below was in the `contrib/` layer, and all of it is fixed.
+
+Recording it here rather than only in a commit message, because the shape of
+what was wrong is more useful than the fixes: **every blocker was a specific,
+confident, WRONG statement made to a non-programmer on the surface the design
+tells them to trust over anything said in the chat.** That is a worse failure
+mode than a crash, because a crash is visible. Nothing in the first cut was
+*broken*; it was *mistaken*, fluently.
+
+### Blockers
+
+**B1 — the blast-radius number could not see new files.** `impact()` and
+`diffstat()` both read `git diff` against HEAD, which is blind to untracked
+paths. The shipped starter flow has an agent write a **brand new deliverable**,
+so the evidence pane rendered *"(no changes against HEAD)"* and
+*"nothing changed against the last saved state"* over exactly the file the human
+was being asked to approve. The parser also counted only `A/M/D/R`, silently
+dropping `T` (typechange), `C` (copy) and `U` (unmerged) from a total it still
+printed with confidence. Now read from `git status --porcelain`, with the
+invariant that **the total always equals the number of entries** — unknown codes
+land in `other` and say so, rather than vanishing. §T2.4 was arguing for a
+number a non-programmer can weigh; an undercount is worse than no count.
+
+**B2 — sidecar approval tiers had no reader.** `mission_view.load_labels`
+parsed the `tiers` section into a `labels["__tiers__"]` string and
+`cockpit.ps1` stored it in `$script:ApprovalTiers`; **neither had a single
+consumer in the repo.** A flow author following the documented sidecar shape —
+including the example this work shipped — got a silent no-op on precisely the
+approvals the mechanism exists to make loud. Fixed by giving tiers their own
+`load_tiers()` (a magic key inside another function's return value is how it got
+lost), having `render_evidence.py` resolve them, and deleting the dead
+PowerShell store. A dead channel that *looks* wired is worse than an absent one.
+
+**B3 — the spend figure could go backwards or blank out.** §T1.4 claimed the
+monotonic guard was "preserved". It was not: `cost_report.py` implements it for
+its own `--watch` loop and notes in the same comment that the cockpit does not
+use that loop. `Get-SpendLine` returns `(spend unavailable)` on any failure, and
+this machine's AV causes transient read failures as a standing quirk — so one
+unlucky poll could replace a good spend block with a placeholder. The DE is told
+this number "cannot flatter or round off". Now guarded by `Update-Spend`.
+
+### Crashes, hangs, and a lie of omission
+
+All classified MAJOR by the reviewers, all fixed, because a view that dies or
+freezes breaks *"blank never means dead"* exactly as thoroughly as one that
+lies:
+
+- `cockpit.ps1 -Follow` in its default role **crashed** on a `[Mandatory]`
+  parameter and then **exited 0**, so a wrapper read success. Its ACTIVITY child
+  was also passed `-RunDir ""` and died on its own usage check.
+- The MISSION waiting screen **froze**, showing a stale wall-clock time — on the
+  one path `-Follow` exists to serve.
+- ACTIVITY **re-pointed mid-flight** under any parallel wave, because the
+  release check asked "is my node the frontier?" instead of "is my node still
+  running?". Each flip replayed the whole progress history and restarted the
+  elapsed clock at zero: a wrong number on a liveness line.
+- `newest_run` and `node_detail` **stat()ed outside their guards**, so a rotated
+  or vanished file raised — and `mission_tui`'s loop had no other net.
+- `plan_card` **rejected flows the engine accepts** (raw `model_validate` skips
+  SPEC §4's `x-lockstep` merge): the consent artifact failing on a valid flow.
+- On Windows, **PgDn closed the TUI** — `msvcrt` delivers extended keys as two
+  reads and `'\xe0','Q'` lowercased to `q`. The most natural keystroke for
+  someone facing a wall of text dismissed their own monitoring surface.
+- `question_card --out` **deleted a file it never created** on the stale-card
+  path; pointed at `approval-evidence.txt` it would have eaten the artifact a
+  human decides from.
+- The starter flow **did not pass the flags its own guide promises** the DE
+  (`--impact`, `--reversible`). A promise to a non-programmer that depends on an
+  opt-in nobody took is a promise broken; that is now pinned by a test.
+
+### Two things about the tests themselves
+
+Every fix above is **mutation-verified**: the fix was reverted and the test
+confirmed to fail. That caught two tests of our own that could not fail —
+
+- the run-dir-vanishes tests stubbed `Path.stat` to raise on first call, but
+  `Path.is_dir()` is *itself* implemented on `stat()` and swallows `OSError`, so
+  the entry was skipped and the guard under test was never reached. The stub now
+  fails on the *later* call, which is the one a vanishing file actually breaks;
+- `test_visible_nodes_is_exactly_the_drilldown_index` compared `visible_nodes`
+  against `mission_rows` — which is how `visible_nodes` is implemented. It now
+  pins literal expected ids first.
+
+A test that cannot fail is the same defect as a dead channel, one layer up.

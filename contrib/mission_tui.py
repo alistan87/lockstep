@@ -74,15 +74,30 @@ class Keys:
             except Exception:  # noqa: BLE001 - no tty: keys are simply unavailable
                 self._posix = False
 
+    # Windows delivers an extended key (arrows, PgUp/PgDn, Home, Insert, F-keys)
+    # as TWO reads: a prefix, then a code that collides with ordinary letters.
+    # PgDn is ('\xe0', 'Q') — lowercased to 'q', which QUIT THE VIEW. A
+    # non-programmer facing a wall of text presses PgDn to scroll, and their
+    # monitoring surface vanished. Insert ('\xe0','R') forced a repaint.
+    _EXTENDED_PREFIXES = ("\x00", "\xe0")
+
     def get(self) -> str | None:
         if os.name == "nt":
             try:
                 import msvcrt
-                if msvcrt.kbhit():
-                    return msvcrt.getwch()
+                if not msvcrt.kbhit():
+                    return None
+                ch = msvcrt.getwch()
+                if ch in self._EXTENDED_PREFIXES:
+                    # Consume the code byte and report nothing: this view has no
+                    # scrolling to bind them to, and swallowing is the only safe
+                    # answer while they alias onto real commands.
+                    if msvcrt.kbhit():
+                        msvcrt.getwch()
+                    return None
+                return ch
             except Exception:  # noqa: BLE001
                 return None
-            return None
         if not self._posix:
             return None
         import select
@@ -151,7 +166,15 @@ class Screen:
 def compose(run_dir: Path, repo_root: Path, spend: list[str],
             overlay: list[str] | None, rows: int) -> list[str]:
     if overlay is not None:
-        return overlay[: max(1, rows - 1)] + ["", f"{DIM}any key to go back{RESET}"]
+        room = max(1, rows - 2)
+        shown = overlay[:room]
+        # Every other truncation in this codebase announces itself; a decision
+        # surface that silently drops the end of the evidence must not be the
+        # exception.
+        if len(overlay) > room:
+            shown = shown[:-1] + [f"{DIM}... {len(overlay) - room + 1} more lines "
+                                  f"- see the file itself{RESET}"]
+        return shown + ["", f"{DIM}any key to go back   q quits the view{RESET}"]
 
     frame = [f"{CYAN}MISSION  {run_dir.name}{RESET}", "-" * mv.WIDTH]
 
@@ -224,15 +247,28 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
             was_needing = needing
 
             rows = _rows()
-            screen.paint(compose(current, repo_root, spend, overlay, rows))
+            try:
+                frame = compose(current, repo_root, spend, overlay, rows)
+            except Exception as e:  # noqa: BLE001
+                # A view must never be the reason anything stops — including
+                # itself. Every reader below is already defensive; this is the
+                # backstop for the one nobody thought of, and it says what
+                # happened rather than leaving a frozen screen.
+                frame = [f"{RED}the view hit an error and is still watching{RESET}",
+                         f"  {type(e).__name__}: {e}",
+                         "", f"{DIM}the run is unaffected - r to repaint, q to close{RESET}"]
+            screen.paint(frame)
 
             key = _drain(keys)
             if key == "q":
                 return 0
-            if key == "r":
-                screen.reset()
-            elif overlay is not None and key:
+            # The overlay check comes FIRST so "any key to go back" is true.
+            # With `r` tested above it, pressing the labelled dismiss key
+            # repainted the overlay instead of closing it.
+            if overlay is not None and key:
                 overlay = None
+                screen.reset()
+            elif key == "r":
                 screen.reset()
             elif key == "e":
                 text = mv.read_text(current / "approval-evidence.txt")

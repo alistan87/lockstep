@@ -139,22 +139,21 @@ def main(argv: list[str] | None = None) -> int:
                     help="also write the card here (default: <runs-dir>/plan-card.txt)")
     ns = ap.parse_args(argv)
 
-    try:
-        raw = Path(ns.flow).read_text(encoding="utf-8")
-        tg = TaskGraph.model_validate(json.loads(raw))
-    except (OSError, ValueError) as e:
-        print(f"cannot read {ns.flow}: {e}", file=sys.stderr)
-        return 2
-
-    # The estimator matches on flow_hash first and flow_name second, and reports
-    # which it used — so an approximate match is visible as one rather than
-    # passed off as history of this exact flow.
+    # Load the flow THE WAY THE ENGINE DOES. A raw model_validate skips SPEC §4's
+    # `x-lockstep` merge and `x-*` drop, so a flow the engine runs happily was
+    # rejected here with "Extra inputs are not permitted" — the consent card,
+    # the artifact behind "shall I start?", failing on a valid flow.
+    #
+    # The estimator matches on flow_hash first and flow_name second and reports
+    # which it used, so an approximate match is visible as one rather than passed
+    # off as history of this exact flow.
     from lockstep.cli import _load  # noqa: PLC0415  (CLI-internal, deliberately reused)
 
     try:
-        _, flow_hash = _load(Path(ns.flow))
-    except Exception:  # noqa: BLE001 - a card must never be the reason nothing starts
-        flow_hash = ""
+        tg, flow_hash = _load(Path(ns.flow))
+    except Exception as e:  # noqa: BLE001 - report, never traceback at a human
+        print(f"cannot read {ns.flow}: {e}", file=sys.stderr)
+        return 2
 
     text = render(tg, Path(ns.runs_dir), flow_hash)
     out_path = Path(ns.out) if ns.out else Path(ns.runs_dir) / "plan-card.txt"
