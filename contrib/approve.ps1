@@ -103,19 +103,28 @@ function Write-RejectionReason {
     return
   }
 
-  $payload = [ordered]@{
-    reason = $reason.Trim()
-    at     = (Get-Date).ToUniversalTime().ToString('o')
-    run    = (Split-Path -Leaf $RunDir)
-  }
+  # Which approval this was about. Read from the run's own state rather than
+  # passed in: a parameter is something a caller can get wrong, and this file is
+  # evidence about a specific decision.
+  $node = '(unknown)'
+  try {
+    $st = Get-Content -LiteralPath (Join-Path $RunDir 'state.json') -Raw -ErrorAction Stop |
+      ConvertFrom-Json
+    foreach ($p in $st.nodes.PSObject.Properties) {
+      if ($p.Value.role -eq 'approval' -and $p.Value.status -eq 'blocked') { $node = $p.Name }
+    }
+  } catch { }
+
   $text = @(
     ('=' * 72),
     '  WHY THIS WAS REJECTED - in the words of the person who rejected it',
     ('=' * 72),
     '',
-    "  $($payload.reason)",
+    "  $($reason.Trim())",
     '',
-    "  recorded $($payload.at)",
+    "  decision : $node",
+    "  run      : $(Split-Path -Leaf $RunDir)",
+    "  recorded : $((Get-Date).ToUniversalTime().ToString('o'))",
     ''
   ) -join [Environment]::NewLine
   try {
@@ -126,7 +135,9 @@ function Write-RejectionReason {
   }
 }
 
-Clear-Host
+# Guarded for the same reason cockpit.ps1's Clear-Pane is: Clear-Host throws
+# when stdout is redirected, which is how every scripted drill runs this.
+try { Clear-Host } catch { Write-Host '' }
 
 $evidence = Join-Path $RunDir 'approval-evidence.txt'
 if (Test-Path -LiteralPath $evidence) {

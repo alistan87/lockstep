@@ -1205,8 +1205,8 @@ class Engine:
                 # re-asks reads as a frozen terminal to someone who does not
                 # know they typed something it does not take.
                 if answer:
-                    self.log("Only a (approve) or r (reject). To say more, type r "
-                             "and explain in the chat.")
+                    self.log("Only a (approve) or r (reject). Type r if something is "
+                             "wrong - you will be asked what, in one line.")
                 continue
             if answer in ("e", "edit"):
                 self.log("Enter text; end with EOF (Ctrl-Z then Enter on Windows, Ctrl-D elsewhere):")

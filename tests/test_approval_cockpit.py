@@ -29,15 +29,27 @@ FLOW = {
 }
 
 
-def _tty(monkeypatch, answers: list[str]) -> list[str]:
+def _tty(monkeypatch, answers: list[str], *, limit: int = 50) -> list[str]:
     """Pretend stdin is a terminal and feed `answers` to input(). Returns the
-    list that collects every prompt string the engine actually displayed."""
+    list that collects every prompt string the engine actually displayed.
+
+    `limit` is a hard stop, and it is load-bearing rather than tidy: cockpit
+    mode `continue`s on an unrecognised answer, so a regression that made EOF
+    fall into that branch would spin forever. With no pytest-timeout configured,
+    the suite would HANG instead of failing — and a test that hangs on the
+    defect it names is barely a test at all. RuntimeError turns that into a
+    failure with a legible cause.
+    """
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
     seen: list[str] = []
     queue = list(answers)
 
     def fake_input(prompt: str = "") -> str:
         seen.append(prompt)
+        if len(seen) > limit:
+            raise RuntimeError(
+                f"the approval prompt asked {len(seen)} times without terminating — "
+                f"it is looping, not waiting")
         if not queue:
             raise EOFError
         return queue.pop(0)

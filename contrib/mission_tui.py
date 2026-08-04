@@ -224,7 +224,7 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
                               "  Tell the assistant what you would like to work on;",
                               "  this view fills in by itself once something starts."])
                 _sleep(interval)
-                if _drain(keys) == "q":
+                if "q" in _drain(keys):
                     return 0
                 continue
 
@@ -259,28 +259,28 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
                          "", f"{DIM}the run is unaffected - r to repaint, q to close{RESET}"]
             screen.paint(frame)
 
-            key = _drain(keys)
-            if key == "q":
-                return 0
-            # The overlay check comes FIRST so "any key to go back" is true.
-            # With `r` tested above it, pressing the labelled dismiss key
-            # repainted the overlay instead of closing it.
-            if overlay is not None and key:
-                overlay = None
-                screen.reset()
-            elif key == "r":
-                screen.reset()
-            elif key == "e":
-                text = mv.read_text(current / "approval-evidence.txt")
-                overlay = (text.splitlines() if text else
-                           ["(no approval evidence has been rendered for this run)"])
-                screen.reset()
-            elif key and key.isdigit() and key != "0":
-                order = mv.visible_nodes(current)
-                pick = int(key) - 1
-                if pick < len(order):
-                    overlay = mv.node_detail(current, order[pick], repo_root)
+            for key in _drain(keys):
+                if key == "q":
+                    return 0
+                # The overlay check comes FIRST so "any key to go back" is true.
+                # With `r` tested above it, pressing the labelled dismiss key
+                # repainted the overlay instead of closing it.
+                if overlay is not None:
+                    overlay = None
                     screen.reset()
+                elif key == "r":
+                    screen.reset()
+                elif key == "e":
+                    text = mv.read_text(current / "approval-evidence.txt")
+                    overlay = (text.splitlines() if text else
+                               ["(no approval evidence has been rendered for this run)"])
+                    screen.reset()
+                elif key.isdigit() and key != "0":
+                    order = mv.visible_nodes(current, repo_root)
+                    pick = int(key) - 1
+                    if pick < len(order):
+                        overlay = mv.node_detail(current, order[pick], repo_root)
+                        screen.reset()
             _sleep(interval)
     except KeyboardInterrupt:
         return 0
@@ -297,13 +297,20 @@ def _rows() -> int:
         return 40
 
 
-def _drain(keys: Keys) -> str | None:
-    last = None
+def _drain(keys: Keys) -> list[str]:
+    """Every key buffered since the last tick, in order.
+
+    Returning only the LAST one lost input: pressing `3` then `e` inside one
+    poll interval dropped the `3` silently. A view that eats keystrokes teaches
+    the person using it that it is unreliable, which is expensive for a surface
+    whose whole job is to be trusted.
+    """
+    out: list[str] = []
     while True:
         k = keys.get()
         if k is None:
-            return last
-        last = k.lower()
+            return out
+        out.append(k.lower())
 
 
 def _sleep(seconds: float) -> None:

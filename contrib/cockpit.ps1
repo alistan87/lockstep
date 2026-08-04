@@ -74,8 +74,59 @@ $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $script:Python = if (Test-Path (Join-Path $script:RepoRoot '.venv\Scripts\python.exe')) {
   Join-Path $script:RepoRoot '.venv\Scripts\python.exe'
 } else { 'python' }
+$script:Lockstep = if (Test-Path (Join-Path $script:RepoRoot '.venv\Scripts\lockstep.exe')) {
+  Join-Path $script:RepoRoot '.venv\Scripts\lockstep.exe'
+} else { 'lockstep' }
 
 # --- reader primitives (L-B2) --------------------------------------------------
+
+function Get-PaneWidth {
+  <#
+    M5 — the in-place lines have to fit the pane they are written into.
+
+    A `\r` returns to the start of the LAST WRAPPED ROW, not the start of the
+    logical line. So any status line longer than the pane wraps, the next tick's
+    `\r` overwrites only its tail, and the pane scrolls one junk line per
+    second — the exact "wall of repeated heartbeats" the T1.6 fix was for.
+    ACTIVITY is spawned at a 45% split, so "narrower than 80" is the normal case,
+    not an edge one.
+  #>
+  try {
+    $w = $Host.UI.RawUI.WindowSize.Width
+    if ($w -gt 20) { return [int]$w - 1 }
+  } catch { }
+  return 78
+}
+
+function Format-InPlace {
+  <#
+    Pad AND truncate a status line to a pane width. Pure, so it can be tested.
+
+    Padding alone was not enough: '{0,-78}' pads a short string but never
+    shortens a long one, so the stdout-liveness beat (82+ chars, and unbounded
+    as the KB and seconds grow) both wrapped and left residue behind a clear
+    that only wrote 78 spaces.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Text, [Parameter(Mandatory)][int]$Width)
+  if ($Width -lt 1) { return '' }
+  if ($Text.Length -gt $Width) { return $Text.Substring(0, $Width) }
+  return $Text.PadRight($Width)
+}
+
+function Write-InPlace {
+  <#
+    Write a single-line status at the cursor, sized to the pane, leaving the
+    cursor parked on it so the next call overwrites it.
+  #>
+  param([Parameter(Mandatory)][string]$Text, [string]$Colour = 'DarkGray')
+  Write-Host ("`r" + (Format-InPlace -Text $Text -Width (Get-PaneWidth))) `
+    -NoNewline -ForegroundColor $Colour
+}
+
+function Clear-InPlace {
+  <# Erase the parked status line and return the cursor to its start. #>
+  Write-Host ("`r" + (' ' * (Get-PaneWidth)) + "`r") -NoNewline
+}
 
 function Clear-Pane {
   # Clear-Host throws when stdout is redirected (no console handle) — which is
@@ -394,11 +445,28 @@ function Get-HeadlineLine {
   # Wall time from the run's own start stamp: the DE asks "how long has this
   # been going", which is elapsed, not the sum of node durations (that number
   # lives on the spend line and means something different).
+  #
+  # A FINISHED run's clock stops at its last ended_at. It used to keep counting
+  # against the wall clock, so the shipped demo showed "done - 35 h 56 m" days
+  # afterwards — and a DE reads a duration beside "done" as what the work took.
   if ($State.PSObject.Properties['started_at'] -and $State.started_at) {
     try {
       $began = [datetime]::Parse($State.started_at, [cultureinfo]::InvariantCulture,
                                  [System.Globalization.DateTimeStyles]::AdjustToUniversal)
-      $mins = [int]((Get-Date).ToUniversalTime() - $began).TotalMinutes
+      $until = (Get-Date).ToUniversalTime()
+      if (-not ($running.Count -or $blocked.Count -or $failed.Count) -and $settled -eq $total) {
+        $ends = @($recs | ForEach-Object { $_.ended_at } | Where-Object { $_ })
+        if ($ends.Count) {
+          $last = ($ends | ForEach-Object {
+            try { [datetime]::Parse($_, [cultureinfo]::InvariantCulture,
+                                    [System.Globalization.DateTimeStyles]::AdjustToUniversal) }
+            catch { $null } } | Where-Object { $_ } | Sort-Object -Descending |
+            Select-Object -First 1)
+          if ($last) { $until = $last }
+        }
+      }
+      $mins = [int]($until - $began).TotalMinutes
+      if ($mins -lt 0) { $mins = 0 }
       $parts += if ($mins -ge 90) { "$([int]($mins / 60)) h $($mins % 60) m" } else { "$mins m" }
     } catch { }
   }
@@ -521,8 +589,13 @@ function Get-SpendLine {
   # is a trap waiting for the first person who adds a parameter here.
   $reportArgs = @((Join-Path $script:RepoRoot 'contrib/cost_report.py'), '--compact')
   if ($Deliverable) {
-    $reportArgs += @('--runs-from', $Deliverable,
-                     '--runs-root', (Join-Path $script:RepoRoot $RunsRoot))
+    # A rooted -RunsRoot must not be joined onto the repo root: every other
+    # consumer (Get-NewestRunDir, Invoke-Boot) checks this, and the odd one out
+    # produced a nonsense path (the repo root with an absolute path glued
+    # onto it) and therefore a permanent "(spend unavailable)".
+    $root = if ([System.IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot }
+            else { Join-Path $script:RepoRoot $RunsRoot }
+    $reportArgs += @('--runs-from', $Deliverable, '--runs-root', $root)
   } else {
     $reportArgs += $RunDir
   }
@@ -629,8 +702,7 @@ function Show-Mission {
       # before a run exists, which is exactly when a human is looking at it for
       # reassurance. "Blank never means dead" has to hold hardest here.
       if ($painted -ne '<waiting>') { Show-WaitingScreen -Label 'MISSION'; $painted = '<waiting>' }
-      Write-Host ("`rwaiting - nothing is spending   $(Get-Date -Format 'HH:mm:ss')   ") `
-        -NoNewline -ForegroundColor DarkGray
+      Write-InPlace -Text ("waiting - nothing is spending   $(Get-Date -Format 'HH:mm:ss')")
       Start-Sleep -Seconds ([Math]::Max(1.0, $Interval))
       continue
     }
@@ -690,8 +762,7 @@ function Show-Mission {
     # from the last and defeat T1.5 entirely. It still has to be here — "blank
     # never means dead" is the promise MISSION makes, and a frozen screen with
     # no clock cannot be told apart from a dead pane.
-    Write-Host ("`rupdated $(Get-Date -Format 'HH:mm:ss')  (this pane reads files; it never changes the run)   ") `
-      -NoNewline -ForegroundColor DarkGray
+    Write-InPlace -Text ("updated $(Get-Date -Format 'HH:mm:ss')  (this pane reads files; it never changes the run)")
     Start-Sleep -Seconds ([Math]::Max(1.0, $Interval))
   }
 }
@@ -792,6 +863,13 @@ function Get-StdoutLiveness {
   $kb = [Math]::Round($best.Length / 1KB, 1)
   $ago = [int]((Get-Date).ToUniversalTime() - $best.LastWriteTimeUtc).TotalSeconds
   if ($ago -lt 0) { $ago = 0 }
+  # Say what the numbers say. Claiming "still producing output" beside "last
+  # write 114271s ago" (observed) is the thinking/stuck ambiguity this fallback
+  # exists to REMOVE, restated as a contradiction on one line.
+  if ($ago -gt 120) {
+    $mins = [int]($ago / 60)
+    return "no new output for $mins m - $kb KB so far"
+  }
   return "still producing output - $kb KB, last write $($ago)s ago"
 }
 
@@ -814,17 +892,22 @@ function Show-Activity {
   $offset = 0L          # per-bound-node read position; reset when re-pointing
   $start = Get-Date
   $heartbeatOwed = $false   # T1.6: is the cursor parked on the heartbeat line?
+  $idlePainted = $null      # M4: the idle branch repaints on change, like MISSION
+  $waitPainted = $false
   while ($true) {
     $RunDirActive = Resolve-RunDir -Given $RunDir
     if (-not $RunDirActive) {
-      Show-WaitingScreen -Label 'ACTIVITY'
+      if (-not $waitPainted) { Show-WaitingScreen -Label 'ACTIVITY'; $waitPainted = $true }
+      Write-InPlace -Text ("  waiting - nothing is spending   $(Get-Date -Format 'HH:mm:ss')")
       $heartbeatOwed = $false
       Start-Sleep -Seconds 2
       continue
     }
+    $waitPainted = $false
     if (-not $bound) {
       $bound = Get-FrontierNode -RunDir $RunDirActive
       if ($bound) {
+        $idlePainted = $null
         Clear-Pane
         $labels = Get-NodeLabels -RunDir $RunDirActive
         $shown = if ($labels.ContainsKey($bound) -and $labels[$bound]) { $labels[$bound] } else { $bound }
@@ -836,9 +919,6 @@ function Show-Activity {
       } else {
         # Idle placeholders are MECHANICAL (L-M1): blank must never be
         # ambiguous between dead, thinking, and waiting-on-you.
-        Clear-Pane
-        Write-Host 'ACTIVITY' -ForegroundColor DarkGray
-        Write-Host ('-' * 64)
         $state = Read-RunJson (Join-Path $RunDirActive 'state.json')
         $msg = 'waiting - nothing is spending'
         if ($state) {
@@ -846,7 +926,6 @@ function Show-Activity {
           if ($statuses -contains 'blocked') { $msg = 'needs you - nothing is spending' }
           elseif ($statuses -notcontains 'pending') { $msg = 'segment done - nothing is spending' }
         }
-        Write-Host $msg
 
         # T2.1 — the question card. DISPLAY ONLY: there is no input path here,
         # and the answer still travels chat -> steer -> detached resume, so
@@ -860,10 +939,28 @@ function Show-Activity {
         # later. The card puts the original words in front of the DE at the
         # moment they answer.
         $card = Read-RunFile -Path (Join-Path $RunDirActive 'question-card.txt')
-        if ($card) {
+
+        # REPAINT ONLY ON CHANGE, exactly as MISSION does. The first cut cleared
+        # and rewrote this whole branch every 2 seconds — including the question
+        # card, which is a decision-adjacent surface whose entire purpose is that
+        # the DE reads the verbatim findings while answering. Flickering the text
+        # somebody is trying to read is the F5 defect on the worst possible pane.
+        $idleKey = "$msg`n$card"
+        if ($idleKey -ne $idlePainted) {
+          Clear-Pane
+          Write-Host 'ACTIVITY' -ForegroundColor DarkGray
+          Write-Host ('-' * 64)
+          Write-Host $msg
+          if ($card) {
+            Write-Host ''
+            Write-Host $card -ForegroundColor Cyan
+          }
           Write-Host ''
-          Write-Host $card -ForegroundColor Cyan
+          $idlePainted = $idleKey
         }
+        # The clock still ticks in place, outside the repaint key: idle is not
+        # dead, and this pane's whole job is to make that difference visible.
+        Write-InPlace -Text ("  $(Get-Date -Format 'HH:mm:ss')")
         Start-Sleep -Seconds 2
         continue
       }
@@ -877,7 +974,7 @@ function Show-Activity {
       # -NoNewline so it can be overwritten in place). Anything printed after it
       # therefore landed ON that line, concatenated onto "working - 3 m elapsed".
       # Clear the line and drop to a fresh one before writing content.
-      if ($heartbeatOwed) { Write-Host ("`r" + (' ' * 78) + "`r") -NoNewline; $heartbeatOwed = $false }
+      if ($heartbeatOwed) { Clear-InPlace; $heartbeatOwed = $false }
       foreach ($ln in $fresh) { Write-Host (Format-ProgressLine -Line $ln) }
     }
 
@@ -889,7 +986,7 @@ function Show-Activity {
       $live = Get-StdoutLiveness -PhaseDir (Join-Path $RunDirActive "phases/$bound")
       if ($live) { $beat = "  working - $elapsed m elapsed - $live" }
     }
-    Write-Host ("`r{0,-78}" -f $beat) -NoNewline -ForegroundColor DarkGray
+    Write-InPlace -Text $beat
     $heartbeatOwed = $true
 
     # Release only when MY node stops running (L-M2), never because some other
@@ -1407,6 +1504,6 @@ if ($Role -eq 'why') {
 switch ($Role) {
   'mission'  { Show-Mission  -RunDir $RunDir -Deliverable $Deliverable }
   'activity' { Show-Activity -RunDir $RunDir }
-  'raw'      { while ($true) { Clear-Pane; & lockstep status $RunDir; Start-Sleep -Seconds 3 } }
+  'raw'      { while ($true) { Clear-Pane; & $script:Lockstep status $RunDir; Start-Sleep -Seconds 3 } }
   default    { Invoke-Layout -RunDir $RunDir }
 }

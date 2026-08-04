@@ -18,6 +18,8 @@ dead" exactly as thoroughly as a frozen one.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTRIB = ROOT / "contrib"
 sys.path.insert(0, str(CONTRIB))
+
+import pytest  # noqa: E402
 
 import mission_view as mv  # noqa: E402
 import plan_card  # noqa: E402
@@ -416,3 +420,187 @@ def test_show_mission_actually_uses_the_guard():
     body = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
     show = body[body.index("function Show-Mission"):]
     assert "Update-Spend" in show[:show.index("\nfunction ")]
+
+
+# ================================================ review minors (2026-08-04 pass)
+
+def test_a_finished_runs_clock_stops(tmp_path):
+    """A duration beside "done" reads as what the work took.
+
+    It used to count against the wall clock forever: the shipped demo showed
+    "step 8 of 8 - done - 35 h 56 m" days after it finished.
+    """
+    from datetime import datetime, timedelta, timezone
+    began = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    ended = began + timedelta(minutes=20)
+    much_later = began + timedelta(days=3)
+    state = {
+        "started_at": began.isoformat().replace("+00:00", "Z"),
+        "nodes": {"a": {"role": "work", "status": "done", "attempts": 1,
+                        "ended_at": ended.isoformat().replace("+00:00", "Z")}},
+    }
+    assert "20 m" in mv.headline(state, None, now=much_later)
+
+
+def test_a_live_runs_clock_keeps_running(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    began = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "started_at": began.isoformat().replace("+00:00", "Z"),
+        "nodes": {"a": {"role": "work", "status": "running", "attempts": 1}},
+    }
+    assert "30 m" in mv.headline(state, None, now=began + timedelta(minutes=30))
+
+
+def test_stale_output_is_not_called_liveness(tmp_path):
+    """"still producing output - last write 114271s ago" (observed) restates the
+    thinking/stuck ambiguity this fallback exists to remove, as a contradiction
+    on one line."""
+    import os
+    import time
+    phase = tmp_path / "phase"
+    phase.mkdir()
+    log = phase / "stdout.log"
+    log.write_text("x" * 4096, encoding="utf-8")
+    stale = time.time() - 3600
+    os.utime(log, (stale, stale))
+    line = mv.stdout_liveness(phase)
+    assert "still producing output" not in line
+    # 59 or 60: the seconds elapsed between utime() and the read truncate down.
+    assert re.search(r"no new output for (59|60) m", line), line
+    assert "4.0 KB" in line
+
+
+def test_fresh_output_still_reads_as_liveness(tmp_path):
+    phase = tmp_path / "phase"
+    phase.mkdir()
+    (phase / "stdout.log").write_text("x" * 1024, encoding="utf-8")
+    assert "still producing output" in mv.stdout_liveness(phase)
+
+
+def test_question_card_warns_when_a_named_gate_is_not_blocked(tmp_path, capsys):
+    # --gate used to bypass the blocked check silently, so a card could be
+    # written for a question the human already answered.
+    run = tmp_path / "run"
+    (run / "phases" / "g").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps(
+        {"flow_name": "f", "nodes": {"g": {"role": "gate", "status": "done"}}}),
+        encoding="utf-8")
+    (run / "phases" / "g" / "result.json").write_text(
+        json.dumps({"verdict": "block", "reason": "r",
+                    "findings": [{"category": "question", "claim": "which one?"}]}),
+        encoding="utf-8")
+    assert question_card.main([str(run), "--gate", "g"]) == 0
+    assert "not a blocked gate" in capsys.readouterr().err
+
+
+def test_the_tui_keeps_every_keypress_in_a_tick():
+    """Returning only the last key dropped input: `3` then `e` within one poll
+    interval lost the `3`. A view that eats keystrokes teaches the person using
+    it that it is unreliable."""
+    import mission_tui
+
+    class FakeKeys:
+        def __init__(self, seq):
+            self.seq = list(seq)
+
+        def get(self):
+            return self.seq.pop(0) if self.seq else None
+
+    assert mission_tui._drain(FakeKeys(["3", "E"])) == ["3", "e"]
+    assert mission_tui._drain(FakeKeys([])) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the msvcrt key path is Windows-only")
+@pytest.mark.parametrize("keystroke,expect", [
+    (["\xe0", "Q"], []),        # PgDn — used to lowercase to 'q' and QUIT
+    (["\xe0", "R"], []),        # Insert — used to force a repaint
+    (["\xe0", "H"], []),        # up arrow
+    (["\x00", ";"], []),        # F1 (the other prefix)
+    (["e"], ["e"]),             # a real command still gets through
+    (["3"], ["3"]),
+])
+def test_windows_extended_keys_do_not_alias_onto_commands(keystroke, expect, monkeypatch):
+    """PgDn is ('\\xe0', 'Q') on Windows — two reads, and the second lowercased
+    to `q`, which CLOSED the view. It is the most natural keystroke for someone
+    facing a wall of text, so the monitoring surface vanished exactly when they
+    were trying to read it.
+
+    Driven through the real `Keys.get()` with a stand-in msvcrt, so it fails if
+    the second read stops being consumed — not merely if a constant is renamed.
+    """
+    import mission_tui
+
+    class FakeMsvcrt:
+        def __init__(self, seq):
+            self.seq = list(seq)
+
+        def kbhit(self):
+            return bool(self.seq)
+
+        def getwch(self):
+            return self.seq.pop(0)
+
+    fake = FakeMsvcrt(keystroke)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    assert mission_tui._drain(mission_tui.Keys()) == expect
+    assert fake.seq == [], "the extended-key code byte was left in the buffer"
+
+
+_WIDTH_HARNESS = """
+$src = Get-Content -Raw -LiteralPath '{script}'
+foreach ($n in @('Get-PaneWidth', 'Format-InPlace')) {{
+  $m = [regex]::Match($src, "(?ms)^function $n \\{{.*?^\\}}")
+  if (-not $m.Success) {{ throw "cockpit.ps1 no longer defines $n" }}
+  Invoke-Expression $m.Value
+}}
+$long = '  working - 14 m elapsed - still producing output - 0.5 KB, last write 114271s ago'
+@{{
+  width    = (Get-PaneWidth)
+  isLonger = ($long.Length -gt 78)
+  trimmed  = (Format-InPlace -Text $long -Width 40).Length
+  padded   = (Format-InPlace -Text 'short' -Width 40).Length
+  content  = (Format-InPlace -Text $long -Width 40)
+}} | ConvertTo-Json -Compress
+"""
+
+
+@pwsh
+def test_the_pane_status_line_is_sized_to_the_pane():
+    """A carriage return goes to the start of the last WRAPPED row, not the
+    logical line. So any in-place status longer than the pane wraps, the next
+    tick overwrites only its tail, and the pane scrolls one junk line per second
+    — the wall-of-heartbeats failure T1.6 was meant to end.
+
+    ACTIVITY is spawned at a 45% split, so "narrower than 80" is the normal
+    case, and the realistic stdout-liveness beat is 82+ characters and grows
+    with the KB and the seconds in it. Padding alone could never fix that.
+    """
+    proc = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+         _WIDTH_HARNESS.format(script=(CONTRIB / "cockpit.ps1").as_posix())],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["width"] >= 20
+    # The realistic long beat really is longer than the old fixed budget, which
+    # is why truncation and not merely padding is the fix.
+    assert got["isLonger"] is True
+    assert got["trimmed"] == 40      # truncated, so it cannot wrap
+    assert got["padded"] == 40       # padded, so it fully erases what was there
+    assert got["content"].startswith("  working - 14 m elapsed")
+
+
+def test_no_raw_carriage_return_writes_outside_the_helpers():
+    """One place knows the pane width. Every other in-place write goes through
+    it, or the sizing fix is only true where somebody remembered."""
+    body = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+    for helper in ("Write-InPlace", "Clear-InPlace"):
+        m = re.search(r"(?ms)^function " + helper + r" \{.*?^\}", body)
+        assert m, f"cockpit.ps1 no longer defines {helper}"
+        body = body.replace(m.group(0), "")
+    offenders = [ln.strip() for ln in body.splitlines()
+                 if "`r" in ln and "-NoNewline" in ln]
+    assert offenders == [], offenders
+
+

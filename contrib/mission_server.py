@@ -94,11 +94,14 @@ def render_page(run_dir: Path | None, repo_root: Path) -> str:
     needs = ('<p class="needs">NEEDS YOU &mdash; read the terminal pane.</p>'
              if mv.needs_you(state) else "")
 
+    # Read the sidecar ONCE. It was being re-read (state.json plus a recursive
+    # flows/** glob) for every node on every request, twice over.
+    labels = mv.load_labels(run_dir, repo_root)
     details = []
     for node_id in mv.visible_nodes(run_dir, repo_root):
         body = "\n".join(mv.node_detail(run_dir, node_id, repo_root))
         details.append(
-            f"<details><summary>{html.escape(mv.label_for(mv.load_labels(run_dir, repo_root), node_id))}"
+            f"<details><summary>{html.escape(mv.label_for(labels, node_id))}"
             f"</summary><pre>{html.escape(body)}</pre></details>")
 
     return PAGE.format(

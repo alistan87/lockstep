@@ -166,11 +166,13 @@ file records implementation-level departures below that bar.
 - **2026-08-03 — `resume --cockpit` narrows the SPEC §9.3 approval prompt to
   `a`/`r`.** Why: `e` (edit) exists so an *operator* can substitute an
   approval's result text. That is a coherent operator affordance and an
-  incoherent thing to offer a non-programmer who is told in two places never to
-  use it (`COCKPIT-FOR-DOMAIN-EXPERTS.md` and the pane banner) and whose only
-  escape from it on Windows is Ctrl-Z then Enter — the cockpit was guarding a
-  live hazard with a sentence in a document, which is the one thing that design
-  otherwise refuses. **Default OFF and behaviour is byte-identical without the
+  incoherent thing to offer a non-programmer whose only escape from it on Windows
+  is Ctrl-Z then Enter — the cockpit was guarding a live hazard with a sentence
+  in a document, which is the one thing that design otherwise refuses. (The DE
+  guide used to carry a "never type `e`" warning too; the same commit that added
+  this flag deleted that sentence, because a rule the program enforces should not
+  also be a rule the reader has to remember. `contrib/approve.ps1` still prints
+  it on the non-cockpit path, where `e` really is reachable.) **Default OFF and behaviour is byte-identical without the
   flag**, including `e`; only `contrib/approve.ps1` passes it. The non-TTY
   auto-reject fires first and is untouched, so the structural guarantee that an
   orchestrator cannot approve is unchanged. Nothing a run can accomplish
@@ -180,7 +182,8 @@ file records implementation-level departures below that bar.
   `tests/test_approval_cockpit.py`; proposed in
   `docs/proposals/PROPOSAL-cockpit-ux.md` §T1.3.
 - **2026-08-03 — EOF at the approval prompt is recorded as an auto-reject, not
-  as a decision.** SPEC §9.3's prompt loop mapped `EOFError` to `answer = "r"`,
+  as a decision.** The approval prompt loop mapped `EOFError` to `answer = "r"`
+  (implementation-only — SPEC §9.3 specifies nothing about EOF at the prompt),
   so the run recorded `error="approval rejected"` — indistinguishable from a
   person having typed `r`. Why it matters in practice: **on Windows `NUL` is a
   character device**, so `sys.stdin.isatty()` returns True for the cockpit's own

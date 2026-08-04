@@ -117,7 +117,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot read {run_dir}: {e}", file=sys.stderr)
         return 2
 
-    gates = [ns.gate] if ns.gate else blocked_gates(state)
+    blocked = blocked_gates(state)
+    if ns.gate and ns.gate not in blocked:
+        # `--gate` used to bypass the blocked check entirely, so a card could be
+        # freshly written for a gate the human already answered — the exact stale
+        # card the deletion path below exists to prevent. Still allowed (a flow
+        # author inspecting a card is legitimate), but never silently.
+        print(f"warning: '{ns.gate}' is not a blocked gate — this card will not "
+              f"reflect a question anyone is waiting on", file=sys.stderr)
+    gates = [ns.gate] if ns.gate else blocked
     if not gates:
         # Stale cards are worse than no card: a question the human already
         # answered, still on screen, reads as an unanswered one.

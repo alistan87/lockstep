@@ -597,3 +597,54 @@ confirmed to fail. That caught two tests of our own that could not fail —
   pins literal expected ids first.
 
 A test that cannot fail is the same defect as a dead channel, one layer up.
+
+### The remaining majors and minors (second pass, same day)
+
+Cleared in a follow-up pass; nothing from the three completed reviews is now
+outstanding. Two of them were the same defect as B1 wearing different clothes —
+a surface stating something the numbers beside it contradicted:
+
+- **ACTIVITY's idle branch cleared and repainted every 2 seconds**, including the
+  question card. MISSION got the repaint-on-change treatment and this branch did
+  not, so the F5 flicker survived on the one surface whose purpose is that the DE
+  *reads* it while answering. Now keyed like MISSION, with the clock ticking in
+  place outside the key.
+- **The in-place status lines could be longer than the pane.** A carriage return
+  returns to the start of the last *wrapped* row, so the realistic
+  stdout-liveness beat (82+ characters, and growing with the KB and seconds in
+  it) wrapped, was only half-overwritten, and scrolled a junk line per second —
+  the wall-of-heartbeats failure T1.6 existed to end. ACTIVITY is a 45% split, so
+  narrower-than-80 is the normal case. Now one `Get-PaneWidth` and a pure
+  `Format-InPlace` that pads *and truncates*, with a test asserting no raw
+  carriage-return write survives outside those helpers.
+- **"still producing output — last write 114271s ago"** — a claim of liveness
+  contradicted by the number on the same line, which is the thinking/stuck
+  ambiguity the fallback exists to remove. Past two minutes it now says *"no new
+  output for N m"*.
+- **A finished run's clock never stopped.** The demo showed
+  `done - 35 h 56 m` days later, and a duration beside "done" reads as what the
+  work took. It now stops at the last `ended_at`.
+- `-Role raw` called bare `lockstep` from PATH while every other tool call
+  resolves the venv binary; a rooted `--runs-root` was joined onto the repo root
+  and produced a permanent `(spend unavailable)`; `approve.ps1`'s `Clear-Host`
+  was unguarded where `cockpit.ps1`'s is; `rejection.txt` gained the approval
+  node id the proposal promised (read from the run's own state, because a
+  parameter is something a caller can get wrong).
+- `question_card --gate` bypassed the blocked check silently; the TUI's `_drain`
+  kept only the last key of a tick, so `3` then `e` lost the `3`; the page
+  re-read the labels sidecar once per node per request.
+- **DEVIATIONS cited a warning the same commit had deleted** ("told in two
+  places") and attributed the EOF mapping to SPEC §9.3, which specifies nothing
+  about EOF at the prompt. Both corrected — a deviations log that misdescribes
+  the code is the failure that log exists to prevent.
+- `test_eof_in_cockpit_mode_does_not_loop` would have **hung rather than failed**
+  on the regression it names, since cockpit mode `continue`s on an unrecognised
+  answer and no pytest-timeout is configured. It now has a call-count sentinel.
+
+Every fix in both passes is mutation-verified: the fix reverted, the test
+confirmed to fail, the fix restored. That discipline caught three tests of our
+own that could not fail — two from `Path.is_dir()` being implemented on `stat()`
+and swallowing the very error under test, one asserting `visible_nodes` against
+the expression it is defined as, and one checking a constant's name rather than
+the behaviour it guards (the Windows extended-key path is now driven through the
+real `Keys.get()` with a stand-in `msvcrt`).

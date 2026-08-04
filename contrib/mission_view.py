@@ -219,7 +219,16 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
 
     began = _parse_ts(state.get("started_at"))
     if began:
-        mins = int(((now or datetime.now(timezone.utc)) - began).total_seconds() // 60)
+        # A FINISHED run's clock stops at its last ended_at. It used to keep
+        # counting against the wall clock, so a completed run showed
+        # "done - 35 h 56 m" days later — and a duration beside "done" reads as
+        # what the work took.
+        until = now or datetime.now(timezone.utc)
+        if not (running or blocked or failed) and total and settled == total:
+            ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
+            if ends:
+                until = max(ends)
+        mins = max(0, int((until - began).total_seconds() // 60))
         parts.append(f"{mins // 60} h {mins % 60} m" if mins >= 90 else f"{mins} m")
     if heals:
         parts.append(f"{heals} rework round{'s' if heals != 1 else ''}")
@@ -413,6 +422,11 @@ def stdout_liveness(phase_dir: Path) -> str | None:
     _, st = best
     kb = st.st_size / 1024
     ago = max(0, int(datetime.now(timezone.utc).timestamp() - st.st_mtime))
+    if ago > 120:
+        # Say what the numbers say. "still producing output" beside "last write
+        # 114271s ago" (observed) restates the thinking/stuck ambiguity this
+        # fallback exists to remove, as a contradiction on a single line.
+        return f"no new output for {ago // 60} m - {kb:.1f} KB so far"
     return f"still producing output - {kb:.1f} KB, last write {ago}s ago"
 
 
