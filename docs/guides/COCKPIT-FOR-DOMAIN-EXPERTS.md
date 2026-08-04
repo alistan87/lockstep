@@ -50,6 +50,16 @@ hand. It is generated straight from the system's own files, so it cannot flatter
 or round off. When the chat and MISSION disagree, **MISSION is right** — say so
 and it will be looked into.
 
+MISSION opens with one line that tells you where things stand without reading
+anything else:
+
+> `step 3 of 8  -  running  -  14 m  -  a decision is 2 steps away`
+
+Finished steps collapse into a count (`5 finished`) so the board stays short.
+Anything running, anything that needs you, anything that went wrong, and
+anything sent back for rework is always shown in full — the quiet steps are the
+ones that get folded away.
+
 Those words on MISSION mean exactly this:
 
 | Word | Meaning |
@@ -78,16 +88,27 @@ and you will be told what it would cost.
 
 ### 2. Agree to a budget
 
-Before anything spends, you will get a sentence like *"up to 25 agent tasks —
-shall I start?"* Say yes or no. You can ask what a task costs, and for anything
-larger you can ask for a smaller version first.
+Before anything spends you get a short card — on MISSION, not just in the chat —
+that says what the work looks like and what it is allowed to cost:
+
+```
+  2 steps of work  -  1 automatic check  -  1 decision from you
+  ceiling: 25 agent tasks. The run stops itself at that number.
+  prior runs of this flow: 3 - they used about 11 agent tasks and 14m
+```
+
+Say yes or no. The "prior runs" line is counted from real runs on this machine,
+not estimated, and if there are none it says so rather than guessing. You can
+always ask for a smaller version first.
 
 ### 3. Answer questions about your field
 
 Sometimes the work reaches a point only you can settle — which dataset, which
 convention, which of two readings is intended. You will get the question in
-plain language **and** the exact words the system used, so you can see nothing
-was lost in translation.
+plain language in the chat, **and** the exact words the system used will appear
+on screen in the ACTIVITY area, so you can see nothing was lost in translation.
+Answer in the chat, not at that card — the card is only there to be read. If the
+two do not match, the card is the one that counts, and say so.
 
 You will be asked to confirm your answer before it is used. Please take that
 seriously, because:
@@ -105,14 +126,31 @@ but talking.
 A new pane opens showing **the actual thing** — the real list of changes, the
 real document, the real numbers. Not a summary of it. Read that.
 
-Then type **`a`** to approve or **`r`** to reject, and press Enter.
+Near the bottom, before the prompt, it also tells you two things that decide how
+much care this needs:
 
-- **Never type `e`.** If anything unexpected appears, copy it into the chat.
+```
+  scale of the change: 4 files - 2 edited, 1 new, 1 DELETED
+  if this turns out wrong: git checkout -- docs/ restores everything
+```
+
+If something is deleted, it is called out on its own line. If the flow cannot
+say how to undo it, that line reads **`not stated by this flow`** — which is
+itself worth knowing before you say yes.
+
+Then type **`a`** to approve or **`r`** to reject, and press Enter. Those are the
+only two answers the prompt takes.
+
 - **`r` is not a failure.** Rejecting is a normal, useful answer, and costs
   nothing but the time already spent. If the pane looks wrong, or you cannot
   tell whether it is right, reject and say why.
+- **After you reject you get one more question: "in one line, what was wrong?"**
+  Answer it if you can — those words are written down as yours and are what the
+  work gets fixed against. Press Enter to skip if you would rather just talk.
 - **If the pane shows no evidence**, something is wrong with how the job was
   built. The safe answer is `r`, and say what you saw.
+- **If a banner says `IRREVERSIBLE`**, this cannot be undone by the system.
+  Read the pane twice. There is no rush and no penalty for rejecting.
 
 A short note on why the pane matters: the assistant may also describe the result
 in chat, and it is usually right. But it is a description. The pane is the thing

@@ -54,10 +54,20 @@ lockstep run <flow> --arg "k=v" < NUL          # or a background job
 
 Two consequences, both load-bearing:
 
-1. **Non-TTY stdin makes the approval guarantee structural.** When the engine
-   reaches an approval node and `sys.stdin.isatty()` is false, it auto-rejects
-   and exits **6**. A run hosted in a bare pty pane would pass `isatty()`, sit
-   silently at the prompt forever, and die when the pane closed.
+1. **Unanswerable stdin makes the approval guarantee structural.** When the
+   engine reaches an approval node it auto-rejects and exits **6** if either
+   `sys.stdin.isatty()` is false **or** the first read hits EOF. A run hosted in
+   a bare pty pane would pass both and sit silently at the prompt forever, then
+   die when the pane closed.
+
+   **Both branches are load-bearing on Windows, and the second is why.** `NUL`
+   is a *character device*, so `< NUL` — the idiom directly below — passes
+   `isatty()`. It reaches the prompt and EOFs on the first read (corrected
+   2026-08-03: that case used to be recorded as `approval rejected`, which reads
+   as a person having decided). The guarantee itself never depended on which
+   branch fires: for you to answer you would have to *write* to that stdin,
+   writing means a pipe, and a pipe is not a character device — so `isatty()` is
+   false and the first branch catches it.
 2. **You stay conversational.** A blocked chat pane is a broken cockpit: you
    would forfeit narration, question relay, and STOP. Poll `lockstep status` and
    `events.jsonl` between turns.
@@ -90,15 +100,26 @@ The DE states an outcome. You pick or adapt a flow. Constraints:
 
 ### 3.2 The budget-consent beat
 
-Before spending anything, state the cap **in units this machine can actually
-honour** and wait for an explicit go:
+**Render the card first, then ask.** It spawns nothing:
 
-> "Up to 25 agent tasks. On this machine I can count tasks and time reliably;
-> tokens only where the harness reports them, and Copilot never does. Last
-> week's similar run was about $N on the bill. Shall I start?"
+```powershell
+python contrib\plan_card.py <flow> --runs-dir runs
+```
 
-Never promise dollars the envelope cannot back. Journal the consent (§9) with a
-deliverable slug — that slug is the lineage identity for every later segment.
+It writes `runs/plan-card.txt` and prints the shape of the work, the flow's own
+ceiling, and what prior runs of this flow actually cost — counted from run dirs
+on this machine, labelled "none on this machine" when there are none. State the
+cap **in units this machine can actually honour** and wait for an explicit go:
+
+> "Up to 25 agent tasks; the card on MISSION shows what three prior runs of this
+> cost. On this machine I can count tasks and time reliably; tokens only where
+> the harness reports them, and Copilot never does. Shall I start?"
+
+Never promise dollars the envelope cannot back, and **never quote a prior cost
+from memory** — that sentence used to be the one number in the whole protocol
+with no artifact behind it, which is precisely what the standing bargain (§10)
+says you may not do. Journal the consent (§9) with a deliverable slug — that
+slug is the lineage identity for every later segment.
 
 ### 3.3 Launch and narrate
 
@@ -119,7 +140,18 @@ the gate result, not in events. Narrate in the DE's glossary (§ their doc):
 Domain questions arrive as a gate with `heal.max_rounds: 0` whose findings carry
 `category: "question"`. On exit 2:
 
-1. Read `phases/<gate>/result.json`.
+1. Read `phases/<gate>/result.json`, then render the card:
+
+   ```powershell
+   python contrib\question_card.py <run_dir>
+   ```
+
+   It writes `<run_dir>/question-card.txt`, which ACTIVITY displays while the
+   gate is blocked, and deletes a stale card when the gate is no longer blocked.
+   **Display only** — there is no input path, and the answer still travels
+   chat → steer → detached resume. It exists so the verbatim findings are in
+   front of the DE *at the moment they answer*, instead of your quoting being
+   audited afterwards by §9's overlap tripwire.
 2. Relay each question in plain language **and quote the finding verbatim**
    alongside it. If a finding is not readable as one line, that is a defect in
    the gate's contract — file it, do not paraphrase around it.
@@ -170,15 +202,24 @@ Then spawn the pane:
 pwsh -File contrib\cockpit.ps1 -RunDir <run_dir> -Approve
 ```
 
-This re-checks quiescence and spawns a pane that **runs** `contrib/approve.ps1`:
-evidence first, then the real prompt. **Nothing types into the pane.** There is
-no send-text path in the cockpit at all — that is what makes "the human channel
-is never forged" true by construction rather than by your discipline.
+This re-checks quiescence and spawns a pane that **runs** `contrib/approve.ps1
+-Cockpit`: evidence first, then the real prompt. **Nothing types into the pane.**
+There is no send-text path in the cockpit at all — that is what makes "the human
+channel is never forged" true by construction rather than by your discipline.
+`-Cockpit` passes `resume --cockpit`, so the prompt takes only `a` or `r`; `e`
+is no longer reachable by a DE who was told twice never to press it
+(`DEVIATIONS.md`, 2026-08-03).
 
 Journal the handoff. Then tell the DE one sentence: *read the pane, type `a` or
 `r`, press Enter.* Do not gloss the decision in chat — they were briefed to
 decide from the pane, and a chat summary competing with the pane is the exact
 failure the evidence rule exists to prevent.
+
+**After a rejection, read `<run_dir>/rejection.txt` before you say anything.**
+The pane asks the human for one line about what was wrong and records it
+verbatim. It is *their* artifact — not yours (the journal) and not the engine's
+(`state.json`) — so quote it rather than characterising it, and expect §9 to
+compare your account against it.
 
 ### 3.6 STOP
 
@@ -233,6 +274,15 @@ If you adapt or write a flow for a DE, three rules bind:
    `input()` — so without that file the pane shows a naked prompt and the DE
    decides from narration. A flow whose approval shows no evidence is unsuitable
    for the cockpit.
+
+   Pass `--impact` and `--reversible "<how to undo it>"` to
+   `render_evidence.py`. Those are the two facts that decide how much care a
+   decision needs and the two the extract used to carry nowhere; without
+   `--reversible` the pane says *"not stated by this flow"*, which is honest and
+   is meant to read as a gap. `--tier irreversible` adds a banner and makes the
+   impact block mandatory — a missing one then renders as *"NOT CHARACTERISED"*
+   rather than as silence. **No tier ever skips the human**; a tier changes
+   presentation and required evidence only.
 2. **Segmentation.** Nothing non-trivial downstream of an approval; everything
    after it runs in the DE's own resume process. A seconds-long shell node
    (copy the deliverable out) is fine. `quiescent.py` enforces the distinction.
@@ -261,10 +311,31 @@ runs/<run>/
   lock                pid + hostname of the holder
   mailbox/<node>.jsonl  steer messages, with a consumed flag
   approval-evidence.txt what the human was shown
+  rejection.txt       why they rejected, in THEIR words (written by them)
+  question-card.txt   the clarification findings ACTIVITY is displaying
+  flow.labels.json    optional human names for the MISSION board (view only)
   cockpit-journal.jsonl what you told them (§9)
   phases/<node>/      prompt.txt, argv.json, stdout.log, result.json,
-                      progress.jsonl, *-attemptN.* rotations
+                      progress.jsonl, mission.txt, *-attemptN.* rotations
 ```
+
+Three authors, and keeping them apart is what makes the audit possible: the
+**engine** writes `state.json`, **you** write `cockpit-journal.jsonl`, and the
+**human** writes `rejection.txt`. Any two can be checked against the third.
+
+Views, all read-only and none of them a second source of truth:
+
+```powershell
+pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the shipped default
+pwsh -File contrib\cockpit.ps1 -Tui                     # one process, keyboard
+python contrib\mission_server.py                        # read-only page, loopback
+pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>
+```
+
+The TUI and the page render from `contrib/mission_view.py`, whose glossary is
+pinned against `cockpit.ps1`'s by `tests/test_mission_render.py` — the DE was
+told that when two surfaces disagree MISSION is right, and that stops being a
+usable instruction the moment there are two MISSIONs that can drift.
 
 Diagnosis order for a failed harness node: `state.json` error → the node's
 `stderr.log` (provider limits are named there) → `result.*` against its contract
@@ -307,8 +378,10 @@ It is **evidence of what was said, not truth about state** — a narrated artifa
 by construction. That is precisely what makes it auditable:
 `contrib/retrospect.py` compares it against the mechanical record and reports
 drift as a first-class finding — consent caps vs actual spend, handoff claims vs
-`state.json`, and a token-overlap tripwire between each gate finding and the
-relay you gave the DE.
+`state.json`, a token-overlap tripwire between each gate finding and the relay
+you gave the DE, and **a rejection the human wrote down that your journal never
+mentions**. That last one runs in the opposite direction to all the others: it
+audits whether *their* words reached the record, not whether yours did.
 
 Write it honestly. The comparison runs whether or not you do.
 

@@ -163,3 +163,38 @@ file records implementation-level departures below that bar.
   stanza digest covers the rest. Long-standing behavior; recorded here (rather
   than only in code comments and ADDENDUM-A's preamble) after the 2026-07-31
   addendum audit. An r7 amendment should restate §9.2's fingerprint part list.
+- **2026-08-03 — `resume --cockpit` narrows the SPEC §9.3 approval prompt to
+  `a`/`r`.** Why: `e` (edit) exists so an *operator* can substitute an
+  approval's result text. That is a coherent operator affordance and an
+  incoherent thing to offer a non-programmer who is told in two places never to
+  use it (`COCKPIT-FOR-DOMAIN-EXPERTS.md` and the pane banner) and whose only
+  escape from it on Windows is Ctrl-Z then Enter — the cockpit was guarding a
+  live hazard with a sentence in a document, which is the one thing that design
+  otherwise refuses. **Default OFF and behaviour is byte-identical without the
+  flag**, including `e`; only `contrib/approve.ps1` passes it. The non-TTY
+  auto-reject fires first and is untouched, so the structural guarantee that an
+  orchestrator cannot approve is unchanged. Nothing a run can accomplish
+  changes: a cockpit human who wants to say something types `r` and says it,
+  and their words are now captured mechanically in `<run_dir>/rejection.txt`
+  (proposal T1.2) rather than relayed. Pinned by
+  `tests/test_approval_cockpit.py`; proposed in
+  `docs/proposals/PROPOSAL-cockpit-ux.md` §T1.3.
+- **2026-08-03 — EOF at the approval prompt is recorded as an auto-reject, not
+  as a decision.** SPEC §9.3's prompt loop mapped `EOFError` to `answer = "r"`,
+  so the run recorded `error="approval rejected"` — indistinguishable from a
+  person having typed `r`. Why it matters in practice: **on Windows `NUL` is a
+  character device**, so `sys.stdin.isatty()` returns True for the cockpit's own
+  documented detached-launch idiom (`lockstep run <flow> < NUL`,
+  `COCKPIT-THEORY-OF-OPERATIONS.md` §2). The isatty guard therefore does not
+  fire for it; execution reaches the prompt and EOFs on the first read, and
+  every detached run's approval was being filed as a human decision. Found by an
+  end-to-end smoke of the cockpit UX work, not by reading. **The outcome is
+  unchanged** — reject, exit 6 — and the guarantee that an orchestrator cannot
+  approve never depended on which branch fires: answering requires *writing* to
+  that stdin, writing means a pipe, and a pipe is not a character device, so the
+  isatty guard catches that case. What changes is only the recorded reason:
+  `approval auto-rejected (no answer available on stdin)`. A human pressing
+  Ctrl-Z/Ctrl-D at a real prompt lands here too, and "nobody answered" describes
+  that accurately. Also load-bearing for `contrib/approve.ps1`, which must not
+  ask an absent human why they rejected. Pinned by
+  `tests/test_approval_cockpit.py::test_eof_is_recorded_as_auto_rejected_not_as_a_decision`.

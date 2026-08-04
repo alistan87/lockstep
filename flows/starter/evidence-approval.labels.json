@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Human names for the MISSION board (proposal T1.8). Read ONLY by the cockpit's",
+    "view layer - cockpit.ps1, mission_view.py - and never by the engine, so this",
+    "file cannot change what runs, what is cached, or what anything costs.",
+    "",
+    "It exists because taskgraph `Node` is extra=\"forbid\": there is nowhere in a",
+    "flow file to put a name aimed at a person, and adding one would be a format",
+    "change to a surface the proposal deliberately does not touch. A sidecar keeps",
+    "the DE tier mechanical - this is a file lookup, not a narrated branch - and",
+    "leaves every flow written to date verifying unchanged.",
+    "",
+    "Naming: <flow-file-stem>.labels.json, beside the flow. The run dir's own",
+    "flow.labels.json wins if present, so relabelling later cannot rewrite what a",
+    "completed run was displayed as.",
+    "",
+    "Write what the step MEANS to the person waiting on it, not what it does",
+    "technically. Keep it under 34 characters or it is truncated in the pane.",
+    "",
+    "`tiers` sets the approval tier (T3.3): routine | standard | irreversible. A",
+    "tier changes the banner and what evidence is required. It NEVER skips the",
+    "human - a flow author must not be able to remove them by declaring a tier."
+  ],
+  "nodes": {
+    "produce": "drafting the document",
+    "render-evidence": "preparing what you will read",
+    "approve": "your decision",
+    "deliver": "saving it where you can find it"
+  },
+  "tiers": {
+    "approve": "standard"
+  }
+}

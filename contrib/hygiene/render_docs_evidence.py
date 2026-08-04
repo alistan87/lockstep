@@ -31,6 +31,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import apply_docs  # noqa: E402
 from apply_docs import BUNDLE_BLURB as BLURB  # noqa: E402
 
+# Same reasoning one level up: the wrapping rule that keeps a decision packet
+# readable belongs in one place, or the panes drift apart again.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from render_evidence import wrap_prose  # noqa: E402
+
 
 # Sentinel: "--verdict was passed but could not be parsed" is a different fact
 # from "no verdict was passed", and silently collapsing them left the pane
@@ -113,9 +118,15 @@ def render(manifest: dict, verdict: dict | None) -> str:
         # the only surface a human decides from.
         rank = {"blocker": 0, "major": 1, "minor": 2, "nit": 3}
         findings = sorted(findings, key=lambda f: rank.get(f.get("severity"), 9))
-        w(f"     review: {verdict.get('verdict', '?')} - {verdict.get('reason', '')}")
+        w(f"     review: {verdict.get('verdict', '?')}")
+        for ln in wrap_prose(str(verdict.get("reason", "")), indent="       "):  # T2.4
+            w(ln)
         for f in findings[:12]:
-            w(f"       [{f.get('severity')}] {f.get('file')}: {f.get('claim')}")
+            for ln in wrap_prose(
+                f"[{f.get('severity')}] {f.get('file')}: {f.get('claim')}",
+                indent="       ", max_lines=4,
+            ):
+                w(ln)
         if len(findings) > 12:
             w(f"       ... and {len(findings) - 12} more findings, lowest severity first")
     w("     No two documents land on the same name. Nothing escapes the folder,")

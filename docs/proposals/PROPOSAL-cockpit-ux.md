@@ -3,11 +3,12 @@ type: proposal
 title: "Proposal: cockpit UX — the three tiers (mechanical repairs, new surfaces, one process)"
 description: Extends rev 7 §A with nine recorded defects and a three-tier UX programme, ending in a dependency-free TUI, a read-only web MISSION, and risk-tiered approvals.
 resource: docs/proposals/PROPOSAL-cockpit-ux.md
-status: draft
+status: stable
 ---
 # Proposal: cockpit UX — the three tiers
 
-**Status:** draft, 2026-08-03. **Extends** `PROPOSAL-domain-cockpit-rev7.md`
+**Status: adopted and implemented, 2026-08-03.** Departures from the plan as
+written are recorded in §12. **Extends** `PROPOSAL-domain-cockpit-rev7.md`
 §A (the cockpit UX) and does **not** supersede it: rev 7 §B (cost tracking),
 §C (gate-driven improvement) and its adopted invariants stand unchanged. Where
 this document revises a rev-7 decision it says so explicitly and gives the
@@ -441,3 +442,50 @@ flow file written today stops verifying.
   from the same functions.
 - PowerShell paths remain untested by pytest, as today. T3.1 exists partly to
   move the view layer into the tested half of the repo.
+
+---
+
+## 12. What was built, and where it departs from the plan (2026-08-03)
+
+Everything in §§4-6 landed. Five things are not what this document said they
+would be, and each is a decision worth carrying forward rather than a shortfall.
+
+**T1.1 went further than "define the missing function".** `Wait-PaneProgram` was
+not merely undefined — its absence meant ACTIVITY had *never* been verified while
+reading as though it had. It is replaced by `New-VerifiedPane`, one helper both
+the approval and the view spawn go through, so the handshake that already worked
+for the decision surface now covers the views too. The asymmetry is kept and
+made explicit at each call site: `-KillOnFailure` on the approval, downgrade-and-
+report on a view.
+
+**T1.5's repaint keeps a clock.** Repaint-on-change and a ticking timestamp are
+in direct conflict — a clock inside the diff key makes every frame differ. The
+liveness line is now written in place, outside the key. It had to stay: "blank
+never means dead" is MISSION's promise, and a frozen screen with no clock cannot
+be told apart from a dead pane.
+
+**T1.7's collapse is wider than stated.** Waiting nodes collapse after three
+(`+ 6 more waiting`), not just finished ones — a graph of twelve pending steps
+floods the board exactly as a graph of twelve finished ones does.
+
+**T3.1's drill-down index is derived, not recomputed.** The first cut matched a
+rendered line back to a node by string prefix, which would mis-select the moment
+a label changed. `mission_rows()` now returns `(node_id, text)` pairs, so the
+number beside a line and the node a keypress selects are one fact.
+
+**T3.3 is in the labels sidecar, as planned, but tiers do strictly less than the
+table implied.** No tier alters the prompt or the flow. `irreversible` adds a
+banner and turns a missing `--impact` into an explicit *"NOT CHARACTERISED"*;
+`routine` adds a label. That is the whole mechanism, and it is deliberate: the
+moment a tier can quiet an approval, a flow author can remove the human by
+declaring one.
+
+**Not done, and named rather than left implicit:** the waiting clock (§10) and
+behavioural evidence (§10) remain deferred for the reasons given there.
+
+Tests: `tests/test_mission_render.py` (31), `tests/test_cockpit_ux.py` (25),
+`tests/test_approval_cockpit.py` (7), `tests/test_rejection_reason.py` (7).
+The last test in `test_mission_render.py` parses the glossary out of
+`cockpit.ps1` and requires it to equal `mission_view.GLOSSARY` — two
+implementations of the domain expert's trust anchor are only tolerable if they
+cannot drift apart quietly.

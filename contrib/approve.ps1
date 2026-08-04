@@ -17,13 +17,19 @@
 
 .PARAMETER RunDir
   The run dir whose approval is waiting.
+
+.PARAMETER Cockpit
+  Pass --cockpit to `lockstep resume`, restricting the approval prompt to a/r.
+  The domain expert's guide has always said "never type e"; this makes that the
+  program's behaviour rather than a request.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$RunDir,
   [string]$Lockstep,
   [string]$TitleMarker,
-  [string]$Handshake
+  [string]$Handshake,
+  [switch]$Cockpit
 )
 
 $ErrorActionPreference = 'Continue'
@@ -60,6 +66,66 @@ if ($TitleMarker) {
 # from a shell that DOES load a profile, tell that profile to stay out.
 $env:PI_SKIP_AUTO = '1'
 
+function Write-RejectionReason {
+  <#
+    T1.2 — capture the human's own words, mechanically.
+
+    Evidence travels human-ward as an artifact precisely because a narrated
+    summary at a decision point cannot be trusted. The reason for a REJECTION —
+    the single most decision-relevant thing the human produces all session —
+    travelled back the other way through the orchestrator's narration. The
+    argument that justified approval-evidence.txt applies unchanged in reverse.
+
+    So: one line, verbatim, into <run_dir>/rejection.txt. Nothing is typed for
+    them and nothing is inferred if they skip. rejection.txt is a new artifact
+    class — written by the HUMAN, not by the orchestrator (that is the journal)
+    and not by the engine (that is state.json) — which is what makes it usable
+    as a tripwire against the orchestrator's account of what happened.
+  #>
+  param([Parameter(Mandatory)][string]$RunDir)
+
+  # Exit 6 has two causes and only one of them is a person. A non-TTY
+  # auto-reject must not produce a file implying somebody decided something.
+  try {
+    $state = Get-Content -LiteralPath (Join-Path $RunDir 'state.json') -Raw -ErrorAction Stop |
+      ConvertFrom-Json
+    foreach ($p in $state.nodes.PSObject.Properties) {
+      if ("$($p.Value.error)" -like '*auto-rejected*') { return }
+    }
+  } catch { }
+
+  Write-Host ''
+  Write-Host '  In one line - what was wrong?  (just press Enter to skip)' -ForegroundColor Cyan
+  $reason = $null
+  try { $reason = Read-Host '  ' } catch { return }   # redirected stdin: skip
+  if ([string]::IsNullOrWhiteSpace($reason)) {
+    Write-Host '  Skipped. Say so in the chat and we will fix it.' -ForegroundColor Yellow
+    return
+  }
+
+  $payload = [ordered]@{
+    reason = $reason.Trim()
+    at     = (Get-Date).ToUniversalTime().ToString('o')
+    run    = (Split-Path -Leaf $RunDir)
+  }
+  $text = @(
+    ('=' * 72),
+    '  WHY THIS WAS REJECTED - in the words of the person who rejected it',
+    ('=' * 72),
+    '',
+    "  $($payload.reason)",
+    '',
+    "  recorded $($payload.at)",
+    ''
+  ) -join [Environment]::NewLine
+  try {
+    Set-Content -LiteralPath (Join-Path $RunDir 'rejection.txt') -Value $text -Encoding UTF8
+    Write-Host '  Recorded. The assistant will read it from the run itself.' -ForegroundColor Green
+  } catch {
+    Write-Host "  (could not write rejection.txt: $_ - please paste it into the chat)" -ForegroundColor Yellow
+  }
+}
+
 Clear-Host
 
 $evidence = Join-Path $RunDir 'approval-evidence.txt'
@@ -90,17 +156,26 @@ if (Test-Path -LiteralPath $evidence) {
 
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host '  Type  a  to approve, or  r  to reject, then press Enter.' -ForegroundColor Cyan
-Write-Host '  Never type e. If anything unexpected appears, copy it into the chat.' -ForegroundColor Cyan
+if ($Cockpit) {
+  Write-Host '  Those are the only two answers this prompt accepts.' -ForegroundColor Cyan
+} else {
+  Write-Host '  Never type e. If anything unexpected appears, copy it into the chat.' -ForegroundColor Cyan
+}
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
-& $Lockstep resume $RunDir
+$resumeArgs = @('resume', $RunDir)
+if ($Cockpit) { $resumeArgs += '--cockpit' }
+& $Lockstep @resumeArgs
 $rc = $LASTEXITCODE
 
 Write-Host ''
 switch ($rc) {
   0 { Write-Host 'Approved. This segment is finished - you can close this pane.' -ForegroundColor Green }
-  6 { Write-Host 'Rejected. Nothing was lost; say so in the chat and we will fix it.' -ForegroundColor Yellow }
+  6 {
+    Write-Host 'Rejected. Nothing was lost.' -ForegroundColor Yellow
+    Write-RejectionReason -RunDir $RunDir
+  }
   default { Write-Host "Finished with code $rc - paste that number into the chat." -ForegroundColor Yellow }
 }
 exit $rc

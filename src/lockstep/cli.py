@@ -153,7 +153,7 @@ def _print_plan(tg: TaskGraph, config: LockstepConfig) -> None:
 def _run_engine(
     tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path,
     max_workers: int, resume: bool, replay: str | None = None, replay_any: bool = False,
-    otel_file: str | None = None,
+    otel_file: str | None = None, cockpit: bool = False,
 ) -> int:
     if otel_file is not None:
         # Bare flag ⇒ alongside the run's other artifacts; a path ⇒ a shared
@@ -173,6 +173,7 @@ def _run_engine(
         policy=AllowAllPolicy(),
         repo_root=repo_root,
         max_workers=max_workers,
+        cockpit=cockpit,
     )
     if replay:
         from .replay import ReplayIndex, wrap_registry
@@ -291,7 +292,8 @@ def cmd_resume(ns) -> int:
         return _fail(f"run dir {run_dir} is locked by {e.holder} (exit 8)", EXIT_LOCKED)
     try:
         return _run_engine(tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers,
-                           resume=True, otel_file=ns.otel_file)
+                           resume=True, otel_file=ns.otel_file,
+                           cockpit=getattr(ns, "cockpit", False))
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
     finally:
@@ -542,6 +544,9 @@ def main(argv: list[str] | None = None) -> int:
     pres.add_argument("--force-unlock", action="store_true")
     pres.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                       help="write OTLP/JSON spans; a resume joins the run's existing trace")
+    pres.add_argument("--cockpit", action="store_true",
+                      help="restrict approval prompts to [a]pprove / [r]eject; the cockpit's "
+                           "APPROVAL pane passes this so a domain expert cannot reach [e]dit")
     pres.set_defaults(fn=cmd_resume)
 
     pv = sub.add_parser("verify", help="static verification only")

@@ -155,6 +155,7 @@ class Engine:
         repo_root: Path,
         max_workers: int = 2,
         log=print,
+        cockpit: bool = False,
     ):
         self.tg = tg
         self.registry = registry
@@ -165,6 +166,9 @@ class Engine:
         self.repo_root = Path(repo_root)
         self.max_workers = max_workers
         self.log = log
+        # Cockpit mode (proposal T1.3). Off by default and SPEC §9.3 behaviour is
+        # byte-identical without it; see DEVIATIONS.
+        self.cockpit = cockpit
 
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
@@ -1147,17 +1151,48 @@ class Engine:
 
     def _run_approval(self, node: Node) -> None:
         """Core-handled, no executor (SPEC §9.3). Non-TTY stdin ⇒ auto-reject,
-        exit 6. Never resume-skipped."""
+        exit 6. Never resume-skipped.
+
+        Cockpit mode (T1.3) narrows the accepted answers to a/r. `e` exists so an
+        OPERATOR can substitute an approval's result text — a coherent thing for
+        an operator to want, and an incoherent thing to offer a non-programmer
+        who has been told in two places never to use it. The flag makes the
+        DE-facing surface match the DE-facing documentation by construction
+        instead of by warning; nothing about it changes what a run can do,
+        because a cockpit human who wants to say something types `r` and says it.
+        """
         if not (sys.stdin and sys.stdin.isatty()):
             self.flags["approval_rejected"] = True
             self._set_status(node.id, "blocked", error="approval auto-rejected (non-TTY stdin)")
             return
-        prompt = f"[approval:{node.id}] [a]pprove / [r]eject / [e]dit: "
+        prompt = (
+            f"[approval:{node.id}] [a]pprove / [r]eject: "
+            if self.cockpit
+            else f"[approval:{node.id}] [a]pprove / [r]eject / [e]dit: "
+        )
         while True:
             try:
                 answer = input(prompt).strip().lower()
             except EOFError:
-                answer = "r"
+                # NOBODY WAS THERE — a different fact from "the human said no",
+                # and the record has to be able to tell them apart.
+                #
+                # Found 2026-08-03: on Windows `NUL` is a CHARACTER DEVICE, so
+                # `sys.stdin.isatty()` returns True for the cockpit's own
+                # documented launch idiom (`lockstep run <flow> < NUL`). The
+                # isatty guard above therefore does NOT fire for it; execution
+                # reaches here and EOFs on the first read. The OUTCOME was
+                # already correct (reject, exit 6) and an orchestrator still
+                # cannot approve — writing to that stdin means a pipe, and a
+                # pipe is not a character device, so the isatty guard fires —
+                # but the run was recorded as "approval rejected", which reads
+                # as a person having decided.
+                self.flags["approval_rejected"] = True
+                self._set_status(
+                    node.id, "blocked",
+                    error="approval auto-rejected (no answer available on stdin)",
+                )
+                return
             if answer in ("a", "approve"):
                 text = "approved"
                 break
@@ -1165,6 +1200,14 @@ class Engine:
                 self.flags["approval_rejected"] = True
                 self._set_status(node.id, "blocked", error="approval rejected")
                 return
+            if self.cockpit:
+                # Say what to do instead, every time. A prompt that silently
+                # re-asks reads as a frozen terminal to someone who does not
+                # know they typed something it does not take.
+                if answer:
+                    self.log("Only a (approve) or r (reject). To say more, type r "
+                             "and explain in the chat.")
+                continue
             if answer in ("e", "edit"):
                 self.log("Enter text; end with EOF (Ctrl-Z then Enter on Windows, Ctrl-D elsewhere):")
                 lines: list[str] = []

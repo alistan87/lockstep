@@ -59,6 +59,13 @@ def _read_json(path: Path):
         return None
 
 
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _read_jsonl(path: Path) -> list[dict]:
     out: list[dict] = []
     try:
@@ -170,6 +177,11 @@ def collect_run(run_dir: Path) -> dict | None:
         "correctives": correctives,
         "statuses": dict(statuses),
         "journal": _read_jsonl(run_dir / "cockpit-journal.jsonl"),
+        # T1.2: the human's OWN words about why they rejected. A third artifact
+        # class beside the journal (what the orchestrator said) and state.json
+        # (what the engine did), and the only one written by the person whose
+        # decision it was.
+        "rejection": _read_text(run_dir / "rejection.txt"),
     }
 
 
@@ -202,7 +214,36 @@ def told_vs_state(run: dict) -> list[str]:
             claimed = entry.get("spend")
             if isinstance(claimed, int) and claimed != spend:
                 drift.append(f"stop reported spend {claimed}, state says {spend}")
+
+    # T1.2, the symmetric check. The evidence rule exists because a narrated
+    # summary at a decision point cannot be trusted; a rejection reason travels
+    # the SAME road in the other direction. If the human wrote down why they
+    # sent the work back and the journal never mentions it, the orchestrator
+    # relayed something other than what they said — or nothing at all.
+    if run.get("rejection"):
+        said = " ".join(entry.get("note", "") + " " + entry.get("reason", "")
+                        for entry in run["journal"] if isinstance(entry, dict))
+        theirs = set(WORD.findall(_rejection_reason(run["rejection"]).lower()))
+        mine = set(WORD.findall(said.lower()))
+        if not mine:
+            drift.append("the human recorded a rejection reason; the journal never mentions it")
+        elif theirs and len(theirs & mine) / max(1, len(theirs)) < 0.25:
+            drift.append(
+                "the human's rejection reason and the journal have little in common "
+                "— worth a human read"
+            )
     return drift
+
+
+def _rejection_reason(text: str) -> str:
+    """The one line the human typed, out of the framing around it."""
+    body = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or set(line) <= {"="} or line.startswith("WHY THIS WAS")                 or line.startswith("recorded "):
+            continue
+        body.append(line)
+    return " ".join(body)
 
 
 def fidelity_tripwire(run: dict, threshold: float = 0.25) -> list[str]:

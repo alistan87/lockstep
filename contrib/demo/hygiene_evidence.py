@@ -34,6 +34,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# One wrapping rule, imported rather than copied — a second copy is how the
+# evidence panes drift apart, and they are the surfaces a human decides from.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from render_evidence import wrap_prose  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_manifest import load_entries  # noqa: E402
 
@@ -104,7 +109,12 @@ def render(entries: list[dict], verdict: dict | None) -> str:
     w("-- already checked automatically " + "-" * 42)
     if verdict:
         findings = verdict.get("findings") or []
-        w(f"    deterministic gate: {verdict.get('verdict', '?')} - {verdict.get('reason', '')}")
+        # T2.4: wrapped and capped. This exact line is what F8 recorded — a
+        # ~350-word model reason rendered as one unbroken paragraph on one line
+        # in the shipped demo's own evidence.
+        w(f"    deterministic gate: {verdict.get('verdict', '?')}")
+        for ln in wrap_prose(str(verdict.get("reason", "")), indent="      "):
+            w(ln)
         if findings:
             cats = Counter(str(f.get("category", "?")) for f in findings)
             for cat, count in cats.most_common():

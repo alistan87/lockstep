@@ -91,7 +91,11 @@ failure triage).
 
 `contrib/` holds a layer for running lockstep on behalf of a domain expert:
 detached runs, clarification gates, evidence-bearing terminal approvals, live
-spend, and a friction retro. If you are the session driving it, read
+spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
+zero dependencies) plus `mission_view.py` — pure render functions shared by
+`mission_tui.py` (one process, keyboard) and `mission_server.py` (read-only
+localhost page). A test pins the two glossaries to each other; keep them in
+step. If you are the session driving it, read
 `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
 `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds
 what you may say. Three rules that are enforced by code, not discretion:
@@ -101,4 +105,6 @@ what you may say. Three rules that are enforced by code, not discretion:
 - **Never hand over without `contrib/quiescent.py` exiting 0** — whatever is
   runnable at that moment runs in the human's own terminal.
 - **Never narrate in place of evidence at a decision point.** Approvals are
-  decided from `<run_dir>/approval-evidence.txt`, rendered by the flow.
+  decided from `<run_dir>/approval-evidence.txt`, rendered by the flow. The rule
+  is symmetric: after a rejection, quote `<run_dir>/rejection.txt` — the human's
+  own words — rather than characterising why they said no.

@@ -64,6 +64,7 @@ def build(
     run_dir: Path | None = None,
     state: RunState | None = None,
     max_workers: int = 2,
+    cockpit: bool = False,
 ) -> SimpleNamespace:
     tg = TaskGraph.model_validate(flow)
     config = config or make_config()
@@ -101,6 +102,7 @@ def build(
         repo_root=repo_root,
         max_workers=max_workers,
         log=logs.append,
+        cockpit=cockpit,
     )
     return SimpleNamespace(
         engine=engine, run_dir=run_dir, fake=fake, state=state, tg=tg, store=store,
