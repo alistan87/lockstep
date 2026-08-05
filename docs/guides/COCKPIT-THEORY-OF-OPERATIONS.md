@@ -123,8 +123,22 @@ slug is the lineage identity for every later segment.
 
 ### 3.3 Launch and narrate
 
-Launch detached. Then narrate transitions from **four** sources, because no
-single one is sufficient:
+Launch detached. **Then get the views up before you narrate anything** — every
+sentence you say competes with a pane that cannot be wrong:
+
+```powershell
+pwsh -File contrib\cockpit.ps1 -Role mission -Follow      # the trust anchor
+pwsh -File contrib\cockpit.ps1 -Tui                       # or one process, keyboard
+```
+
+`-Follow` tracks whichever run is newest, so the board exists before a run does
+and survives the gap between segments. MISSION beeps and retitles itself
+`NEEDS YOU` on the *transition* into a blocked state — set `LOCKSTEP_NOTIFY_URL`
+if the DE needs a push somewhere else; it posts the run name and nothing more,
+because a run dir is sensitive and a notification is not a delivery channel.
+
+Then narrate transitions from **four** sources, because no single one is
+sufficient:
 
 - `events.jsonl` — transitions, `heal-round`, timestamps
 - `lockstep status` — the summary
@@ -266,7 +280,7 @@ python contrib\cost_report.py --runs-from <slug>               # whole deliverab
 
 ## 6. Authoring constraints for cockpit-facing flows
 
-If you adapt or write a flow for a DE, three rules bind:
+If you adapt or write a flow for a DE, four rules bind:
 
 1. **Evidence before every approval.** A shell node must render a mechanical
    extract to `<run_dir>/approval-evidence.txt`. Shell stdout goes to
@@ -279,15 +293,29 @@ If you adapt or write a flow for a DE, three rules bind:
    `render_evidence.py`. Those are the two facts that decide how much care a
    decision needs and the two the extract used to carry nowhere; without
    `--reversible` the pane says *"not stated by this flow"*, which is honest and
-   is meant to read as a gap. `--tier irreversible` adds a banner and makes the
-   impact block mandatory — a missing one then renders as *"NOT CHARACTERISED"*
-   rather than as silence. **No tier ever skips the human**; a tier changes
-   presentation and required evidence only.
+   is meant to read as a gap. `--impact` counts from `git status --porcelain
+   -uall`, **not** a diff — `git diff` cannot see untracked files, and an agent
+   writing a new deliverable is the normal case, not an edge one.
+
+   A tier adds a banner and can make the impact block mandatory: with
+   `irreversible`, a missing `--impact` renders as *"NOT CHARACTERISED"* rather
+   than silence. Set it with `--tier`, or declare it once in the flow's labels
+   sidecar (below) and pass `--approval <node id>` so the right one is picked.
+   **No tier ever skips the human**; a tier changes presentation and required
+   evidence only.
+
 2. **Segmentation.** Nothing non-trivial downstream of an approval; everything
    after it runs in the DE's own resume process. A seconds-long shell node
    (copy the deliverable out) is fine. `quiescent.py` enforces the distinction.
 3. **Clarify gates never heal.** `heal.max_rounds: 0`. A healing clarify gate
    re-runs the target with the questions still unanswered and burns rounds.
+4. **Names, if you want the board readable.** `flows/<name>.labels.json` maps
+   node ids to what the step *means* to the person waiting on it, and declares
+   approval tiers. Read only by the view layer, so it cannot change what runs,
+   what is cached, or what anything costs — and a run's own copy wins, so
+   relabelling later cannot rewrite what a completed run was displayed as.
+   Without it the board shows raw node ids: correct, just not addressed to
+   anyone.
 
 Traps found the hard way, all of which cost a real run:
 

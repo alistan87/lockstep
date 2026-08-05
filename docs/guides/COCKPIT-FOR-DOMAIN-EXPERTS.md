@@ -41,9 +41,17 @@ You will see three areas.
 **CHAT** — where you talk. This is your home. Everything you say happens here.
 
 **ACTIVITY** — what is being worked on right now, one line at a time. It always
-shows something. If it says `working — 4 m elapsed`, work is happening. Blank
-never means broken; the line always tells you which of "thinking", "waiting for
-you", or "finished" is true.
+shows something. Blank never means broken; the line always tells you which of
+"thinking", "waiting for you", or "finished" is true. Where a tool reports its
+own progress you get it in full:
+
+```
+  [####------]  40%  step 2 of 5  reading the manifest
+```
+
+Where a tool cannot report progress, you get a fact rather than a guess —
+`still producing output — 8.4 KB, last write 3s ago`, or, if it has gone quiet,
+`no new output for 14 m`. That second one is worth mentioning in the chat.
 
 **MISSION** — the status board, and the one part of the screen no one writes by
 hand. It is generated straight from the system's own files, so it cannot flatter

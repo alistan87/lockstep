@@ -36,8 +36,9 @@ $ lockstep cancel runs/<run>/ implement         # kills the node's process tree
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
 ```
 
-Observation is deliberately plain: `tail -f` any `runs/**/phases/<node>/stdout.log`,
-`watch -n2 lockstep status <run_dir>`, or `src/lockstep/watch/wezterm-watch.sh <run_dir>`.
+Observation is deliberately plain: `tail -f` any `runs/**/phases/<node>/stdout.log`
+or `watch -n2 lockstep status <run_dir>`. Richer read-only views ship in
+`contrib/` — see [the cockpit](#driving-it-for-someone-who-does-not-code-the-cockpit).
 
 ## The taskgraph, in one example
 
@@ -58,7 +59,7 @@ prompts, and re-runs. Rounds exhausted ⇒ exit 2.
 
 ## Starter flows
 
-`flows/starter/` ships seven portable, adversarially-reviewed templates — see
+`flows/starter/` ships ten portable, adversarially-reviewed templates — see
 its README for the full table and per-flow caveats:
 
 - **SDLC**: `plan-adversarial` (author → two attacking reviewers → healing
@@ -69,7 +70,11 @@ its README for the full table and per-flow caveats:
 - **Audit**: `file-audit` (map fan-out, one readonly auditor per file with
   content-fingerprint caching), `proposal-gate` (completeness gates for a
   human-owned doc — deterministic section check, then reviewers; no heal).
-- **Ops**: `pi-guard-smoke` (live-verifies the pi extension on a new machine).
+- **Cockpit fragments**: `clarify-gate` (a non-healing gate that asks a human
+  what only they can settle), `evidence-approval` (the evidence-bearing terminal
+  approval, with its labels sidecar).
+- **Ops**: `pi-guard-smoke` (live-verifies the pi extension on a new machine),
+  `retrospect` (gate-driven improvement from the friction report).
 
 They double as worked examples of every major feature: shell vs harness nodes,
 contracts, healing vs terminal gates, map, approval, args, budgets. The
@@ -77,6 +82,58 @@ repo's own dogfood flow is `flows/audit-spec.tg.json` (spec-vs-code audit).
 Portable references: `docs/guides/FLOW-AUTHORING.md` (writing flows) and
 `docs/guides/DRIVING-LOCKSTEP.md` (the drive protocol for orchestrator agents —
 paste-ready for an `AGENTS.md`).
+
+## Driving it for someone who does not code (the cockpit)
+
+`contrib/` is a layer for running lockstep **on behalf of a domain expert** — a
+colleague who owns the judgment calls but will never write code, use git, or
+type a command. It adds no engine capability; it is convention over the same run
+directory, plus a handful of read-only views.
+
+The whole design reduces to one trade: the assistant may spend your budget and
+your attention; in exchange every number it quotes is one you can verify
+yourself, and every decision is made from an artifact rather than its summary.
+Four guarantees hold that up, and each is **structural rather than a rule
+somebody follows**:
+
+- **The assistant cannot approve anything.** Not by policy — there is no code
+  path. Runs launch detached with unanswerable stdin, so reaching an approval
+  auto-rejects and exits 6; that exit *is* the handoff signal. There is no
+  `send-text` anywhere in the cockpit.
+- **A decision is made from evidence, never narration.** A shell node renders a
+  mechanical extract to `<run_dir>/approval-evidence.txt` before every approval,
+  ending in the two facts that set how much care it needs: **blast radius**
+  (`4 files - 2 edited, 1 new, 1 DELETED`) and **reversibility** (or an explicit
+  *"not stated by this flow"*). The pane prints that, then the real prompt.
+- **The reason for a rejection is an artifact too.** After `r`, the pane asks
+  for one line and writes `<run_dir>/rejection.txt` in the human's own words —
+  and `contrib/retrospect.py` reports it as drift if the assistant's journal
+  never mentions it. Symmetry: the argument that made evidence a file applies in
+  both directions.
+- **Nothing you do can lose paid work.** The run and the assistant are separate
+  processes; either can die without harming the other.
+
+```console
+$ contrib\start-cockpit.cmd                        # the only entry point, ever
+$ python contrib\plan_card.py <flow>               # consent, backed by prior runs
+$ pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the status board
+$ pwsh -File contrib\cockpit.ps1 -Tui               # or one process, keyboard-driven
+$ python contrib\mission_server.py                  # or a read-only page on loopback
+$ python contrib\quiescent.py <run_dir>             # is this safe to hand over?
+$ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Approve   # spawn the decision pane
+$ python contrib\cost_report.py --compact <run_dir> # spend, in honest units
+```
+
+Every view is a projection of `state.json`, the run's own `flow.tg.json` copy,
+and `phases/<node>/*` — a field mapping with a fixed glossary, no model, no
+second source of truth. The TUI and the web page share `contrib/mission_view.py`
+with `cockpit.ps1`, and a test pins their glossaries to each other. **Decisions
+never leave the terminal**: the page has no form, no POST handler, and no route
+that writes.
+
+Read `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` if you are the session
+driving it, and `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` — which is what the
+human was told, so it binds what you may say.
 
 ## Pi extension hooks (optional, pi executor only)
 

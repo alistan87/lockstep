@@ -36,6 +36,18 @@ not change what a correct agent can accomplish on any executor.
 
 Live smoke (spends tokens): `$env:LOCKSTEP_LIVE="1"; .venv\Scripts\python.exe -m pytest tests\live`
 
+Cockpit tools (all read-only; none spends a token):
+
+```
+python contrib\plan_card.py <flow>            # consent card: shape, ceiling, prior runs
+python contrib\question_card.py <run_dir>     # clarify findings, verbatim, for ACTIVITY
+python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is runnable
+pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board
+pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down
+python contrib\mission_server.py                       # read-only page, loopback only
+pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
+```
+
 ## Module map (src/lockstep/)
 
 - `taskgraph.py` — format models + the §6 static verifier (named error codes)
@@ -105,6 +117,10 @@ what you may say. Three rules that are enforced by code, not discretion:
 - **Never hand over without `contrib/quiescent.py` exiting 0** — whatever is
   runnable at that moment runs in the human's own terminal.
 - **Never narrate in place of evidence at a decision point.** Approvals are
-  decided from `<run_dir>/approval-evidence.txt`, rendered by the flow. The rule
-  is symmetric: after a rejection, quote `<run_dir>/rejection.txt` — the human's
+  decided from `<run_dir>/approval-evidence.txt`, rendered by the flow, ending in
+  blast radius (`--impact`) and reversibility (`--reversible`). The rule is
+  symmetric: after a rejection, quote `<run_dir>/rejection.txt` — the human's
   own words — rather than characterising why they said no.
+- **Never quote a cost from memory.** `contrib/plan_card.py` computes it from
+  prior runs; that used to be the one number in the protocol with no artifact
+  behind it.

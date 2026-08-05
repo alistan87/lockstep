@@ -112,9 +112,10 @@ map body · `{previous.output}` (exactly one dep). `{{` escapes `{`.
 
 ## Authoring for a human decision (cockpit-facing flows)
 
-A flow a non-programmer will drive has three extra obligations. Templates:
-`flows/starter/clarify-gate.tg.json`, `flows/starter/evidence-approval.tg.json`,
-and the full shape in `flows/demo/repo-hygiene-demo.tg.json`.
+A flow a non-programmer will drive has **four** extra obligations. Templates:
+`flows/starter/clarify-gate.tg.json`, `flows/starter/evidence-approval.tg.json`
+(with its `.labels.json` sidecar), and the full shape in
+`flows/demo/repo-hygiene-demo.tg.json`.
 
 **Clarification gates.** Domain questions travel through a gate with
 `"heal": {"max_rounds": 0}` whose findings carry `category: "question"` and
@@ -136,6 +137,41 @@ unsure about, then a deterministic sample of what it was sure about). Sampling
 must be seeded by the content: the same manifest has to produce the same pane
 twice, or approval means nothing. **A flow whose approval shows no evidence is
 unsuitable for a non-programmer.**
+
+**The decision packet.** Evidence answers *what*; a human also needs *how much*
+and *can it be undone*. Pass both to `render_evidence.py`:
+
+```jsonc
+"cmd": ["python", "contrib/render_evidence.py",
+        "--headings", "{args.deliverable}",
+        "--diffstat", "--impact",
+        "--approval", "approve",                    // which approval this is for
+        "--reversible", "delete DRAFT.md; nothing else was touched",
+        "--title", "{args.task}"]
+```
+
+`--impact` counts from `git status --porcelain -uall` — **not** a diff, because
+`git diff` cannot see untracked files and a new deliverable is the normal case;
+the count always equals the number of changes, with unnamed status codes
+reported as `other` rather than dropped. Omitting `--reversible` renders *"not
+stated by this flow"*, which is honest and reads as the gap it is. Deletions and
+conflicts get their own line.
+
+**Names and tiers, in a sidecar.** `flows/<name>.labels.json` (read only by the
+cockpit's view layer, never by the engine, so it cannot change what runs, what
+is cached, or what anything costs):
+
+```jsonc
+{ "nodes": { "preflight": "checking the plan is safe to apply" },
+  "tiers": { "approve": "irreversible" } }
+```
+
+Node ids are engineering identifiers; MISSION shows the label instead when there
+is one. Keep labels under 34 characters. A tier changes the evidence banner and
+what evidence is *required* — `irreversible` makes the impact block mandatory,
+rendering a missing one as `NOT CHARACTERISED` rather than as silence. **No tier
+ever skips the human**: a tier that could quiet an approval would let a flow
+author remove them by declaring one.
 
 **The segmentation rule.** Nothing non-trivial may run downstream of an
 approval, because everything after it executes in the human's own resume
