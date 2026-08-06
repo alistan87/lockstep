@@ -65,6 +65,12 @@ that catches harness flag drift, so run it after any harness upgrade and about
 weekly. If a stanza fails here, no flow using it can work — fix it before
 going further.
 
+A clean run writes `runs\doctor-record.json`. From then on, `lockstep run`
+prints one reminder line when that record is missing, older than a week, or a
+stanza changed since the last successful probe — you do not have to remember
+the cadence; the run start tells you. (Advisory only: it never blocks
+anything.)
+
 ## Step 4 — a first run that costs nothing
 
 ```powershell
@@ -72,9 +78,10 @@ going further.
 .venv\Scripts\lockstep.exe run flows\demo\repo-hygiene-demo.tg.json --dry-run
 ```
 
-`verify` is free and catches malformed flows with named error codes. `--dry-run`
-prints the wave plan and spawns nothing. Only after both look right should
-anyone spend tokens.
+`verify` is free and catches malformed flows with named error codes (add
+`--lint` for advisory anti-pattern warnings — they never change the exit
+code). `--dry-run` prints the wave plan and spawns nothing. Only after both
+look right should anyone spend tokens.
 
 Then the real thing, in the cockpit:
 
@@ -109,6 +116,13 @@ python contrib\quiescent.py runs\<run-dir>                     # safe to hand ov
 - **You cannot tell whether it is broken or just slow** → the ACTIVITY pane's
   heartbeat means blank never means dead. If the heartbeat is moving, it is
   working.
+- **A node re-ran that you expected to be cached (and re-billed)** →
+  `lockstep explain runs\<run-dir> <node>` names which recorded input moved
+  (prompt, config stanza, heal text, steering, a context file). Free,
+  read-only.
+- **You want to know a run needs you without watching it** →
+  `pwsh -File contrib\attention.ps1 -RunDir runs\<run-dir>` fires a toast when
+  a decision is waiting, a step fails, or the run stops.
 
 ## The one thing to say to a non-programmer
 

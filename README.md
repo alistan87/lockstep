@@ -34,6 +34,10 @@ $ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress
 $ lockstep steer runs/<run>/ implement "prefer the streaming writer"   # next checkpoint
 $ lockstep cancel runs/<run>/ implement         # kills the node's process tree
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
+$ lockstep verify flows/x.tg.json --lint        # + advisory anti-pattern warnings
+$ lockstep explain runs/<run>/ implement        # which hash inputs moved; why it re-billed
+$ lockstep run flows/x.tg.json --replay runs/<run>/   # recorded results; no spawns, no tokens
+$ lockstep gc                                   # runs/ retention plan; dry-run unless --apply
 ```
 
 Observation is deliberately plain: `tail -f` any `runs/**/phases/<node>/stdout.log`
@@ -83,6 +87,34 @@ Portable references: `docs/guides/FLOW-AUTHORING.md` (writing flows) and
 `docs/guides/DRIVING-LOCKSTEP.md` (the drive protocol for orchestrator agents —
 paste-ready for an `AGENTS.md`).
 
+## The factory flows
+
+`flows/factory/` covers repeatable **production** shapes rather than
+build-one-thing runs — see its README for the table
+(`PROPOSAL-factory-programme.md` is the design record):
+
+- **Software**: `release-cut` (collect → changelog draft → version-sync gate →
+  wheel build/install/import smoke → evidence approval → tag),
+  `codemod-propose`/`codemod-apply` (bulk transformation as approved
+  ChangeOrders, with a staleness gate that hard-blocks if the tree moved after
+  the human read the proposal), `triage-intake` (reproduction-attempted
+  TriageRecords that feed `bugfix-heal`), and a generated `harness-bakeoff`
+  (`contrib/bakeoff_gen.py` — doctor catches flag drift, this catches quality
+  drift).
+- **Reports**: `research-report` (fingerprinted sources → per-source
+  extraction → outline gate → per-section drafts → a deterministic
+  **citation-integrity gate** → adversarial claim check → editor → approval
+  over the report itself) and `status-digest` (deterministic collectors → a
+  narrative whose every numeral must appear in a collector's output — the
+  **number-provenance gate**; schedule it weekly), plus `run-postmortem`
+  (every claim must cite a run-dir artifact that exists).
+
+The deterministic gate bodies are tested programs in `src/lockstep/gates/`
+(`python -m lockstep.gates.<name>` — see FLOW-AUTHORING for the library and
+the `verify --lint` table). Recorded runs become zero-token regression
+fixtures: `contrib/export_fixture.py` (scrubbed allowlist) +
+`contrib/replay_suite.py`.
+
 ## Driving it for someone who does not code (the cockpit)
 
 `contrib/` is a layer for running lockstep **on behalf of a domain expert** — a
@@ -122,6 +154,7 @@ $ python contrib\mission_server.py                  # or a read-only page on loo
 $ python contrib\quiescent.py <run_dir>             # is this safe to hand over?
 $ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Approve   # spawn the decision pane
 $ python contrib\cost_report.py --compact <run_dir> # spend, in honest units
+$ pwsh -File contrib\attention.ps1 -RunDir <run>    # toast when the run needs a human
 ```
 
 Every view is a projection of `state.json`, the run's own `flow.tg.json` copy,
@@ -183,7 +216,9 @@ appended — declared-but-unenforced readonly is a verification error.
 **Run `lockstep doctor` after any harness upgrade and on a weekly cadence.** It
 is the only check that catches harness flag drift; the offline suite
 structurally cannot see it. (Not a pre-commit hook — that spends a model
-round-trip per commit.)
+round-trip per commit.) A clean probe leaves `runs/doctor-record.json`, and
+`run` prints one advisory line when the record is missing, stale, or a stanza
+changed since — the weekly habit is now a mechanism, not a memory.
 
 ## Security posture
 

@@ -58,10 +58,15 @@ an approval node: `plan-adversarial` and `sdlc-e2e`.
 - **`lockstep.toml`** with a working executor stanza (`lockstep doctor` green).
 - **Personas**: `planner`, `implementer`, `reviewer`, `arbiter` from
   `personas/` — copy that directory alongside `flows/`.
-- **`python` on PATH** for the shell gate scripts; `ruff` is optional (the
-  checks gate lints only if `ruff` is found, and always runs
-  `python -m pytest`). Swap the `checks` node's `cmd` for your repo's real
-  check commands — it just has to print a `Verdict` JSON object.
+- **The deterministic gates are library calls**: `checks` runs
+  `python -m lockstep.gates.pytest_verdict` and the review gates run
+  `lockstep.gates.block_on_severity` — tested programs shipped in the package
+  (see FLOW-AUTHORING's gate-library table), not inline one-liners. A bare
+  `python` argv[0] resolves to the interpreter running lockstep
+  (DEVIATIONS 2026-08-05), so no venv activation is needed. `ruff` is
+  optional (linted only if found; pytest always runs). Swap the gate `cmd`
+  for your repo's real checks — it just has to print a `Verdict` JSON object
+  and exit 0.
 
 ## Portability notes (work-laptop / pi specifics)
 
@@ -136,18 +141,14 @@ an approval node: `plan-adversarial` and `sdlc-e2e`.
   `prompt_via = "stdin"` (config-only) or lower `max_interp_chars` so big
   values spill to files instead.
 
-## More templates worth building (not included yet)
+## The production shapes live next door
 
-- **release-readiness** — all-shell checklist gate: tests, build, changelog
-  entry present, version consistency; one reviewer for the release notes.
-- **context-freshness** — `file-audit` specialized for a docs corpus: map over
-  `docs/**/*.md`, focus "claims contradicted by the current code/data",
-  scheduled weekly; per-item caching means only changed files re-audit.
-- **data-reconciliation factory** — the analytics pattern: shell extract →
-  map analyst per segment → deterministic reconcile gate → report assembler →
-  approval before publish.
-- **migration sweep** — list call sites via grep (shell) → map a fixer per
-  file (worktree-style isolation via small batches) → checks gate per batch.
-- **coverage-gap audit** — shell node emits coverage JSON → reviewer proposes
-  the N highest-value missing tests as Finding[] → implement-heal on the
-  accepted ones.
+Most of the templates this section used to wish for now exist in
+`flows/factory/` (see its README): **release-cut** (the release-readiness
+checklist, with a version-sync gate and a build/install/import smoke),
+**codemod-propose/apply** (the migration sweep, as approved ChangeOrders
+behind a staleness gate), **triage-intake**, **research-report**,
+**status-digest**, **run-postmortem**, and a generated **harness-bakeoff**.
+Still worth building on top of `file-audit`: a scheduled context-freshness
+audit over a docs corpus, and a coverage-gap audit feeding `implement-heal`
+(`lockstep.gates.coverage_delta` already ships for its gate).
