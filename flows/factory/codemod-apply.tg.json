@@ -1,0 +1,142 @@
+{
+  "format_version": "1.0",
+  "name": "codemod-apply",
+  "description": "Segment 2 of 2 (D2) - execute APPROVED change orders. Running this flow IS the approval act (the docs-okf pattern: consent is launching apply with the proposal in hand), so the first node is the STALENESS GATE: every order's fingerprint is recomputed and any drift since the human read CODEMOD-PROPOSAL.md hard-blocks - they approved a different tree. Then: one applier per order (serialized - they share the tree), lint+pytest gate healing the appliers, adversarial diff review, block on blocker/major. Everything stays uncommitted in the working tree; the commit is the human's second gate and this flow never performs it.",
+  "contracts_module": "flows/factory_contracts.py",
+  "max_interp_chars": 60000,
+  "budget": {
+    "max_agent_spawns": 30,
+    "max_run_minutes": 150
+  },
+  "nodes": [
+    {
+      "id": "staleness",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.fingerprint_check",
+          "codemod-orders.json"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "load-orders",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "staleness"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/collectors.py",
+          "cat",
+          "codemod-orders.json"
+        ]
+      },
+      "output": "json",
+      "contract": "ChangeOrder[]",
+      "timeout_s": 60
+    },
+    {
+      "id": "apply",
+      "role": "map",
+      "kind": "harness",
+      "depends_on": [
+        "load-orders"
+      ],
+      "over": "{steps.load-orders.json}",
+      "concurrency": 1,
+      "spec": {
+        "task": "Apply ONE approved change order. As data: file {item.file}, anchor (verbatim quote locating the change):\n{item.anchor}\n\nThe change to make:\n{item.change}\n\nRisk noted at proposal time: {item.risk}\n\nApply EXACTLY this change to exactly this file - the order was adversarially proposed and human-approved; re-deciding it here is a defect. If the anchor no longer matches the file, STOP and say so instead of improvising.\n\nYour final response: one sentence on what you changed, or why you could not."
+      },
+      "output": "text",
+      "timeout_s": 900
+    },
+    {
+      "id": "checks",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "apply"
+      ],
+      "heal": {
+        "max_rounds": 2,
+        "targets": [
+          "apply"
+        ]
+      },
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.pytest_verdict"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 900
+    },
+    {
+      "id": "review",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "checks"
+      ],
+      "spec": {
+        "persona": "reviewer",
+        "task": "You are an adversarial reviewer of a bulk code transformation. The working tree contains uncommitted changes that apply the orders in codemod-orders.json (read it), and lint+tests already pass. Run `git status` and `git diff`.\n\nHunt for REAL defects only: an applied change diverging from its order, collateral edits outside any order's file, behavior changes the orders did not authorize, silently weakened tests. Ignore style.\n\nReport each defect as a Finding object with EXACTLY these fields: severity (\"blocker\" | \"major\" | \"minor\" | \"nit\"), category, file, line (integer or null), claim (one sentence), evidence, fix_hint.\n\nYour result MUST be ONLY a JSON array of Finding objects - an empty array if the diff is faithful to the orders."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 1200
+    },
+    {
+      "id": "review-gate",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "review"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.block_on_severity",
+          "--at",
+          "major",
+          "--node",
+          "review"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "done",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "review-gate"
+      ],
+      "spec": {
+        "cmd": [
+          "git",
+          "status",
+          "--short"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60,
+      "final": true
+    }
+  ]
+}

@@ -30,9 +30,22 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe run <flow> --estimate   # cost floor from prior runs; spends nothing
 .venv\Scripts\lockstep.exe run <flow> --replay <run_dir>  # serve recorded results; no spawns, no tokens
 .venv\Scripts\lockstep.exe verify-trace <run_dir>  # recompute the journal's hash chain (exit 5 if broken)
-.venv\Scripts\lockstep.exe doctor                  # probes harness stanzas; spends small model calls
+.venv\Scripts\lockstep.exe doctor                  # probes harness stanzas; spends small model calls; leaves runs\doctor-record.json
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
+.venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged
+.venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
+.venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
+python contrib\replay_suite.py                     # zero-token flow regression over recorded fixtures
+python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
+pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-waiting / failed / stopped
 ```
+
+Deterministic gate bodies live in `src/lockstep/gates/` (invoked as
+`python -m lockstep.gates.<name>` from shell gate nodes — tested programs, not
+inline one-liners; see FLOW-AUTHORING). Factory flows (release-cut, codemod
+propose/apply, triage-intake, research-report, status-digest, run-postmortem)
+live in `flows/factory/` with custom contracts in `flows/factory_contracts.py`;
+`contrib/bakeoff_gen.py` generates the harness-bakeoff flow from lockstep.toml.
 
 Live smoke (spends tokens): `$env:LOCKSTEP_LIVE="1"; .venv\Scripts\python.exe -m pytest tests\live`
 

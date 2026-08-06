@@ -18,7 +18,7 @@ from . import (
     __version__,
 )
 from .contracts import ContractError
-from .doctor import run_doctor
+from .doctor import doctor_advisory, run_doctor
 from .estimate import estimate_flow, render_estimate
 from .executors.fake import FakeExecutor
 from .executors.harness import HarnessError
@@ -45,7 +45,7 @@ from .state import (
     write_state,
 )
 from .store import FileStore
-from .taskgraph import FlowError, TaskGraph, load_flow, verify_flow, _topo_depths
+from .taskgraph import FlowError, TaskGraph, lint_flow, load_flow, verify_flow, _topo_depths
 from .workspace import GitWorkspace, NullWorkspace, WorkspaceError
 
 
@@ -219,6 +219,13 @@ def cmd_run(ns) -> int:
         args = _parse_args_kv(ns.arg or [], tg)
     except FlowError as e:
         return _fail(str(e), EXIT_VERIFY)
+    if not (ns.dry_run or ns.estimate or ns.replay):
+        # Zero-token operations never touch a harness — nagging them (or every
+        # replay_suite fixture, whose throwaway runs-dir has no record) would
+        # teach people to ignore the one line that matters before a real run.
+        advisory = doctor_advisory(Path(ns.runs_dir), config)
+        if advisory:
+            print(advisory)  # one line, advisory only (A4); never blocks
     if ns.dry_run or ns.estimate:
         _print_plan(tg, config)
         if ns.estimate:
@@ -313,9 +320,50 @@ def cmd_verify(ns) -> int:
     except ConfigError as e:
         return _fail(str(e), EXIT_CONFIG)  # §3: 7 = executor/config error, not 5
     code, _ = _do_verify(tg, config, repo_root)
+    if getattr(ns, "lint", False):
+        # Advisory only — the exit code is §6's alone, and a lint never moves it.
+        lints = lint_flow(tg, config)
+        for issue in lints:
+            print(f"lint {issue}")
+        if not config.executors:
+            print("lint: executor-config lints SKIPPED (no lockstep.toml stanzas found)")
+        if not lints:
+            print("lint: clean")
     if code == EXIT_OK:
         print(f"ok: {tg.name} ({len(tg.nodes)} nodes)")
     return code
+
+
+def cmd_gc(ns) -> int:
+    """A5: estimate-aware retention for runs/. Dry-run unless --apply."""
+    from .gc import apply_gc, plan_gc
+
+    plan = plan_gc(Path(ns.runs_dir), keep_per_flow=ns.keep_per_flow, keep_days=ns.keep_days)
+    for d, reason in plan.candidates:
+        print(f"delete: {d}")
+        print(f"  nothing protects it: {reason}")
+    print(
+        f"gc: {len(plan.candidates)} candidate(s), {plan.kept} kept, "
+        f"{plan.skipped} non-run dir(s) untouched"
+    )
+    if not plan.candidates:
+        return EXIT_OK
+    if ns.apply:
+        deleted = apply_gc(plan)
+        print(f"gc: deleted {deleted} run dir(s)")
+    else:
+        print("gc: dry run — nothing deleted (pass --apply to delete the above)")
+    return EXIT_OK
+
+
+def cmd_explain(ns) -> int:
+    """A1: which recorded hash inputs moved. Reads state only; never plans,
+    never spawns, never spends."""
+    from .explain import explain_node
+
+    return explain_node(
+        Path(ns.run_dir), ns.node_id, Path(ns.against) if ns.against else None
+    )
 
 
 def cmd_render(ns) -> int:
@@ -401,7 +449,7 @@ def cmd_doctor(ns) -> int:
         config = load_config(Path(ns.config) if ns.config else repo_root / "lockstep.toml")
     except ConfigError as e:
         return _fail(str(e), EXIT_CONFIG)
-    return run_doctor(config, repo_root=repo_root)
+    return run_doctor(config, repo_root=repo_root, runs_dir=Path(ns.runs_dir))
 
 
 EXAMPLE_TOML = '''# lockstep executor config (SPEC §8.2). An executor entry is an argv template:
@@ -552,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
     pv = sub.add_parser("verify", help="static verification only")
     pv.add_argument("flow")
     pv.add_argument("--repo-root", default=".")
+    pv.add_argument("--lint", action="store_true",
+                    help="also print advisory anti-pattern warnings; never changes the exit code")
     pv.set_defaults(fn=cmd_verify)
 
     prend = sub.add_parser("render", help="Mermaid to stdout")
@@ -572,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
     pd.add_argument("--config", default=None)
     pd.add_argument("--setup", action="store_true",
                     help="setup checks only: free, no model calls, no config needed")
+    pd.add_argument("--runs-dir", default="runs",
+                    help="where the success record lands (read by `run`'s staleness advisory)")
     pd.set_defaults(fn=cmd_doctor)
 
     pi = sub.add_parser("init", help="write lockstep.toml.example to ./lockstep.toml")
@@ -587,6 +639,21 @@ def main(argv: list[str] | None = None) -> int:
     pcan.add_argument("run_dir")
     pcan.add_argument("node_id")
     pcan.set_defaults(fn=cmd_cancel)
+
+    pgc = sub.add_parser("gc", help="estimate-aware retention for runs/ (dry-run unless --apply)")
+    pgc.add_argument("runs_dir", nargs="?", default="runs")
+    pgc.add_argument("--keep-per-flow", type=int, default=5,
+                     help="newest runs kept per flow definition (the history --estimate mines)")
+    pgc.add_argument("--keep-days", type=int, default=14)
+    pgc.add_argument("--apply", action="store_true", help="actually delete; default is a dry run")
+    pgc.set_defaults(fn=cmd_gc)
+
+    pex = sub.add_parser("explain", help="which recorded hash inputs moved for a node (A1)")
+    pex.add_argument("run_dir")
+    pex.add_argument("node_id")
+    pex.add_argument("--against", default=None, metavar="RUN_DIR",
+                     help="diff this run's recorded parts against another run dir's")
+    pex.set_defaults(fn=cmd_explain)
 
     ns = p.parse_args(argv)
     return ns.fn(ns)

@@ -1,0 +1,91 @@
+{
+  "format_version": "1.0",
+  "name": "run-postmortem",
+  "description": "The run-diagnostician, productised (D7): a deterministic facts collector over a FOREIGN run dir (statuses, attempts, errors, invalidation reasons, verdicts, and the journal's verify-trace outcome) -> a readonly analyst writes POSTMORTEM.md in which every claim cites a run-dir artifact as [artifact: <relpath>] -> a deterministic citation gate: every cited path must exist (heals the analyst once). Each expensive failure becomes a durable, evidence-checked document instead of a chat transcript. Reads the target run dir only; never resumes or edits it.",
+  "budget": {
+    "max_agent_spawns": 6,
+    "max_run_minutes": 45
+  },
+  "args": {
+    "run_dir": null
+  },
+  "nodes": [
+    {
+      "id": "facts",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/collectors.py",
+          "run-facts",
+          "{args.run_dir}"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300
+    },
+    {
+      "id": "analyst",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "facts"
+      ],
+      "spec": {
+        "persona": "reviewer",
+        "task": "Write the post-mortem for the lockstep run at (path as data): {args.run_dir}\n\nThe mechanical facts follow as data:\n{steps.facts.output}\n\nRead the run dir's own artifacts (result files, stderr logs, rotated attempts) to go from symptom to cause. EVERY claim about what happened must cite the artifact that shows it, as [artifact: <path relative to the run dir>] - a deterministic gate rejects the document if a cited path does not exist, and a post-mortem with no citations at all is rejected outright.\n\nWrite POSTMORTEM.md at the repo root: '## What happened' (timeline from the journal and statuses), '## Root cause' (the defect, not the symptom), '## What it cost' (attempts, heal rounds, spawns - from the facts only), '## What would have caught it sooner'.\n\nYour final response: one sentence naming the root cause.",
+        "writes": [
+          "POSTMORTEM.md"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 1200
+    },
+    {
+      "id": "citation-gate",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "analyst"
+      ],
+      "heal": {
+        "max_rounds": 1,
+        "targets": [
+          "analyst"
+        ]
+      },
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.citation_check",
+          "POSTMORTEM.md",
+          "--paths",
+          "{args.run_dir}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "deliver",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "citation-gate"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/deliver.py",
+          "POSTMORTEM.md"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60,
+      "final": true
+    }
+  ]
+}

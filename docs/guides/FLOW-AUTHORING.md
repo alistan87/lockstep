@@ -71,6 +71,50 @@ before spending tokens.
   `readonly_argv` (`readonly-unenforced`). Readonly nodes answer on stdout —
   they cannot write result files.
 
+## Advisory lints (`verify --lint`)
+
+Opt-in warnings, never a changed exit code, and NOT part of §6. The admission
+standard is part of the design: every lint names a recorded incident or a
+shipped rule, and a lint with neither does not get added
+(`PROPOSAL-factory-programme.md` §A2). Lints marked *(config)* need
+lockstep.toml stanzas; when they cannot run, `--lint` says so rather than
+reading as clean.
+
+| code | fires when | anchor |
+|---|---|---|
+| `lint-work-after-approval` | a harness/fake node is reachable strictly downstream of an approval | evidence-approval's rule: post-approval work runs in the human's own resume — seconds-long shell only (fine for a deliberately attended flow like sdlc-e2e) |
+| `lint-map-over-manifest` | a map fans out over a `PathManifest` node | file-audit's `path\|fingerprint` convention: item strings are the cache keys; bare paths never invalidate on content edits |
+| `lint-map-without-budget` | a flow has a map node but no explicit `budget` | fan-out width is decided by runtime data; the spawn budget is the only ceiling |
+| `lint-argv-prompt` *(config)* | a reachable stanza uses `prompt_via = "argv"` | the 59,028-char corrective prompt vs Windows' 32,767 cap; `ArgvTooLong` fails cleanly, stdin removes the ceiling |
+| `lint-serialized-map` | a map with `concurrency > 1` whose items are not readonly | items hold the `tree` token and serialize anyway; the fan-out buys nothing and reads as a hang |
+
+## The gate library (`python -m lockstep.gates.<name>`)
+
+Deterministic gate bodies as tested programs instead of embedded `python -c`
+one-liners. Each prints exactly one Verdict object to stdout and exits 0 (a
+blocking verdict is a result, not a failure); unreadable inputs become blocker
+findings, not crashes; thresholds and paths stay in the flow file as argv —
+the modules are tools, not policy. Shipped in the package (not `contrib/`) so
+starter flows work against any target repo where lockstep is importable.
+
+- `pytest_verdict` — ruff (if present) + pytest; blocker per failed check.
+- `block_on_severity --at major --node review` — Finding[] → Verdict at a
+  threshold; `--node` resolves a sibling's result via `LOCKSTEP_PHASE_DIR`.
+- `required_sections <doc> "Goal, Risks"` — markdown headings present.
+- `version_sync [--changelog F] [--tag vX.Y.Z]` — `__version__` vs pyproject
+  vs changelog heading vs intended tag (the r7 0.2.0-vs-0.3.1 class).
+- `citation_check <doc> --sources M | --paths ROOT [--per-section]` — `[S#]`
+  ids resolve / `[artifact: path]` files exist; a citation-free document is a
+  blocker. `--doc-node` / `--sources-node` read sibling results and flatten a
+  map's aggregated JSON back to prose.
+- `numbers_check <doc> --from collector.json | --from-node ID` — every
+  numeral in the prose appears in a collector's output (dates, times, dotted
+  versions, and integers ≤ 12 or year-like are allowed; `--allow REGEX` masks
+  more).
+- `coverage_delta --baseline F` — `totals.percent_covered` non-regression.
+- `fingerprint_check <orders.json>` — every entry's file still matches the
+  fingerprint it was approved against (the codemod-apply staleness gate).
+
 ## Interpolation (§7)
 
 `{args.K}` · `{steps.ID.output}` (raw text) · `{steps.ID.json}` /
