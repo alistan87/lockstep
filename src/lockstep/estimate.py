@@ -45,6 +45,11 @@ class Estimate:
     matched_runs: int
     matched_by: str  # "flow_hash" | "flow_name" | "none"
     nodes: list[NodeEstimate] = field(default_factory=list)
+    # A6: per-RUN totals across the matched runs, so the band reflects real
+    # whole-run variance (summing per-node minima would fabricate a run that
+    # never happened). One entry per matched run, same order.
+    run_agent_tasks: list[float] = field(default_factory=list)
+    run_wall_s: list[float] = field(default_factory=list)
 
     @property
     def without_history(self) -> list[str]:
@@ -61,6 +66,17 @@ class Estimate:
     @property
     def wall_s(self) -> float:
         return sum(n.wall_s for n in self.nodes)
+
+    def tasks_band(self) -> tuple[float, float] | None:
+        """(min, max) agent tasks over the matched runs; None without history."""
+        if not self.run_agent_tasks:
+            return None
+        return min(self.run_agent_tasks), max(self.run_agent_tasks)
+
+    def wall_band(self) -> tuple[float, float] | None:
+        if not self.run_wall_s:
+            return None
+        return min(self.run_wall_s), max(self.run_wall_s)
 
 
 def _load_runs(runs_dir: Path) -> list[RunState]:
@@ -113,6 +129,16 @@ def estimate_flow(tg: TaskGraph, runs_dir: Path, flow_hash: str) -> Estimate:
         matched_by = "flow_name" if matched else "none"
 
     est = Estimate(flow_name=tg.name, matched_runs=len(matched), matched_by=matched_by)
+    for state in matched:
+        # Per-run totals come from the RECORDED state, not the current tg:
+        # for a name-matched (edited) definition, filtering by current node
+        # ids would silently drop renamed nodes' spend from "what those runs
+        # used". The record's own kind/role decide token-costing.
+        est.run_agent_tasks.append(sum(
+            _node_spawns(r) for r in state.nodes.values()
+            if r.kind in TOKEN_COSTING_KINDS and r.role != "approval"
+        ))
+        est.run_wall_s.append(sum(_wall_seconds(r) for r in state.nodes.values()))
     for node in tg.nodes:
         token_costing = node.kind in TOKEN_COSTING_KINDS and node.role != "approval"
         ne = NodeEstimate(
@@ -177,6 +203,13 @@ def render_estimate(est: Estimate) -> str:
         f"  agent tasks: {est.agent_tasks:.0f}   all spawns: {est.spawns:.0f}   "
         f"wall: {_human_secs(est.wall_s)}"
     )
+    band, wall_band = est.tasks_band(), est.wall_band()
+    if band and est.matched_runs > 1:
+        lines.append(
+            f"  across those runs: {band[0]:.0f}-{band[1]:.0f} agent tasks, "
+            f"{_human_secs(wall_band[0])}-{_human_secs(wall_band[1])} wall — a range, "
+            "never a forecast"
+        )
     missing = est.without_history
     if missing:
         lines.append(

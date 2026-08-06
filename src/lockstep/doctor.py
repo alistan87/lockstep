@@ -17,12 +17,75 @@ import tempfile
 import time
 from pathlib import Path
 
-from .executors.harness import FOOTER, extract_last_json
+from .executors.harness import FOOTER, extract_last_json, stanza_digest
 from .executors.proc import spawn, wait_or_kill
 from .registry import ExecutorStanza, LockstepConfig
+from .state import utcnow
 
 PROBE = "Reply with the single word OK."
 PROBE_TIMEOUT_S = 300
+
+
+# --- the doctor record (A4) ----------------------------------------------------
+#
+# "Run doctor weekly" was discipline, not mechanism — the exact failure mode
+# the cockpit spent three tiers eliminating elsewhere. A successful probe now
+# leaves a record; `run` prints ONE advisory line when it is missing, stale,
+# or a stanza has changed since. Never blocks, never probes (a run start must
+# not spend model calls), and A1 of the amendments stands: not a pre-commit
+# hook either.
+
+
+def doctor_record_path(runs_dir: Path) -> Path:
+    return Path(runs_dir) / "doctor-record.json"
+
+
+def write_doctor_record(runs_dir: Path, config: LockstepConfig) -> None:
+    path = doctor_record_path(runs_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": utcnow(),
+        "stanzas": {name: stanza_digest(name, s) for name, s in config.executors.items()},
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def doctor_advisory(runs_dir: Path, config: LockstepConfig) -> str | None:
+    """One line, or None. Advisory only — every failure mode inside this
+    function degrades to silence, never to a blocked run."""
+    if not config.executors:
+        return None  # nothing doctor could probe; nothing to nag about
+    try:
+        record = json.loads(doctor_record_path(runs_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return (
+            "doctor: no successful probe recorded on this machine — run `lockstep doctor` "
+            "(weekly, and after any harness upgrade)"
+        )
+    recorded = record.get("stanzas") or {}
+    drifted = sorted(
+        name
+        for name, s in config.executors.items()
+        if recorded.get(name) != stanza_digest(name, s)
+    )
+    if drifted:
+        return (
+            f"doctor: stanza(s) {', '.join(drifted)} changed since the last successful probe "
+            "— run `lockstep doctor` before trusting them"
+        )
+    try:
+        import datetime as _dt
+
+        age = _dt.datetime.now(_dt.UTC) - _dt.datetime.fromisoformat(str(record.get("ts")))
+        days = age.total_seconds() / 86400
+    except (TypeError, ValueError):
+        return "doctor: the doctor record is unreadable — run `lockstep doctor`"
+    if days > config.doctor_max_age_days:
+        return (
+            f"doctor: last successful probe was {days:.0f} days ago "
+            f"(max_age_days = {config.doctor_max_age_days}) — run `lockstep doctor`"
+        )
+    return None
 
 
 def _probe_once(
@@ -223,7 +286,7 @@ def run_setup_checks(repo_root: Path, log=print) -> int:
 
 
 def run_doctor(config: LockstepConfig, log=print, repo_root: Path | None = None,
-               setup_only: bool = False) -> int:
+               setup_only: bool = False, runs_dir: Path | None = None) -> int:
     """Exit 7 if any configured executor fails, or any setup check fails."""
     log("--- setup (free) ---")
     setup_failures = run_setup_checks(repo_root or Path.cwd(), log=log)
@@ -267,4 +330,11 @@ def run_doctor(config: LockstepConfig, log=print, repo_root: Path | None = None,
             log(f"[{name}] readonly_argv {'ok' if ok_ro else 'FAIL'}: {msg_ro}")
             if not ok_ro:
                 failures += 1
+    if not failures and not setup_failures and runs_dir is not None:
+        # A4: a clean bill leaves a record, so `run` can tell fresh from stale.
+        try:
+            write_doctor_record(runs_dir, config)
+            log(f"doctor record: {doctor_record_path(runs_dir)}")
+        except OSError as e:
+            log(f"warning: could not write the doctor record: {e}")
     return 7 if (failures or setup_failures) else 0

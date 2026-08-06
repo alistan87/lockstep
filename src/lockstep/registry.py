@@ -7,6 +7,7 @@ config edit, never a code change. Spawned via argv lists only — never shell=Tr
 from __future__ import annotations
 
 import hashlib
+import sys
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -30,6 +31,9 @@ class LockstepConfig(BaseModel):
     executors: dict[str, ExecutorStanza] = {}
     digest: str = ""  # sha256 of the config file bytes; a harness fingerprint part
     path: str = ""
+    # [doctor] max_age_days: how old the last successful doctor probe may be
+    # before `run` prints its one advisory line (A4). Advisory only.
+    doctor_max_age_days: int = 7
 
 
 class ConfigError(Exception):
@@ -44,11 +48,22 @@ def load_config(path: Path | None) -> LockstepConfig:
         data = tomllib.loads(raw.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         raise ConfigError(f"cannot parse {path}: {e}")
+    max_age = (data.get("doctor") or {}).get("max_age_days", 7)
+    if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0:
+        # The doctor advisory is advisory-only; a typo in its knob must not
+        # hard-block every run through config validation.
+        print(
+            f"lockstep: ignoring [doctor] max_age_days = {max_age!r} (not a "
+            "non-negative integer); using 7",
+            file=sys.stderr,
+        )
+        max_age = 7
     try:
         cfg = LockstepConfig.model_validate(
             {
                 "default": data.get("default"),
                 "executors": data.get("executors", {}),
+                "doctor_max_age_days": max_age,
             }
         )
     except ValidationError as e:

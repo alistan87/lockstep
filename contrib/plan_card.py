@@ -94,10 +94,27 @@ def history(tg: TaskGraph, runs_dir: Path, flow_hash: str) -> list[str]:
             "prior runs of this flow: none on this machine",
             "  the ceiling above is the only number available - there is no history to check it against",
         ]
+    band, wall_band = est.tasks_band(), est.wall_band()
+    if band and est.matched_runs > 1 and band[0] != band[1]:
+        # The TRUE median of per-run totals — est.agent_tasks (a sum of
+        # per-node medians) can fall outside the band it would sit beside.
+        import statistics
+
+        median_tasks = statistics.median(est.run_agent_tasks)
+        used = (
+            f"  they used {band[0]:.0f}-{band[1]:.0f} agent tasks "
+            f"(median {median_tasks:.0f}) and "
+            f"{_human_secs(wall_band[0])}-{_human_secs(wall_band[1])} of node time"
+        )
+    else:
+        used = (
+            f"  they used about {est.agent_tasks:.0f} agent tasks and "
+            f"{_human_secs(est.wall_s)} of node time"
+        )
     lines = [
         f"prior runs of this flow: {est.matched_runs} "
         f"(matched by {est.matched_by.replace('_', ' ')})",
-        f"  they used about {est.agent_tasks:.0f} agent tasks and {_human_secs(est.wall_s)} of node time",
+        used,
     ]
     missing = est.without_history
     if missing:
