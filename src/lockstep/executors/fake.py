@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..interpolate import render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
+from ..state import part_digest
 from ..taskgraph import Node
 from .shell import resolve_ctx_of
 
@@ -82,6 +83,11 @@ class FakeExecutor:
         )
         heal = f"\n{ctx.heal_text}" if ctx.heal_text else ""
         steer = f"\n{ctx.steer_text}" if ctx.steer_text else ""
+        hash_detail = {"prompt.task": part_digest(rendered.hash_text)}
+        if ctx.heal_text:
+            hash_detail["prompt.heal"] = part_digest(ctx.heal_text)
+        if ctx.steer_text:
+            hash_detail["prompt.steer"] = part_digest(ctx.steer_text)
         return PlannedWork(
             render=rendered.prompt_text + heal + steer,
             fingerprint_parts=[
@@ -91,6 +97,7 @@ class FakeExecutor:
             costs_tokens=spec.costs_tokens,
             exclusive=[] if spec.readonly else ["tree"],
             meta={
+                "hash_detail": hash_detail,
                 "node_id": node.id,
                 "spec": spec.model_dump(),
                 "output": node.output,

@@ -37,7 +37,9 @@ from .state import (
     ItemRecord,
     append_event,
     compose_hash,
+    diff_labels,
     emit_span,
+    label_parts,
     mark_mailbox_consumed,
     read_mailbox,
     render_steering,
@@ -359,6 +361,7 @@ class Engine:
                     for m in read_mailbox(self.store.run_dir, node.id)
                 ):
                     rec.status = "pending"  # steered done node re-runs (r6 C2)
+                    rec.invalidated_by = ["unconsumed steering message (r6 C2)"]
                 else:
                     self.needs_check.add(node.id)
             elif rec.status == "skipped":
@@ -400,6 +403,9 @@ class Engine:
                         )
                     ):
                         rec.status = "pending"
+                        rec.invalidated_by = [
+                            "external edits to the working tree (lineage-head fingerprint)"
+                        ]
                         self.needs_check.discard(node.id)
         self.store.mutate(lambda s: None)  # persist
 
@@ -445,6 +451,8 @@ class Engine:
                         continue
                     executor = self.registry.get(node.kind)
                     invalidate = executor is None or not getattr(executor, "cacheable", False)
+                    if invalidate:
+                        rec.invalidated_by = None  # by design (shell/unknown), not by hash
                     if not invalidate:
                         if node.role == "map":
                             # A done map always re-enters _run_map: the node-level
@@ -452,6 +460,7 @@ class Engine:
                             # PER-ITEM hashes (which render the body) do the
                             # caching, so this costs nothing for unchanged items.
                             invalidate = True
+                            rec.invalidated_by = None  # per-item hashes decide
                         else:
                             try:
                                 ctx = self._render_ctx(node, self.store.phase_dir(node.id))
@@ -460,13 +469,43 @@ class Engine:
                                     node.role, node.kind, node.contract, work.fingerprint_parts
                                 )
                                 invalidate = new_hash != rec.input_hash
-                            except (SkippedReference, InterpolationError, Exception):
+                                if invalidate:
+                                    # A1: name WHICH part moved at the decision
+                                    # site — a wrongly re-billed node is
+                                    # otherwise indistinguishable from an
+                                    # ordinary cache miss (the heal-text lesson).
+                                    rec.invalidated_by = diff_labels(
+                                        rec.hash_parts,
+                                        label_parts(
+                                            work.fingerprint_parts,
+                                            work.meta.get("hash_detail"),
+                                        ),
+                                    )
+                            except (SkippedReference, InterpolationError, Exception) as e:
                                 invalidate = True
+                                rec.invalidated_by = [
+                                    f"replan failed: {type(e).__name__}: {e}"
+                                ]
                     self.needs_check.discard(node.id)
                     if invalidate:
                         rec.status = "pending"
                         self.store.record(rec)
+                        if rec.invalidated_by:
+                            append_event(
+                                self.store.run_dir,
+                                {
+                                    "node": node.id,
+                                    "status": "pending",
+                                    "invalidated_by": rec.invalidated_by,
+                                },
+                            )
                     else:
+                        if rec.invalidated_by is not None:
+                            # This revalidation matched: a reason from an earlier
+                            # round would read as current in `explain` (the
+                            # journal keeps the history).
+                            rec.invalidated_by = None
+                            self.store.record(rec)
                         append_event(self.store.run_dir, {"node": node.id, "status": "done", "skipped_by_hash": True})
                     changed = progressed = True
         return progressed
@@ -569,6 +608,7 @@ class Engine:
             return
         rec = self._rec(node.id)
         rec.input_hash = compose_hash(node.role, node.kind, node.contract, work.fingerprint_parts)
+        rec.hash_parts = label_parts(work.fingerprint_parts, work.meta.get("hash_detail"))
         self.store.record(rec)
         decision = self.policy.allows(node, ACTOR_LOCAL_USER)
         if not decision.allowed:
@@ -954,16 +994,14 @@ class Engine:
             raise InterpolationError(f"node {node.id!r}: `over` did not resolve to a JSON array")
         return value
 
+    def _map_parts(self, node: Node, array) -> list[str]:
+        return [
+            f"over:{compact_json(array)}",
+            f"spec:{json.dumps(node.spec, sort_keys=True, ensure_ascii=False)}",
+        ]
+
     def _map_node_hash(self, node: Node, array) -> str:
-        return compose_hash(
-            node.role,
-            node.kind,
-            node.contract,
-            [
-                f"over:{compact_json(array)}",
-                f"spec:{json.dumps(node.spec, sort_keys=True, ensure_ascii=False)}",
-            ],
-        )
+        return compose_hash(node.role, node.kind, node.contract, self._map_parts(node, array))
 
     def _run_map(self, node: Node) -> None:
         executor = self.registry.get(node.kind)
@@ -977,6 +1015,7 @@ class Engine:
             return
         rec = self._rec(node.id)
         rec.input_hash = self._map_node_hash(node, array)
+        rec.hash_parts = label_parts(self._map_parts(node, array))
         self.store.record(rec)
         contract_ref = resolve_contract(node.contract, self.tg.contracts_module) if node.output == "json" and node.contract else None
         slots: list = [None] * len(array)
@@ -1028,6 +1067,9 @@ class Engine:
                 return
             irec.status = "running"
             irec.input_hash = item_hash
+            irec.hash_parts = label_parts(
+                work.fingerprint_parts + [f"index:{i}"], work.meta.get("hash_detail")
+            )
             self.store.record(rec)
             tokens = sorted(set(node.exclusive) | set(work.exclusive))
             locks = self._acquire(tokens)  # items inherit the node's tokens:

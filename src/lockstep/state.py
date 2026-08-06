@@ -38,6 +38,57 @@ def compose_hash(role: str, kind: str, contract: str | None, parts: list[str]) -
     return hashlib.sha256("\x00".join(pieces).encode("utf-8")).hexdigest()
 
 
+_LABEL_RE = re.compile(r"^[a-z][a-z0-9_.\-]*:")
+
+
+def part_digest(part: str) -> str:
+    return hashlib.sha256(part.encode("utf-8")).hexdigest()
+
+
+def label_parts(parts: list[str], detail: dict[str, str] | None = None) -> dict[str, str]:
+    """Labelled digests of the fingerprint parts (the cache-miss explainer).
+
+    A RECORD of the inputs to `compose_hash`, never an input to it: M3 hash
+    composition does not move. Digests rather than raw parts, deliberately —
+    parts embed full prompts and upstream results, and state.json must not
+    become a second copy of sensitive text. `detail` carries executor-supplied
+    sub-part digests (e.g. prompt.heal) that are folded INSIDE a top-level
+    part, so a reader can see which component of the prompt moved.
+    """
+    out: dict[str, str] = {}
+
+    def put(label: str, digest: str) -> None:
+        key, n = label, 2
+        while key in out:
+            key, n = f"{label}#{n}", n + 1
+        out[key] = digest
+
+    for part in parts:
+        m = _LABEL_RE.match(part)
+        put(m.group(0)[:-1] if m else "part", part_digest(part))
+    for k, v in (detail or {}).items():
+        put(k, v)
+    return out
+
+
+def diff_labels(old: dict[str, str] | None, new: dict[str, str] | None) -> list[str]:
+    """Which labelled parts differ between two recordings. `None` on either
+    side means the run predates part recording (the UNCHAINED precedent)."""
+    if old is None or new is None:
+        return ["unrecorded (run predates part recording)"]
+    out: list[str] = []
+    for k in sorted(set(old) | set(new)):
+        if k not in new:
+            out.append(f"{k}: only in old")
+        elif k not in old:
+            out.append(f"{k}: only in new")
+        elif old[k] != new[k]:
+            out.append(f"{k}: changed")
+    return out or [
+        "no labelled part differs (role, kind, contract, or an unlabelled part moved)"
+    ]
+
+
 # --- records (SPEC §10.2, AMENDMENTS A3) ---------------------------------------
 
 class ItemRecord(BaseModel):
@@ -46,6 +97,9 @@ class ItemRecord(BaseModel):
     result_path: str | None = None
     attempts: int = 0
     error: str | None = None
+    # label -> sha256(part) for the parts that composed input_hash (see
+    # `label_parts`). A record for `lockstep explain`; never a hash input.
+    hash_parts: dict[str, str] | None = None
 
 
 class PhaseRecord(BaseModel):
@@ -62,6 +116,13 @@ class PhaseRecord(BaseModel):
     result_path: str | None = None
     error: str | None = None
     items: dict[str, ItemRecord] = {}  # map role: zero-based index -> record
+    # label -> sha256(part) for the parts that composed input_hash (see
+    # `label_parts`). A record for `lockstep explain`; never a hash input.
+    hash_parts: dict[str, str] | None = None
+    # Why the LAST revalidation re-ran this done node: the labels that moved.
+    # Set only on a hash-mismatch (or failed replan) at revalidation time —
+    # a wrongly re-billed node is otherwise silent (the r7 heal-text lesson).
+    invalidated_by: list[str] | None = None
 
 
 class RunState(BaseModel):

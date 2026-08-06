@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from ..interpolate import fence_context_file, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
+from ..state import part_digest
 from ..taskgraph import Node, RetrySpec
 from .proc import resolve_inside, spawn, wait_or_kill
 from .shell import node_env, resolve_ctx_of
@@ -191,6 +192,10 @@ class HarnessExecutor:
         )
         prompt_parts: list[str] = []
         hash_parts: list[str] = []
+        # Sub-part digests for the composed prompt: the whole prompt is ONE
+        # fingerprint part, so without these a heal round and a task edit are
+        # indistinguishable in `lockstep explain`. Recorded, never hashed.
+        hash_detail: dict[str, str] = {}
         if persona_body and not stanza.persona_flag:
             # Prepending is the guaranteed path: flows stay portable across
             # harnesses with no persona concept (SPEC §8.4).
@@ -198,6 +203,7 @@ class HarnessExecutor:
             hash_parts.append(persona_body)
         prompt_parts.append(rendered.prompt_text)
         hash_parts.append(rendered.hash_text)
+        hash_detail["prompt.task"] = part_digest(rendered.hash_text)
         for rel in spec.context:
             fpath = resolve_inside(self.repo_root, rel)
             content = fpath.read_text(encoding="utf-8", errors="replace")
@@ -206,16 +212,19 @@ class HarnessExecutor:
             )
             prompt_parts.append(prompt_block)
             hash_parts.append(hash_block)
+            hash_detail[f"prompt.context:{rel}"] = part_digest(hash_block)
         if ctx.heal_text:
             # Pre-composed by the engine: steering instruction outside the data
             # fence, gate findings inside it (SPEC §9.4.6).
             prompt_parts.append(ctx.heal_text)
             hash_parts.append(ctx.heal_text)
+            hash_detail["prompt.heal"] = part_digest(ctx.heal_text)
         if ctx.steer_text:
             # r6 C2: the whole-mailbox steering block; folds into the hash so a
             # new message correctly invalidates while a resume replans stably.
             prompt_parts.append(ctx.steer_text)
             hash_parts.append(ctx.steer_text)
+            hash_detail["prompt.steer"] = part_digest(ctx.steer_text)
         result_file = "result.json" if node.output == "json" else "result.txt"
         footer = FOOTER_READONLY if spec.readonly else FOOTER
         prompt_parts.append(
@@ -250,6 +259,7 @@ class HarnessExecutor:
             costs_tokens=True,
             exclusive=[] if spec.readonly else ["tree"],
             meta={
+                "hash_detail": hash_detail,
                 "argv_template": argv_template,
                 "writes": list(spec.writes),
                 "prompt_via": stanza.prompt_via,

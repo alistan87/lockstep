@@ -1,0 +1,104 @@
+"""Shared helpers for the gate library. See the package docstring for the
+conventions every gate follows."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+SEVERITIES = ("blocker", "major", "minor", "nit")  # most to least severe
+
+
+def finding(
+    severity: str,
+    category: str,
+    file: str,
+    claim: str,
+    evidence: str,
+    fix_hint: str,
+    line: int | None = None,
+) -> dict:
+    return {
+        "severity": severity,
+        "category": category,
+        "file": file,
+        "line": line,
+        "claim": claim,
+        "evidence": evidence,
+        "fix_hint": fix_hint,
+    }
+
+
+def emit(findings: list[dict], pass_reason: str, block_reason: str | None = None) -> int:
+    """Print the Verdict and return the gate's exit code (always 0: a blocking
+    verdict is a result, not a failure)."""
+    verdict = "pass" if not findings else "block"
+    reason = pass_reason if verdict == "pass" else (block_reason or f"{len(findings)} finding(s)")
+    print(
+        json.dumps(
+            {"findings": findings, "verdict": verdict, "reason": reason}, ensure_ascii=False
+        )
+    )
+    return 0
+
+
+def resolve_node_result(node_id: str) -> tuple[Path | None, dict | None]:
+    """A sibling node's result file, via the LOCKSTEP_PHASE_DIR the spawn
+    exports: <run_dir>/phases/<node>/result.json|result.txt (§8.3 order).
+    Returns (path, None) or (None, blocker_finding)."""
+    phase = os.environ.get("LOCKSTEP_PHASE_DIR", "")
+    if not phase:
+        return None, finding(
+            "blocker", "gate-error", ".", "LOCKSTEP_PHASE_DIR is not set",
+            "node-relative arguments need the lockstep spawn environment",
+            "pass an explicit file path instead",
+        )
+    node_dir = Path(phase).parent / node_id
+    for name in ("result.json", "result.txt"):
+        p = node_dir / name
+        if p.exists():
+            return p, None
+    return None, finding(
+        "blocker", "gate-error", str(node_dir), f"node {node_id!r} left no result",
+        "neither result.json nor result.txt exists in its phase dir",
+        "check the node id and that it ran",
+    )
+
+
+def flatten_text(value) -> str:
+    """Join every string leaf of a JSON value with blank lines — a map node's
+    aggregated result is an array of texts, and gates that scan prose need the
+    real newlines back."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n\n".join(flatten_text(v) for v in value)
+    if isinstance(value, dict):
+        return "\n\n".join(flatten_text(v) for v in value.values())
+    return ""
+
+
+def read_doc(path: str) -> tuple[str | None, dict | None]:
+    """BOM- and UTF-16-tolerant text read (documents arrive from editors the
+    flow does not control). Returns (text, None) or (None, blocker_finding)."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as e:
+        return None, finding(
+            "blocker", "unreadable", str(path), "file could not be read", str(e),
+            "check the path argument",
+        )
+    try:
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = raw.decode("utf-16")
+        else:
+            text = raw.decode("utf-8-sig")
+    except ValueError:
+        text = raw.decode("utf-8", errors="replace")
+    if not text.strip():
+        return None, finding(
+            "blocker", "empty-doc", str(path), "file is empty",
+            f"{len(raw)} byte(s), no text content", "write the document before gating it",
+        )
+    return text, None

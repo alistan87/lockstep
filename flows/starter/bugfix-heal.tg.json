@@ -87,8 +87,12 @@
       "spec": {
         "cmd": [
           "python",
-          "-c",
-          "import os, json, pathlib\np = pathlib.Path(os.environ['LOCKSTEP_PHASE_DIR']).parent / 'review' / 'result.json'\ntry:\n    findings = json.loads(p.read_text(encoding='utf-8'))\nexcept Exception as e:\n    findings = [{'severity': 'blocker', 'category': 'gate-error', 'file': str(p), 'line': None, 'claim': 'could not read review findings', 'evidence': str(e), 'fix_hint': 'inspect the review node phase dir'}]\nif not isinstance(findings, list):\n    findings = [{'severity': 'blocker', 'category': 'gate-error', 'file': str(p), 'line': None, 'claim': 'review result is not a Finding array', 'evidence': type(findings).__name__, 'fix_hint': 'inspect the review node phase dir'}]\nkept = [f for f in findings if isinstance(f, dict) and f.get('severity') in ('blocker', 'major')]\nverdict = 'block' if kept else 'pass'\nreason = str(len(kept)) + ' blocking finding(s) - fix and resume' if kept else 'no blocker/major findings'\nprint(json.dumps({'findings': kept, 'verdict': verdict, 'reason': reason}))"
+          "-m",
+          "lockstep.gates.block_on_severity",
+          "--at",
+          "major",
+          "--node",
+          "review"
         ]
       },
       "output": "json",

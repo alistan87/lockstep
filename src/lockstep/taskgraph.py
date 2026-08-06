@@ -478,7 +478,8 @@ def verify_flow(
                 "this errors at run time (exit 7)",
             )
 
-    # 10. heal targets
+    # 10. heal targets (lint_flow's advisory pass lives separately: §6 is
+    # frozen, and opt-in warnings must not drift into it)
     target_owner: dict[str, str] = {}
     for n in tg.nodes:
         if n.role != "gate":
@@ -505,5 +506,98 @@ def verify_flow(
                     "overlapping heal scopes have no sound restore ordering",
                 )
             target_owner.setdefault(t, n.id)
+
+    return issues
+
+
+# --- advisory lints (`verify --lint`) -------------------------------------------
+#
+# NOT part of §6: every finding here is a warning, never changes the exit code,
+# and encodes a rule with a recorded incident or a shipped convention behind it
+# (see docs/proposals/PROPOSAL-factory-programme.md §A2 for each anchor). A lint
+# with no incident behind it does not get added.
+
+_TOKEN_KINDS = ("harness", "fake")  # kinds that spend tokens
+
+
+def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
+    """Advisory warnings only. `config` (a LockstepConfig) enables the
+    executor-config lints; without it they are skipped, and the caller should
+    say so — a lint silently not run reads as clean."""
+    issues: list[VerifyIssue] = []
+    warn = lambda code, msg: issues.append(VerifyIssue("warning", code, msg))
+    idset = {n.id for n in tg.nodes}
+    approvals = {n.id for n in tg.nodes if n.role == "approval"}
+    by_contract = {n.id: n.contract for n in tg.nodes}
+
+    # W1 — token-spending work strictly downstream of an approval. Everything
+    # after an approval runs inside the human's own resume process (the
+    # evidence-approval rule): only seconds-long shell nodes belong there.
+    for n in tg.nodes:
+        if n.kind in _TOKEN_KINDS and n.role != "approval":
+            upstream_approvals = approvals & _ancestors(tg, n.id)
+            if upstream_approvals:
+                warn(
+                    "lint-work-after-approval",
+                    f"node {n.id!r} ({n.kind}) runs downstream of approval "
+                    f"{sorted(upstream_approvals)}; everything after an approval executes in "
+                    "the human's own resume — keep it to seconds-long shell nodes (fine for "
+                    "a deliberately ATTENDED flow like sdlc-e2e; the cockpit's detached "
+                    "pattern wants the approval last)",
+                )
+
+    for n in tg.nodes:
+        if n.role != "map":
+            continue
+        # W2 — map over a PathManifest: per-item cache keys are the item
+        # STRINGS. Bare paths do not invalidate when file content changes;
+        # fingerprint them (the file-audit `path|fingerprint` convention).
+        m = _OVER_RE.match(n.over or "")
+        if m and by_contract.get(m.group(1)) == "PathManifest":
+            warn(
+                "lint-map-over-manifest",
+                f"map node {n.id!r} fans out over PathManifest node {m.group(1)!r}: item "
+                "strings are the per-item cache keys, so bare paths will NOT re-run when "
+                "file content changes — emit 'path|content-fingerprint' entries",
+            )
+        # W5 — a parallel map whose items all hold the tree token serializes;
+        # the fan-out buys nothing and reads as a hang.
+        eff_concurrency = n.concurrency if n.concurrency is not None else tg.concurrency
+        if n.kind in _TOKEN_KINDS and not n.spec.get("readonly") and eff_concurrency > 1:
+            warn(
+                "lint-serialized-map",
+                f"map node {n.id!r} has concurrency {eff_concurrency} but its items are not "
+                "readonly, so each holds the 'tree' token and they serialize anyway; set "
+                "spec.readonly (with a readonly_argv stanza) or concurrency 1",
+            )
+
+    # W3 — a map's width is data-dependent at runtime; the spawn budget is the
+    # only ceiling, so an explicit one beats the default.
+    if any(n.role == "map" for n in tg.nodes) and "budget" not in tg.model_fields_set:
+        warn(
+            "lint-map-without-budget",
+            "flow contains a map node but declares no budget; fan-out width is decided by "
+            "runtime data, so set budget.max_agent_spawns explicitly",
+        )
+
+    # W4 (config) — argv prompting caps corrective prompts at the platform
+    # command-line limit (observed live at 59,028 chars vs Windows' 32,767);
+    # prompt_via = "stdin" removes the ceiling entirely.
+    if config is not None and getattr(config, "executors", None):
+        flagged: set[str] = set()
+        for n in tg.nodes:
+            if n.kind != "harness" or n.role == "approval":
+                continue
+            name = n.spec.get("executor") or tg.executor_default or config.default
+            stanza = config.executors.get(name) if name else None
+            if stanza is not None and stanza.prompt_via == "argv" and name not in flagged:
+                flagged.add(name)
+                warn(
+                    "lint-argv-prompt",
+                    f"stanza {name!r} uses prompt_via = \"argv\": corrective re-spawn prompts "
+                    "are several times the original and can exceed the platform argv limit "
+                    "(ArgvTooLong fails cleanly, but prompt_via = \"stdin\" removes the "
+                    "ceiling)",
+                )
 
     return issues
