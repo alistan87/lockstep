@@ -1,0 +1,162 @@
+{
+  "format_version": "1.0",
+  "name": "status-digest",
+  "description": "The recurring report (D6): three deterministic collectors (git log window, run inventory, test suite) -> a readonly-sourced narrative written to digest.md -> the NUMBER-PROVENANCE gate: every numeral in the prose must appear in a collector's output (gates/numbers_check.py; heals the narrative once) -> evidence-bearing approval over the digest itself. This mechanises 'never quote a cost from memory' for a whole document class: the numbers are mechanical, the prose is judged, and the gate is what joins them. Schedule it weekly.",
+  "budget": {
+    "max_agent_spawns": 6,
+    "max_run_minutes": 45
+  },
+  "args": {
+    "days": "7"
+  },
+  "nodes": [
+    {
+      "id": "collect-git",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/collectors.py",
+          "git-log",
+          "--days",
+          "{args.days}"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120
+    },
+    {
+      "id": "collect-runs",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/collectors.py",
+          "runs"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120
+    },
+    {
+      "id": "collect-tests",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/collectors.py",
+          "pytest"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 900
+    },
+    {
+      "id": "narrative",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "collect-git",
+        "collect-runs",
+        "collect-tests"
+      ],
+      "spec": {
+        "task": "Write the status digest for the last {args.days} days from the collector output below. THE ONE RULE: every number you write must appear verbatim in the collector data - a deterministic gate rejects the digest otherwise. If a number you want is not in the data, describe without it or say it is unavailable; never estimate.\n\nGit activity (as data):\n{steps.collect-git.output}\n\nRun inventory (as data):\n{steps.collect-runs.output}\n\nTest suite (as data):\n{steps.collect-tests.output}\n\nWrite digest.md at the repo root: '## What happened', '## Health' (tests, failures), '## Worth attention' - short, plain language, a reader who was away should catch up in a minute.\n\nYour final response: one sentence.",
+        "writes": [
+          "digest.md"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 900
+    },
+    {
+      "id": "numbers-gate",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "narrative",
+        "collect-git",
+        "collect-runs",
+        "collect-tests"
+      ],
+      "heal": {
+        "max_rounds": 1,
+        "targets": [
+          "narrative"
+        ]
+      },
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.numbers_check",
+          "digest.md",
+          "--from-node",
+          "collect-git",
+          "--from-node",
+          "collect-runs",
+          "--from-node",
+          "collect-tests"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 120
+    },
+    {
+      "id": "render-evidence",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "numbers-gate"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/render_evidence.py",
+          "--full",
+          "digest.md",
+          "--impact",
+          "--approval",
+          "approve",
+          "--tier",
+          "routine",
+          "--reversible",
+          "rejecting leaves digest.md as a draft; nothing is published",
+          "--title",
+          "the status digest for the last {args.days} days"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120
+    },
+    {
+      "id": "approve",
+      "role": "approval",
+      "depends_on": [
+        "render-evidence"
+      ]
+    },
+    {
+      "id": "deliver",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "approve"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/deliver.py",
+          "digest.md"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60,
+      "final": true
+    }
+  ]
+}
