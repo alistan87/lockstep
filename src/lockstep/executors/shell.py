@@ -8,6 +8,7 @@ test suite (SPEC §0.1 item 7, §9.2).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -104,6 +105,17 @@ class ShellExecutor:
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
         argv = list(work.render)  # type: ignore[arg-type]
+        # A bare "python"/"python3" argv[0] resolves to the interpreter running
+        # lockstep. Flows call `python -m lockstep.gates.*` (and contrib
+        # scripts that import lockstep); whichever python happens to be on the
+        # spawned PATH usually cannot import it — the driver is typically
+        # invoked as .venv\Scripts\lockstep.exe with no venv activated. At
+        # EXECUTE time only: the planned argv (and therefore input_hash) keeps
+        # the portable "python", never a machine-specific venv path. A pathy
+        # or versioned interpreter ("./py", "python3.11") is left alone.
+        # Deviation logged in docs/spec/DEVIATIONS.md (2026-08-05).
+        if argv and argv[0].lower() in ("python", "python3"):
+            argv[0] = sys.executable
         stdout_path = phase_dir / "stdout.log"
         stderr_path = phase_dir / "stderr.log"
         # r5 A4: rotate prior-attempt logs (best-effort) — shell retries were

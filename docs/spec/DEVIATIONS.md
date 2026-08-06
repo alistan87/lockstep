@@ -201,3 +201,18 @@ file records implementation-level departures below that bar.
   that accurately. Also load-bearing for `contrib/approve.ps1`, which must not
   ask an absent human why they rejected. Pinned by
   `tests/test_approval_cockpit.py::test_eof_is_recorded_as_auto_rejected_not_as_a_decision`.
+
+- **2026-08-05 — a bare `"python"`/`"python3"` argv[0] in a shell node resolves
+  to `sys.executable` at EXECUTE time** (`executors/shell.py`). Why: the gate
+  library ships as `python -m lockstep.gates.*` and the contrib collectors
+  import lockstep, but the driver is documented to run as
+  `.venv\Scripts\lockstep.exe` with no venv activated, so the PATH `python` is
+  routinely an interpreter that cannot import lockstep — every rewritten
+  starter flow and every factory flow would fail at its first gate (found by
+  the factory-programme adversarial review). Execute-time only, deliberately:
+  the PLANNED argv — and therefore `input_hash` and the `argv:` fingerprint
+  part (§9.2) — keeps the portable `"python"`, never a machine-specific venv
+  path, so recorded runs replay across machines. A pathy or versioned
+  interpreter (`./py`, `python3.11`, `C:\Python\python.exe`) is spawned
+  exactly as written. Pinned by
+  `tests/test_gates.py::test_shell_resolves_bare_python_to_the_driver_interpreter`.
