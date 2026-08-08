@@ -307,6 +307,113 @@ def test_a_half_written_state_file_never_raises(tmp_path):
     assert mv.mission_lines(run) == ["(reading state...)"]
 
 
+# ------------------------------------------------------------ the cost panel
+
+COST_FIELDS = """\
+[claude]
+input_tokens = "usage.input_tokens"
+output_tokens = "usage.output_tokens"
+cost = "total_cost_usd"
+"""
+
+
+def envelope(cost: float, model: str = "claude-opus-5") -> str:
+    return json.dumps({
+        "type": "result", "usage": {"input_tokens": 10, "output_tokens": 5},
+        "total_cost_usd": cost, "modelUsage": {model: {"costUSD": cost}},
+        "result": "OK",
+    })
+
+
+def make_cost_run(tmp_path) -> Path:
+    flow = {"nodes": [
+        {"id": "plan", "role": "work", "kind": "harness"},
+        {"id": "impl", "role": "work", "kind": "harness", "depends_on": ["plan"]},
+        {"id": "audit", "role": "gate", "kind": "harness", "depends_on": ["plan"]},
+        {"id": "ship", "role": "work", "kind": "shell", "depends_on": ["impl", "audit"]},
+    ]}
+    run = make_run(tmp_path, {
+        "plan": rec("done"),
+        "impl": rec("done", attempts=2),
+        "audit": rec("done"),
+        "ship": rec("done", kind="shell"),
+    }, flow=flow)
+    for node, cost in (("plan", 0.10), ("audit", 0.20)):
+        d = run / "phases" / node
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "argv.json").write_text(json.dumps(["claude", "-p"]), encoding="utf-8")
+        (d / "stdout.log").write_text(envelope(cost), encoding="utf-8")
+    impl = run / "phases" / "impl"
+    impl.mkdir(parents=True, exist_ok=True)
+    (impl / "argv.json").write_text(json.dumps(["claude", "-p"]), encoding="utf-8")
+    (impl / "stdout-attempt1.log").write_text(envelope(0.30), encoding="utf-8")
+    (impl / "stdout.log").write_text(envelope(0.40), encoding="utf-8")
+    return run
+
+
+@pytest.fixture()
+def cost_cwd(tmp_path, monkeypatch):
+    """Pin the field map: load_field_maps(None) prefers ./cost-fields.toml, and
+    the developer machine may carry a local contrib/cost-fields.toml."""
+    (tmp_path / "cost-fields.toml").write_text(COST_FIELDS, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_cost_lines_history_counts_every_attempt(tmp_path, cost_cwd):
+    run = make_cost_run(tmp_path)
+    text = "\n".join(mv.cost_lines(run, mode="history", now=NOW))
+    assert "$1.00" in text                      # 0.10 + 0.30 + 0.40 + 0.20
+    assert "history: every attempt is counted" in text
+    assert "claude-opus-5" in text
+    assert "↻1" in text                         # impl retried once
+    # per-attempt history under the retried node, kept attempt last
+    assert "attempt 1  claude-opus-5  $0.30  (superseded)" in text
+    assert "kept  claude-opus-5  $0.40" in text
+
+
+def test_cost_lines_head_counts_kept_attempts_only(tmp_path, cost_cwd):
+    run = make_cost_run(tmp_path)
+    text = "\n".join(mv.cost_lines(run, mode="head", now=NOW))
+    assert "$0.70" in text                      # 0.10 + 0.40 + 0.20 — no attempt 1
+    assert "head: kept attempts only" in text
+    assert "(superseded)" not in text           # sub-lines are history-mode only
+
+
+def test_cost_lines_layers_parallel_nodes_with_a_rail(tmp_path, cost_cwd):
+    run = make_cost_run(tmp_path)
+    lines = mv.cost_lines(run, mode="history", now=NOW)
+    impl_line = next(ln for ln in lines if " impl " in ln)
+    audit_line = next(ln for ln in lines if " audit " in ln)
+    assert impl_line.lstrip().startswith("┌")   # impl ∥ audit: one layer, fanned
+    assert audit_line.lstrip().startswith("└")
+    ship_line = next(ln for ln in lines if " ship " in ln)
+    assert "$" not in ship_line                 # shell node: never a fake dollar
+
+
+def test_cost_lines_without_a_flow_copy_degrades_to_a_flat_list(tmp_path, cost_cwd):
+    run = make_cost_run(tmp_path)
+    (run / "flow.tg.json").unlink()
+    lines = mv.cost_lines(run, mode="history", now=NOW)
+    assert sum(1 for ln in lines if " impl " in ln) >= 1  # still rendered
+
+
+def test_cost_lines_never_raise_on_an_empty_dir(tmp_path, cost_cwd):
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    assert mv.cost_lines(empty) == ["(reading state...)"]
+
+
+def test_topo_layers_orders_dependents_after_dependencies():
+    flow = {"nodes": [
+        {"id": "a"}, {"id": "b", "depends_on": ["a"]},
+        {"id": "c", "depends_on": ["a"]}, {"id": "d", "depends_on": ["b", "c"]},
+    ]}
+    assert mv.topo_layers(flow, ["a", "b", "c", "d"]) == [["a"], ["b", "c"], ["d"]]
+    # nodes the flow does not know come back as a final layer, state order
+    assert mv.topo_layers(None, ["x", "y"]) == [["x", "y"]]
+
+
 # ------------------------------------------------------ the anti-drift test
 
 def test_the_glossary_matches_cockpit_ps1():

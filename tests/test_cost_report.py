@@ -32,13 +32,21 @@ format = "pi-stream"
 """
 
 
-def envelope(in_tok: int, out_tok: int, cost: float) -> str:
-    return json.dumps({
+def envelope(in_tok: int, out_tok: int, cost: float, model: str | None = None) -> str:
+    env = {
         "type": "result",
         "usage": {"input_tokens": in_tok, "output_tokens": out_tok},
         "total_cost_usd": cost,
         "result": "OK",
-    })
+    }
+    if model:
+        # claude-style: per-model usage keyed by model id, with a cheap
+        # sidecar model alongside the main one
+        env["modelUsage"] = {
+            model: {"outputTokens": out_tok, "costUSD": cost},
+            "claude-haiku-4-5": {"outputTokens": 2, "costUSD": 0.0001},
+        }
+    return json.dumps(env)
 
 
 def make_run(root: Path, name: str = "flow-a") -> Path:
@@ -83,8 +91,10 @@ def make_run(root: Path, name: str = "flow-a") -> Path:
     impl = run / "phases" / "impl"
     impl.mkdir()
     (impl / "argv.json").write_text(json.dumps(["claude", "-p", "..."]), encoding="utf-8")
-    (impl / "stdout.log").write_text("chatty preamble\n" + envelope(100, 20, 0.05), encoding="utf-8")
-    (impl / "stdout-attempt1.log").write_text(envelope(80, 10, 0.03), encoding="utf-8")
+    (impl / "stdout.log").write_text(
+        "chatty preamble\n" + envelope(100, 20, 0.05, model="claude-opus-5"), encoding="utf-8")
+    (impl / "stdout-attempt1.log").write_text(
+        envelope(80, 10, 0.03, model="claude-opus-5"), encoding="utf-8")
 
     gate = run / "phases" / "gate"
     gate.mkdir()
@@ -148,6 +158,59 @@ def test_collect_run_sums_attempts_items_and_envelopes(tmp_path, fields_file):
     assert run["token_spawns"] == 5
 
 
+def test_model_and_attempt_history_recorded(tmp_path, fields_file):
+    run_dir = make_run(tmp_path)
+    maps = cost_report.load_field_maps(str(fields_file))
+    rows = rows_by_node(cost_report.collect_run(run_dir, maps))
+
+    # dominant model from modelUsage (weighted by cost); the haiku sidecar is
+    # recorded but not dominant
+    assert rows["impl"]["model"] == "claude-opus-5"
+    assert "claude-haiku-4-5" in rows["impl"]["models"]
+
+    # head = the kept attempt only; flat fields = every attempt (history)
+    assert rows["impl"]["cost"] == pytest.approx(0.08)
+    assert rows["impl"]["head"]["cost"] == pytest.approx(0.05)
+    assert rows["impl"]["head"]["input_tokens"] == 100
+
+    # per-attempt history: rotated attempt first, kept attempt last and final
+    detail = rows["impl"]["attempts_detail"]
+    assert [d["log"] for d in detail] == ["stdout-attempt1.log", "stdout.log"]
+    assert [d["final"] for d in detail] == [False, True]
+    assert detail[0]["cost"] == pytest.approx(0.03)
+    assert detail[0]["model"] == "claude-opus-5"
+
+    # map items: each item's single attempt is its own head
+    assert rows["audit"]["head"]["input_tokens"] == 100
+    assert {d["scope"] for d in rows["audit"]["attempts_detail"]} == {"item 0", "item 1"}
+
+    # nothing reported -> None everywhere, never zero
+    assert rows["plain"]["model"] is None
+    assert rows["plain"]["head"]["cost"] is None
+
+
+def test_attempt_order_is_numeric(tmp_path, fields_file):
+    run = tmp_path / "many-run"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({
+        "flow_name": "many", "flow_hash": "z", "format_version": "1.0",
+        "args": {}, "token_spawns": 1,
+        "nodes": {"n": {"node_id": "n", "role": "work", "kind": "harness",
+                        "status": "done", "attempts": 11}},
+    }), encoding="utf-8")
+    node = run / "phases" / "n"
+    (node / "argv.json").write_text(json.dumps(["claude", "-p"]), encoding="utf-8")
+    for i in range(1, 11):
+        (node / f"stdout-attempt{i}.log").write_text(envelope(1, 1, 0.001), encoding="utf-8")
+    (node / "stdout.log").write_text(envelope(9, 9, 0.009), encoding="utf-8")
+    maps = cost_report.load_field_maps(str(fields_file))
+    detail = rows_by_node(cost_report.collect_run(run, maps))["n"]["attempts_detail"]
+    assert [d["log"] for d in detail] == (
+        [f"stdout-attempt{i}.log" for i in range(1, 11)] + ["stdout.log"]
+    )  # attempt10 sorted numerically, head last
+    assert detail[-1]["final"] and detail[-1]["cost"] == pytest.approx(0.009)
+
+
 def test_no_field_map_is_reported_not_zeroed(tmp_path):
     run_dir = make_run(tmp_path)
     run = cost_report.collect_run(run_dir, {})  # no maps at all
@@ -165,7 +228,7 @@ def test_render_multi_run_deliverable_rollup(tmp_path, fields_file, capsys):
     assert "## deliverable total (all runs)" in out
     assert "token spawns: 10" in out          # 5 + 5
     assert "NOTIONAL" in out                  # units policy
-    assert "| impl | harness | 2 | 0 | 130 | 180 | 30 |" in out
+    assert "| impl | harness | claude-opus-5 +1 | 2 | 0 | 130 | 180 | 30 |" in out
 
 
 def pi_stream(in_tok: int, out_tok: int, cost: float) -> str:
@@ -209,6 +272,8 @@ def test_pi_stream_usage_sums_message_end_only(tmp_path, fields_file):
     assert row["cache_read_tokens"] == 14       # 7 per attempt
     assert row["cost"] == pytest.approx(0.030)  # turn_end/agent_end not double-counted
     assert row["note"] == ""
+    assert row["model"] == "gpt-x"              # message.model from the stream
+    assert row["head"]["cost"] == pytest.approx(0.021)  # kept attempt only
 
 
 def test_last_envelope_ignores_nested_objects(tmp_path):

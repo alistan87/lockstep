@@ -1,0 +1,385 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MISSION — mockup (PROPOSAL-sssf-adoptions §4.6)</title>
+<!--
+  MOCKUP ONLY. Static fake data, no server, no fetch. This is the visual
+  target for PROPOSAL-sssf-adoptions.md §4.6 (B6) — not shipping code.
+
+  Palette is the validated one from the dataviz reference instance:
+    categorical (cost stack) #3987e5,#d95926,#199e70,#c98500 — ALL CHECKS PASS
+      (dark, surface #1a1a19: worst adjacent CVD ΔE 8.4 protan, normal 19.8)
+    status good/warning/serious/critical #0ca30c/#fab219/#ec835a/#d03b3b
+  Every status colour ships with its COST_ICON glyph and its GLOSSARY word;
+  colour never carries meaning alone.
+-->
+<style>
+  :root {
+    --plane:      #0d0d0d;
+    --surface:    #1a1a19;
+    --ink:        #ffffff;
+    --ink-2:      #c3c2b7;
+    --muted:      #898781;
+    --grid:       #2c2c2a;
+    --axis:       #383835;
+    --hairline:   rgba(255,255,255,0.10);
+
+    --good:       #0ca30c;
+    --warning:    #fab219;
+    --serious:    #ec835a;
+    --critical:   #d03b3b;
+
+    --c1: #3987e5;  --c2: #d95926;  --c3: #199e70;  --c4: #c98500;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; padding: 28px 24px 64px;
+    background: var(--plane); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .brand { font-weight: 600; letter-spacing: .04em; }
+  .runid { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--hairline); background: var(--surface);
+    color: var(--ink-2); font-size: 13px; white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+  .live .dot { animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  @media (prefers-reduced-motion: reduce) { .live .dot { animation: none } }
+
+  /* ---------- hero ---------- */
+  .hero {
+    font-size: 27px; font-weight: 600; line-height: 1.3;
+    margin: 0 0 4px;
+  }
+  .hero em { font-style: normal; color: var(--warning); }
+  .hero-sub { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+
+  /* ---------- stat row ---------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 13px 15px; }
+  .tile .k { color: var(--muted); font-size: 12.5px; margin-bottom: 5px; }
+  .tile .v { font-size: 23px; font-weight: 600; }   /* proportional figures, not tabular */
+
+  /* ---------- meter ---------- */
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .card > h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none;
+               margin: 0 0 12px; letter-spacing: .02em; }
+  .meter-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; }
+  .meter-head .lab { color: var(--ink-2); font-size: 14px; }
+  .meter-head .num { font-size: 15px; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .track { position: relative; height: 10px; border-radius: 5px; background: #123055; overflow: visible; }
+  .fill  { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--c1); }
+  .ceil  { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink-2); right: 0; }
+  .meter-foot { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+
+  /* ---------- decision block ---------- */
+  .decide { border-left: 3px solid var(--warning); }
+  .decide h2 { color: var(--warning); display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .evidence {
+    background: var(--plane); border: 1px solid var(--hairline); border-radius: 8px;
+    padding: 14px 16px; margin: 4px 0 12px;
+    font: 13.5px/1.6 ui-monospace, Consolas, monospace; color: var(--ink-2);
+    white-space: pre-wrap;
+  }
+  .evidence b { color: var(--ink); font-weight: 600; }
+  .terminal-note { color: var(--muted); font-size: 13px; }
+  .terminal-note kbd {
+    background: var(--plane); border: 1px solid var(--axis); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font: 12px ui-monospace, Consolas, monospace; color: var(--ink-2);
+  }
+
+  /* ---------- step list (L0) ---------- */
+  .viewswitch { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+  .btn {
+    background: var(--plane); color: var(--ink-2); border: 1px solid var(--axis);
+    border-radius: 7px; padding: 5px 11px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .btn[aria-pressed="true"] { background: #202020; color: var(--ink); border-color: var(--muted); }
+  .cardhead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .cardhead h2 { margin: 0; }
+
+  .steps { display: grid; gap: 2px; }             /* 2px surface gap between rows */
+  .step { display: grid; grid-template-columns: 22px 1fr auto; align-items: center;
+          gap: 10px; padding: 7px 8px; border-radius: 7px; }
+  .step:hover { background: #212120; }
+  .step .ico { text-align: center; font-size: 14px; }
+  .step .name { color: var(--ink); }
+  .step .word { color: var(--ink-2); font-size: 13.5px; }
+  .ico.good { color: var(--good) } .ico.warn { color: var(--warning) }
+  .ico.crit { color: var(--critical) } .ico.ser { color: var(--serious) }
+  .ico.mut  { color: var(--muted) }   .ico.run { color: var(--ink) }
+  .note { grid-column: 2 / -1; color: var(--ink-2); font-size: 13px;
+          border-left: 2px solid var(--axis); padding-left: 10px; margin: 2px 0 4px; }
+  .tail { color: var(--muted); font-size: 13.5px; padding: 8px 8px 0; }
+
+  /* ---------- waterfall (L1) ---------- */
+  .wf { display: grid; grid-template-columns: var(--gutter) 1fr; gap: 0 14px; }
+  .wf-row { display: contents; }
+  .wf-lab { display: flex; flex-direction: column; justify-content: center; height: 38px;
+            font-size: 13.5px; color: var(--ink); min-width: 0; }
+  .wf-lab .n { display: flex; align-items: center; gap: 8px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf-lab .w { color: var(--muted); font-size: 12px; padding-left: 22px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf-track { position: relative; height: 38px; }
+  .wf-track::before {                       /* the empty track */
+    content: ""; position: absolute; left: 0; right: 0; top: 13px; height: 4px;
+    background: #232322; border-radius: 2px;
+  }
+  .seg { position: absolute; top: 13px; height: 12px; border-radius: 4px; }  /* span: rounded BOTH ends */
+  .seg.good { background: var(--good) }
+  .seg.ser  { background: var(--serious) }
+  .seg.crit { background: var(--critical) }
+  .seg.warn { background: var(--warning) }
+  .seg.run  { background: transparent; border: 2px solid var(--ink); }
+  .seg.run::after {                          /* live leading edge — a fade, never a dash */
+    content: ""; position: absolute; right: -1px; top: -2px; bottom: -2px; width: 34px;
+    background: linear-gradient(90deg, transparent, var(--surface)); border-radius: 4px;
+  }
+  .seg .tip { position: absolute; left: calc(100% + 8px); top: -3px; font-size: 12px;
+              color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .seg .tip.inside { left: auto; right: 8px; top: -2px; color: #2a1c00; font-weight: 600; }
+  .wf-axis { position: relative; height: 26px; margin-top: 4px; border-top: 1px solid var(--axis);
+             margin-left: calc(var(--gutter) + 14px); }
+  .tick { position: absolute; top: 0; font-size: 11.5px; color: var(--muted);
+          transform: translateX(-50%); padding-top: 5px; font-variant-numeric: tabular-nums; }
+  /* gridlines share the track column's box, so a tick and a bar edge mean the same x */
+  .wf-scale { position: absolute; left: calc(var(--gutter) + 14px); right: 0; top: 0; bottom: 30px;
+              pointer-events: none; }
+  .gridline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+  .wf-plot { position: relative; --gutter: 250px; }
+
+  /* ---------- cost ---------- */
+  .stack { display: flex; gap: 2px; height: 14px; margin: 4px 0 12px; }
+  .stack > i { display: block; border-radius: 3px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); color: var(--ink-2); }
+  th { color: var(--muted); font-weight: 500; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  .foot { color: var(--muted); font-size: 12.5px; margin-top: 26px; text-align: center; }
+</style>
+
+<div class="wrap">
+
+  <div class="top">
+    <span class="brand">MISSION</span>
+    <span class="runid">runs/2026-08-08-quarterly-brief-a41c</span>
+    <span class="spacer"></span>
+    <span class="chip live"><span class="dot"></span> live</span>
+    <span class="chip"><span class="dot" style="background:var(--good)"></span> record verified · 412 events</span>
+  </div>
+
+  <!-- exactly one hero -->
+  <p class="hero">Step 6 of 8 — <em>your decision is next</em></p>
+  <p class="hero-sub">running 14 m · started 09:02</p>
+
+  <div class="stats">
+    <div class="tile"><div class="k">step</div><div class="v">6 of 8</div></div>
+    <div class="tile"><div class="k">elapsed</div><div class="v">14 m</div></div>
+    <div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div>
+    <div class="tile"><div class="k">sent back for rework</div><div class="v">1</div></div>
+  </div>
+
+  <div class="card">
+    <div class="meter-head">
+      <span class="lab">agent tasks used</span>
+      <span class="num">9 of 25</span>
+    </div>
+    <div class="track"><div class="fill" style="width:36%"></div><div class="ceil"></div></div>
+    <div class="meter-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div>
+  </div>
+
+  <!-- decision: evidence verbatim, never narrated -->
+  <div class="card decide">
+    <h2>⊗ needs you — a decision</h2>
+    <div class="evidence"><b>Approve: publish the quarterly brief</b>
+
+What this changes if you approve
+  3 files written under Deliverables/2026-Q2/
+  1 file replaced: Deliverables/2026-Q2/brief.md (was 4.1 KB, now 7.8 KB)
+  Nothing outside Deliverables/ is touched.
+
+<b>--impact</b>      3 files, +214 / -38 lines, one directory
+<b>--reversible</b>  yes — the previous brief is kept at
+              runs/2026-08-08-quarterly-brief-a41c/phases/render/baseline/</div>
+    <p class="terminal-note">
+      This decision happens in your terminal, at the prompt — <kbd>a</kbd> to approve,
+      <kbd>r</kbd> to send back. Those keys do nothing here, and that is deliberate:
+      nothing but a person at a keyboard can answer.
+    </p>
+  </div>
+
+  <!-- L0 board / L1 timeline -->
+  <div class="card">
+    <div class="cardhead">
+      <h2>the steps</h2>
+      <div class="viewswitch">
+        <button class="btn" aria-pressed="false" onclick="show('l0')">board</button>
+        <button class="btn" aria-pressed="true"  onclick="show('l1')">show every step</button>
+      </div>
+    </div>
+
+    <!-- ============ L0 ============ -->
+    <div id="l0" class="steps" hidden>
+      <div class="step"><span class="ico warn">⊗</span><span class="name">approve the brief</span><span class="word">needs you</span></div>
+      <div class="note">Waiting on you since 09:12. Nothing is spending while this waits.</div>
+      <div class="step"><span class="ico mut">○</span><span class="name">publish to the shared drive</span><span class="word">waiting</span></div>
+      <div class="tail">5 finished, 1 not needed</div>
+    </div>
+
+    <!-- ============ L1 ============ -->
+    <div id="l1">
+      <div class="wf-plot">
+        <div class="wf-scale">
+          <div class="gridline" style="left:7.14%"></div>
+          <div class="gridline" style="left:28.57%"></div>
+          <div class="gridline" style="left:50%"></div>
+          <div class="gridline" style="left:71.43%"></div>
+          <div class="gridline" style="left:92.86%"></div>
+        </div>
+
+        <div class="wf">
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico good">✓</span>plan the brief</span><span class="w">done</span></div>
+            <div class="wf-track"><div class="seg good" style="left:0%;width:17.86%" title="plan the brief — done · 09:02:00–09:04:30 · 2m30s"></div></div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico good">✓</span>draft the sections</span><span class="w">done</span></div>
+            <div class="wf-track"><div class="seg good" style="left:17.86%;width:26.19%" title="draft the sections — done · 09:04:30–09:08:10 · 3m40s"></div></div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico ser">✓</span>check the numbers</span><span class="w">sent back for rework (1 of 2)</span></div>
+            <div class="wf-track">
+              <!-- two intervals from events.jsonl, not one merged span -->
+              <div class="seg ser" style="left:44.05%;width:10.71%" title="check the numbers — first run · 09:08:10–09:09:40 · 1m30s"></div>
+              <div class="seg good" style="left:59.52%;width:8.33%" title="check the numbers — after rework · 09:10:20–09:11:30 · 1m10s"></div>
+            </div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico good">✓</span>fix the figures</span><span class="w">done</span></div>
+            <div class="wf-track"><div class="seg good" style="left:54.76%;width:4.76%" title="fix the figures — done · 09:09:40–09:10:20 · 40s"></div></div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico good">✓</span>write the evidence</span><span class="w">done</span></div>
+            <div class="wf-track"><div class="seg good" style="left:67.86%;width:3.57%" title="write the evidence — done · 09:11:30–09:12:00 · 30s"></div></div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico warn">⊗</span>approve the brief</span><span class="w">needs you</span></div>
+            <div class="wf-track">
+              <div class="seg warn" style="left:71.43%;width:28.57%" title="approve the brief — needs you since 09:12:00">
+                <span class="tip inside">4 m</span>
+              </div>
+            </div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico mut">○</span>publish to the drive</span><span class="w">waiting</span></div>
+            <div class="wf-track"></div>
+          </div>
+          <div class="wf-row">
+            <div class="wf-lab"><span class="n"><span class="ico mut">⊘</span>notify the team</span><span class="w">not needed</span></div>
+            <div class="wf-track" style="opacity:.55"></div>
+          </div>
+        </div>
+
+        <div class="wf-axis">
+          <span class="tick" style="left:7.14%">09:03</span>
+          <span class="tick" style="left:28.57%">09:06</span>
+          <span class="tick" style="left:50%">09:09</span>
+          <span class="tick" style="left:71.43%">09:12</span>
+          <span class="tick" style="left:92.86%">09:15</span>
+        </div>
+      </div>
+
+      <details>
+        <summary>the same thing as a table</summary>
+        <table>
+          <tr><th>step</th><th>state</th><th class="n">started</th><th class="n">worked for</th><th class="n">tries</th></tr>
+          <tr><td>plan the brief</td><td>done</td><td class="n">09:02:00</td><td class="n">2m30s</td><td class="n">1</td></tr>
+          <tr><td>draft the sections</td><td>done</td><td class="n">09:04:30</td><td class="n">3m40s</td><td class="n">1</td></tr>
+          <tr><td>check the numbers</td><td>sent back for rework (1 of 2)</td><td class="n">09:08:10</td><td class="n">2m40s</td><td class="n">2</td></tr>
+          <tr><td>fix the figures</td><td>done</td><td class="n">09:09:40</td><td class="n">40s</td><td class="n">1</td></tr>
+          <tr><td>write the evidence</td><td>done</td><td class="n">09:11:30</td><td class="n">30s</td><td class="n">1</td></tr>
+          <tr><td>approve the brief</td><td>needs you</td><td class="n">09:12:00</td><td class="n">4m</td><td class="n">—</td></tr>
+          <tr><td>publish to the drive</td><td>waiting</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
+          <tr><td>notify the team</td><td>not needed</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
+        </table>
+      </details>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>what it has cost</h2>
+    <div class="stack">
+      <i style="background:var(--c1);width:42%" title="input 42%"></i>
+      <i style="background:var(--c2);width:28%" title="output 28%"></i>
+      <i style="background:var(--c3);width:22%" title="cache read 22%"></i>
+      <i style="background:var(--c4);width:8%"  title="cache write 8%"></i>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--c1)"></i>input</span>
+      <span><i class="sw" style="background:var(--c2)"></i>output</span>
+      <span><i class="sw" style="background:var(--c3)"></i>cache read</span>
+      <span><i class="sw" style="background:var(--c4)"></i>cache write</span>
+    </div>
+    <details>
+      <summary>per step, every attempt counted</summary>
+      <table>
+        <tr><th>step</th><th class="n">tokens</th><th class="n">tries</th><th class="n">worked for</th></tr>
+        <tr><td>plan the brief</td><td class="n">38,200</td><td class="n">1</td><td class="n">2m30s</td></tr>
+        <tr><td>draft the sections</td><td class="n">91,400</td><td class="n">1</td><td class="n">3m40s</td></tr>
+        <tr><td>check the numbers</td><td class="n">27,900</td><td class="n">2</td><td class="n">2m40s</td></tr>
+        <tr><td>fix the figures</td><td class="n">12,050</td><td class="n">1</td><td class="n">40s</td></tr>
+      </table>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>what just happened</h2>
+    <div class="steps">
+      <div class="step"><span class="ico mut">·</span><span class="name">09:12:00 &nbsp; stopped for your decision</span><span class="word"></span></div>
+      <div class="step"><span class="ico mut">·</span><span class="name">09:11:30 &nbsp; wrote the evidence for the approval</span><span class="word"></span></div>
+      <div class="step"><span class="ico mut">·</span><span class="name">09:11:30 &nbsp; the numbers checked out on the second pass</span><span class="word"></span></div>
+      <div class="step"><span class="ico mut">·</span><span class="name">09:09:40 &nbsp; sent the figures back to be fixed</span><span class="word"></span></div>
+    </div>
+    <details><summary>show the raw record</summary>
+      <table>
+        <tr><th>term</th><th>what it means</th><th>value</th></tr>
+        <tr><td>step id</td><td>the name the system uses for this step</td><td>approve</td></tr>
+        <tr><td>record head</td><td>a fingerprint of the whole history; it changes if anything is altered</td><td>4f2a9c…</td></tr>
+        <tr><td>what moved</td><td>why this step had to be redone rather than reused</td><td>the instructions changed</td></tr>
+      </table>
+    </details>
+  </div>
+
+  <p class="foot">This page only reads files. It never changes the run.</p>
+</div>
+
+<script>
+  function show(which) {
+    document.getElementById('l0').hidden = which !== 'l0';
+    document.getElementById('l1').hidden = which !== 'l1';
+    document.querySelectorAll('.viewswitch .btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.textContent.trim() === (which === 'l0' ? 'board' : 'show every step')));
+    });
+  }
+  // The two keys the DE was taught, answered rather than ignored.
+  addEventListener('keydown', function (e) {
+    if (e.key === 'a' || e.key === 'r') {
+      document.querySelector('.terminal-note').style.color = '#fab219';
+    }
+  });
+</script>

@@ -587,15 +587,18 @@ function Get-SpendLine {
   # NOT $args: that is an automatic variable in PowerShell (the unbound
   # argument list). Assigning it inside a function happens to work today and
   # is a trap waiting for the first person who adds a parameter here.
-  $reportArgs = @((Join-Path $script:RepoRoot 'contrib/cost_report.py'), '--compact')
+  # A rooted -RunsRoot must not be joined onto the repo root: every other
+  # consumer (Get-NewestRunDir, Invoke-Boot) checks this, and the odd one out
+  # produced a nonsense path (the repo root with an absolute path glued
+  # onto it) and therefore a permanent "(spend unavailable)".
+  $root = if ([System.IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot }
+          else { Join-Path $script:RepoRoot $RunsRoot }
+  # --session appends the session block: the orchestrator's own transcript
+  # spend plus every run started this session (contrib/session_spend.py).
+  $reportArgs = @((Join-Path $script:RepoRoot 'contrib/cost_report.py'),
+                  '--compact', '--session', '--runs-root', $root)
   if ($Deliverable) {
-    # A rooted -RunsRoot must not be joined onto the repo root: every other
-    # consumer (Get-NewestRunDir, Invoke-Boot) checks this, and the odd one out
-    # produced a nonsense path (the repo root with an absolute path glued
-    # onto it) and therefore a permanent "(spend unavailable)".
-    $root = if ([System.IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot }
-            else { Join-Path $script:RepoRoot $RunsRoot }
-    $reportArgs += @('--runs-from', $Deliverable, '--runs-root', $root)
+    $reportArgs += @('--runs-from', $Deliverable)
   } else {
     $reportArgs += $RunDir
   }

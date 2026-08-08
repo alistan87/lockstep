@@ -25,6 +25,7 @@ underneath us; a view must never be the reason a run fails.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -550,3 +551,236 @@ def needs_you(state: dict | None) -> bool:
     if not state:
         return False
     return any(r.get("status") == "blocked" for r in (state.get("nodes") or {}).values())
+
+
+# --------------------------------------------------------------- COST panel
+#
+# Modeled on pi-taskflow's progress render (npm:pi-taskflow, dist/render.js):
+# a one-line header with the aggregate cost, then DAG-ordered rows — each
+# topological layer fanned out with a ┌ ├ └ rail — carrying a single-width
+# status glyph, the model, the cost, wall time, and a ↻ retry counter.
+#
+# Two modes, one keybinding away in the TUI:
+#   history — every attempt is summed (retries and correctives cost money too;
+#             this is what was SPENT, and it matches the spend block's tally)
+#   head    — each scope's kept attempt only (what the current result cost)
+#
+# Everything is a projection of cost_report.collect_run over artifacts the run
+# already left behind — same reader, same field maps, same honest-limits notes,
+# so this panel cannot disagree with the spend line above it.
+
+COST_ICON = {
+    "done": "✓",
+    "running": "◐",
+    "failed": "✗",
+    "blocked": "⊗",
+    "skipped": "⊘",
+    "pending": "○",
+}
+
+
+def _cost_str(v: float | None) -> str | None:
+    """pi-taskflow's costStr: 2 decimals normally, 4 below a cent. None when
+    nothing was reported — the caller omits the column, never prints $0."""
+    if v is None:
+        return None
+    return f"${v:.2f}" if v >= 0.01 else f"${v:.4f}"
+
+
+def _elapsed_str(seconds: float | None) -> str | None:
+    """pi-taskflow's elapsed: 5s / 3m30s / 1h05m."""
+    if seconds is None:
+        return None
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
+def _short_model(model: str | None) -> str | None:
+    if not model:
+        return None
+    return model.split("/")[-1]
+
+
+def topo_layers(flow: dict | None, node_ids: list[str]) -> list[list[str]]:
+    """Kahn layering over the run's own flow copy, restricted to the nodes the
+    run actually recorded. Nodes absent from the flow (or the whole run when
+    there is no flow copy) come back as one final layer in state order — the
+    panel degrades to a flat list rather than guessing at edges."""
+    deps: dict[str, list[str]] = {}
+    for n in ((flow or {}).get("nodes") or []):
+        nid = n.get("id")
+        if nid in node_ids:
+            deps[nid] = [d for d in (n.get("depends_on") or []) if d in node_ids]
+    layers: list[list[str]] = []
+    placed: set[str] = set()
+    remaining = [nid for nid in node_ids if nid in deps]
+    while remaining:
+        layer = [nid for nid in remaining if all(d in placed for d in deps[nid])]
+        if not layer:
+            break  # a cycle cannot survive `lockstep verify`; defensive only
+        layers.append(layer)
+        placed.update(layer)
+        remaining = [nid for nid in remaining if nid not in placed]
+    leftovers = [nid for nid in node_ids if nid not in placed]
+    if leftovers:
+        layers.append(leftovers)
+    return layers
+
+
+def _rail(i: int, size: int) -> str:
+    if size <= 1:
+        return " "
+    if i == 0:
+        return "┌"
+    if i == size - 1:
+        return "└"
+    return "├"
+
+
+def _usage(run_dir: Path) -> dict | None:
+    """cost_report.collect_run, defensively. None means the reader itself is
+    unavailable or the state is mid-replace; the panel says so."""
+    try:
+        import cost_report
+        maps = cost_report.load_field_maps(None)
+        return cost_report.collect_run(Path(run_dir), maps)
+    except Exception:  # noqa: BLE001 - a view never raises
+        return None
+
+
+def _mode_cost(row: dict, mode: str) -> float | None:
+    if mode == "head" and row.get("status") != "running":
+        return (row.get("head") or {}).get("cost")
+    # A running node has no kept attempt yet; cost-so-far is the honest figure
+    # in either mode.
+    return row.get("cost")
+
+
+def _attempt_label(detail: dict) -> str:
+    m = re.search(r"attempt(\d+)", detail.get("log") or "")
+    scope = detail.get("scope") or ""
+    label = "kept" if detail.get("final") else (f"attempt {m.group(1)}" if m else "attempt ?")
+    return f"{scope} {label}".strip()
+
+
+def cost_detail(row: dict, mode: str) -> str:
+    """The right-hand column for one node, pi-taskflow phaseDetail style."""
+    status = row.get("status")
+    if status == "pending":
+        return "-"
+    if status == "skipped":
+        return "not needed"
+    parts: list[str] = []
+    items_total = None
+    detail = row.get("attempts_detail") or []
+    item_scopes = {d["scope"] for d in detail if d.get("scope")}
+    if item_scopes:
+        done_items = sum(1 for d in detail if d.get("scope") and d.get("final"))
+        items_total = f"{done_items} items"
+    model = _short_model(row.get("model"))
+    if model:
+        extra = len(row.get("models") or []) - 1
+        parts.append(model + (f" +{extra}" if extra > 0 else ""))
+    if items_total:
+        parts.append(items_total)
+    money = _cost_str(_mode_cost(row, mode))
+    if money:
+        parts.append(money)
+    retries = max(0, int(row.get("attempts") or 0) - 1)
+    if retries:
+        parts.append(f"↻{retries}")
+    if row.get("heal_rounds"):
+        parts.append(f"rework {row['heal_rounds']}")
+    t = _elapsed_str(row.get("wall_s"))
+    if t:
+        parts.append(t)
+    if status in ("failed", "blocked"):
+        parts.insert(0, GLOSSARY.get(status, status))
+    if row.get("note"):
+        parts.append(f"({row['note']})")
+    return "  ".join(parts) if parts else GLOSSARY.get(status, status or "?")
+
+
+def cost_lines(run_dir: Path, mode: str = "history",
+               now: datetime | None = None) -> list[str]:
+    """The whole cost panel: header + DAG-ordered rows (+ per-attempt history
+    sub-lines in history mode)."""
+    run_dir = Path(run_dir)
+    state = read_json(run_dir / "state.json")
+    if state is None:
+        return ["(reading state...)"]
+    run = _usage(run_dir)
+    if run is None:
+        return ["(cost data unavailable - state mid-replace or cost_report missing)"]
+    flow = read_json(run_dir / "flow.tg.json")
+    rows = {r["node"]: r for r in run["rows"]}
+    node_ids = list(rows)
+
+    statuses = [r.get("status") for r in rows.values()]
+    done = sum(1 for s in statuses if s in ("done", "skipped"))
+    running = sum(1 for s in statuses if s == "running")
+    failed = sum(1 for s in statuses if s in ("failed", "blocked"))
+    total_cost = None
+    costs = [_mode_cost(r, mode) for r in rows.values()]
+    if any(c is not None for c in costs):
+        total_cost = sum(c for c in costs if c is not None)
+
+    head_glyph = ("✗" if failed else "◐" if running else
+                  "✓" if done == len(statuses) and statuses else "○")
+    header = f"{head_glyph} {run['flow']}  {done}/{len(statuses)}"
+    if running:
+        header += f" · {running}▸"
+    if failed:
+        header += f" · {failed}✗"
+    money = _cost_str(total_cost)
+    if money:
+        header += f" · {money}"
+    began = _parse_ts(state.get("started_at"))
+    if began:
+        until = now or datetime.now(timezone.utc)
+        ends = [t for t in (_parse_ts(r.get("ended_at"))
+                            for r in (state.get("nodes") or {}).values()) if t]
+        if not running and ends and done == len(statuses):
+            until = max(ends)
+        header += f" · {_elapsed_str(max(0.0, (until - began).total_seconds()))}"
+    tag = ("history: every attempt is counted" if mode == "history"
+           else "head: kept attempts only")
+    out = [header, f"  ({tag})", ""]
+
+    id_w = max((len(n) for n in node_ids), default=2)
+    kind_w = max((len(rows[n].get("kind") or "?") for n in node_ids), default=4)
+    prev_layer: set[str] = set()
+    for layer in topo_layers(flow, node_ids):
+        for i, nid in enumerate(layer):
+            row = rows[nid]
+            icon = COST_ICON.get(row.get("status"), "○")
+            line = (f"  {_rail(i, len(layer))} {icon} {nid:<{id_w}}  "
+                    f"{(row.get('kind') or '?'):<{kind_w}}  {cost_detail(row, mode)}")
+            deps = []
+            for n in ((flow or {}).get("nodes") or []):
+                if n.get("id") == nid:
+                    deps = [d for d in (n.get("depends_on") or []) if d not in prev_layer
+                            and d in rows]
+            if deps:
+                line += f"  ↳ {', '.join(deps)}"
+            out.append(line)
+            if mode == "history":
+                detail = row.get("attempts_detail") or []
+                if len(detail) > 1:
+                    for d in detail:
+                        bits = [_attempt_label(d)]
+                        model = _short_model(d.get("model"))
+                        if model:
+                            bits.append(model)
+                        money = _cost_str(d.get("cost"))
+                        if money:
+                            bits.append(money)
+                        if not d.get("final"):
+                            bits.append("(superseded)")
+                        out.append(f"  {' ':<{id_w + 6}}{'  '.join(bits)}")
+        prev_layer = set(layer)
+    return out

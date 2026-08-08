@@ -5,7 +5,8 @@
     python contrib/mission_tui.py runs/<run>      # a specific run
 
 Keys:  1-9  what happened at that step      e  the approval evidence
-       q    close the view (never the run)  r  force a repaint
+       c    the cost panel (press again to  q  close the view (never the run)
+            toggle history <-> head)        r  force a repaint
 
 WHY NOT TEXTUAL. It was evaluated and it would have been less code: scrollback,
 collapsible sections, keybinds and 60 fps repaint, all for free. It was rejected
@@ -49,6 +50,7 @@ CURSOR_OFF, CURSOR_ON = "\x1b[?25l", "\x1b[?25h"
 DIM, CYAN, YELLOW, RED, RESET = "\x1b[90m", "\x1b[36m", "\x1b[33m", "\x1b[31m", "\x1b[0m"
 
 SPEND_EVERY_S = 10.0
+SESSION_EVERY_S = 30.0
 
 
 # ------------------------------------------------------------------ input
@@ -115,22 +117,38 @@ class Keys:
 
 # ----------------------------------------------------------------- spend
 
-def spend_lines(run_dir: Path) -> list[str]:
+def spend_lines(run_dir: Path, floor: dict) -> tuple[list[str], dict]:
     """The compact spend block, computed in-process.
 
     cockpit.ps1 shells out to cost_report.py for this. Importing it instead is
     the whole point of collapsing to one process — the numbers are identical
     because it is literally the same function.
+
+    `floor` is compact_block's monotonic guard, threaded through every poll.
+    cockpit.ps1 keeps its own guard (Update-Spend) and cost_report --watch
+    keeps one; this caller passed nothing, so a poll that caught a log
+    mid-write showed a total that went BACKWARDS — the tally inconsistency
+    this fixes. Reset it (pass {}) when the bound run changes.
     """
     try:
         import cost_report
         maps = cost_report.load_field_maps(None)
         run = cost_report.collect_run(Path(run_dir), maps)
         cap = cost_report._budget_cap(Path(run_dir))
-        text, _ = cost_report.compact_block([run], [cap])
-        return text.splitlines()
+        text, floor = cost_report.compact_block([run], [cap], floor)
+        return text.splitlines(), floor
     except Exception as e:  # noqa: BLE001 - display-only, always
-        return [f"(spend unavailable: {e})"]
+        return [f"(spend unavailable: {e})"], floor
+
+
+def session_lines(repo_root: Path, runs_root: Path) -> list[str]:
+    """The session block: the orchestrator's own transcript spend plus every
+    run started this session (contrib/session_spend.py)."""
+    try:
+        import session_spend
+        return session_spend.session_lines(Path(repo_root), Path(runs_root))
+    except Exception as e:  # noqa: BLE001 - display-only, always
+        return [f"(session spend unavailable: {e})"]
 
 
 # ---------------------------------------------------------------- painting
@@ -163,8 +181,9 @@ class Screen:
         self._painted = []
 
 
-def compose(run_dir: Path, repo_root: Path, spend: list[str],
-            overlay: list[str] | None, rows: int) -> list[str]:
+def compose(run_dir: Path, repo_root: Path, spend: list[str], session: list[str],
+            overlay: list[str] | None, rows: int,
+            cost_mode: str | None = None) -> list[str]:
     if overlay is not None:
         room = max(1, rows - 2)
         shown = overlay[:room]
@@ -175,6 +194,19 @@ def compose(run_dir: Path, repo_root: Path, spend: list[str],
             shown = shown[:-1] + [f"{DIM}... {len(overlay) - room + 1} more lines "
                                   f"- see the file itself{RESET}"]
         return shown + ["", f"{DIM}any key to go back   q quits the view{RESET}"]
+
+    if cost_mode is not None:
+        # The cost panel (pi-taskflow-styled; mission_view.cost_lines). Unlike
+        # the static overlays it is recomposed every tick, so a running node's
+        # cost-so-far stays live.
+        frame = [f"{CYAN}COSTS  {run_dir.name}{RESET}", "-" * mv.WIDTH]
+        frame += mv.cost_lines(run_dir, mode=cost_mode)
+        frame += ["-" * mv.WIDTH]
+        frame += [f"{YELLOW}{ln}{RESET}" for ln in spend]
+        frame += [f"{DIM}{ln}{RESET}" for ln in session]
+        frame += ["", f"{DIM}  c toggle history <-> head   any other key back "
+                      f"  q close this view   {datetime.now().strftime('%H:%M:%S')}{RESET}"]
+        return frame[:rows]
 
     frame = [f"{CYAN}MISSION  {run_dir.name}{RESET}", "-" * mv.WIDTH]
 
@@ -190,6 +222,7 @@ def compose(run_dir: Path, repo_root: Path, spend: list[str],
 
     frame += ["-" * mv.WIDTH]
     frame += [f"{YELLOW}{ln}{RESET}" for ln in spend]
+    frame += [f"{DIM}{ln}{RESET}" for ln in session]
     frame += ["-" * mv.WIDTH, f"{CYAN}ACTIVITY{RESET}"]
     frame += ["  " + ln for ln in mv.activity_lines(run_dir, repo_root=repo_root)]
 
@@ -198,8 +231,8 @@ def compose(run_dir: Path, repo_root: Path, spend: list[str],
         frame += ["", f"{RED}  NEEDS YOU - read the approval pane, or the chat{RESET}"]
 
     frame += [""]
-    frame += [f"{DIM}  1-9 what happened   e evidence   r repaint   q close this view "
-              f"  {datetime.now().strftime('%H:%M:%S')}{RESET}"]
+    frame += [f"{DIM}  1-9 what happened   c costs   e evidence   r repaint "
+              f"  q close this view   {datetime.now().strftime('%H:%M:%S')}{RESET}"]
     return frame[:rows]
 
 
@@ -211,8 +244,12 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
     sys.stdout.write(ALT_ON + CURSOR_OFF)
     sys.stdout.flush()
     overlay: list[str] | None = None
+    cost_mode: str | None = None
     spend: list[str] = ["(spend unavailable)"]
+    session: list[str] = []
+    floor: dict = {}
     spend_at = 0.0
+    session_at = 0.0
     bound: Path | None = None
     was_needing = False
     try:
@@ -230,12 +267,19 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
 
             if current != bound:
                 bound, spend_at, overlay, was_needing = current, 0.0, None, False
+                cost_mode = None
+                floor = {}  # the monotonic guard is per-run; a new run starts at 0
                 screen.reset()
 
             now = datetime.now(timezone.utc).timestamp()
             if now - spend_at >= SPEND_EVERY_S:
-                spend = spend_lines(current)
+                spend, floor = spend_lines(current, floor)
                 spend_at = now
+            if now - session_at >= SESSION_EVERY_S:
+                # Slower cadence than spend: this re-reads the orchestrator's
+                # whole transcript, which grows for as long as the session does.
+                session = session_lines(repo_root, runs_root)
+                session_at = now
 
             # Notify on the EDGE, not the level: a signal that repeats every
             # second is an alarm, and an alarm gets muted.
@@ -248,7 +292,8 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
 
             rows = _rows()
             try:
-                frame = compose(current, repo_root, spend, overlay, rows)
+                frame = compose(current, repo_root, spend, session, overlay, rows,
+                                cost_mode=cost_mode)
             except Exception as e:  # noqa: BLE001
                 # A view must never be the reason anything stops — including
                 # itself. Every reader below is already defensive; this is the
@@ -267,6 +312,16 @@ def run(runs_root: Path, run_dir: Path | None, repo_root: Path, interval: float)
                 # repainted the overlay instead of closing it.
                 if overlay is not None:
                     overlay = None
+                    screen.reset()
+                elif cost_mode is not None:
+                    # Inside the cost panel `c` is the labelled toggle
+                    # (history <-> head); anything else goes back, same
+                    # convention as the overlays.
+                    cost_mode = ("head" if cost_mode == "history" else "history") \
+                        if key == "c" else None
+                    screen.reset()
+                elif key == "c":
+                    cost_mode = "history"
                     screen.reset()
                 elif key == "r":
                     screen.reset()

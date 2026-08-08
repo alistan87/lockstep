@@ -61,6 +61,7 @@ to answer.</p>
 {needs}
 <pre>{mission}</pre>
 <pre class="spend">{spend}</pre>
+{costs}
 <hr>
 <h1>ACTIVITY</h1>
 <pre>{activity}</pre>
@@ -70,25 +71,43 @@ to answer.</p>
 """
 
 
-def spend_lines(run_dir: Path) -> list[str]:
+def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path) -> list[str]:
     try:
         import cost_report
         maps = cost_report.load_field_maps(None)
         run = cost_report.collect_run(Path(run_dir), maps)
         cap = cost_report._budget_cap(Path(run_dir))
         text, _ = cost_report.compact_block([run], [cap])
-        return text.splitlines()
+        lines = text.splitlines()
     except Exception as e:  # noqa: BLE001 - display-only, always
         return [f"(spend unavailable: {e})"]
+    try:
+        import session_spend
+        lines += session_spend.session_lines(Path(repo_root), Path(runs_root))
+    except Exception as e:  # noqa: BLE001
+        lines += [f"(session spend unavailable: {e})"]
+    return lines
 
 
-def render_page(run_dir: Path | None, repo_root: Path) -> str:
+def cost_details(run_dir: Path) -> str:
+    """The cost panel, both modes, as collapsed sections — the page has no
+    keyboard, so the TUI's `c` toggle becomes two <details> blocks."""
+    out = []
+    for mode, title in (("history", "costs — history (every attempt is counted)"),
+                        ("head", "costs — head (kept attempts only)")):
+        body = "\n".join(mv.cost_lines(run_dir, mode=mode))
+        out.append(f"<details><summary>{html.escape(title)}</summary>"
+                   f"<pre>{html.escape(body)}</pre></details>")
+    return "\n".join(out)
+
+
+def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path) -> str:
     if run_dir is None:
         return PAGE.format(
             refresh=REFRESH_S, name="no run yet", needs="",
             mission="Tell the assistant what you would like to work on;\n"
                     "this page fills in by itself once something starts.",
-            spend="", activity="", details="")
+            spend="", costs="", activity="", details="")
 
     state = mv.read_json(run_dir / "state.json")
     needs = ('<p class="needs">NEEDS YOU &mdash; read the terminal pane.</p>'
@@ -109,7 +128,8 @@ def render_page(run_dir: Path | None, repo_root: Path) -> str:
         name=html.escape(run_dir.name),
         needs=needs,
         mission=html.escape("\n".join(mv.mission_lines(run_dir, repo_root=repo_root))),
-        spend=html.escape("\n".join(spend_lines(run_dir))),
+        spend=html.escape("\n".join(spend_lines(run_dir, repo_root, runs_root))),
+        costs=cost_details(run_dir),
         activity=html.escape("\n".join(mv.activity_lines(run_dir, repo_root=repo_root))),
         details="\n".join(details) or "<p>(nothing to show yet)</p>",
     )
@@ -126,7 +146,7 @@ def make_handler(runs_root: Path, pinned: Path | None, repo_root: Path):
                 return
             run_dir = pinned or mv.newest_run(runs_root)
             try:
-                body = render_page(run_dir, repo_root).encode("utf-8")
+                body = render_page(run_dir, repo_root, runs_root).encode("utf-8")
             except Exception as e:  # noqa: BLE001 - a view never takes the run down
                 body = f"<pre>view error: {html.escape(str(e))}</pre>".encode()
             self.send_response(200)

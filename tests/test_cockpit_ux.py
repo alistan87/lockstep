@@ -259,14 +259,14 @@ def test_the_page_renders_from_the_same_functions(tmp_path):
     (run / "state.json").write_text(json.dumps({
         "flow_name": "x", "nodes": {"a": {"role": "work", "status": "blocked", "attempts": 1}},
     }), encoding="utf-8")
-    page = mission_server.render_page(run, ROOT)
+    page = mission_server.render_page(run, ROOT, tmp_path)
     assert "NEEDS YOU" in page
     assert "needs you" in page          # the glossary word, from mission_view
     assert "Decisions are not made here" in page
 
 
 def test_the_page_survives_an_empty_run_root():
-    assert "no run yet" in mission_server.render_page(None, ROOT)
+    assert "no run yet" in mission_server.render_page(None, ROOT, ROOT / "runs")
 
 
 def test_loopback_is_the_default_and_anything_else_warns(tmp_path, monkeypatch, capsys):

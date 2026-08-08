@@ -55,8 +55,9 @@ Cockpit tools (all read-only; none spends a token):
 python contrib\plan_card.py <flow>            # consent card: shape, ceiling, prior runs
 python contrib\question_card.py <run_dir>     # clarify findings, verbatim, for ACTIVITY
 python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is runnable
-pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board
-pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down
+python contrib\session_spend.py               # this session: orchestrator transcript spend + runs it started
+pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
+pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
 python contrib\mission_server.py                       # read-only page, loopback only
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
 ```

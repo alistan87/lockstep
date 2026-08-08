@@ -263,6 +263,8 @@ sure" — they said the reserved word.
 ```powershell
 python contrib\cost_report.py --compact <run_dir>              # right now
 python contrib\cost_report.py --runs-from <slug>               # whole deliverable
+python contrib\cost_report.py <run_dir>                        # full tables, per node: model, per-attempt history
+python contrib\session_spend.py                                # this session: your own transcript spend + every run it started
 ```
 
 - **Spawns and wall time are always available.** Tokens only where the envelope
@@ -272,6 +274,17 @@ python contrib\cost_report.py --runs-from <slug>               # whole deliverab
   report usage. Say so when it appears, or the DE reads it as breakage.
 - **`unmapped harness` IS actionable** — someone must add the binary to
   `contrib/cost-fields.toml`.
+- **History vs head.** The full tables (and the TUI's `c` panel) tally two
+  honest numbers per node: *history* — every attempt, retries and correctives
+  included, which is what was SPENT and what the spend line shows — and *head*,
+  the kept attempt only, which is what the current result cost. The model that
+  ran each attempt is recorded beside each figure (envelope `modelUsage` /
+  pi-stream `message.model`).
+- **The session block** (appended to the pane's spend area, and standalone via
+  `session_spend.py`) covers the orchestrator's own transcript — your model
+  calls are spend too — plus every run started since that transcript began.
+  Its session definition is stated in the block: the newest transcript for
+  this repo. A transcript with no dollar figures reports tokens, never $0.
 - Segmentation makes a deliverable a *chain* of runs. The lineage index
   (`runs/lineages/<slug>.runs`) plus the journal's `consent.deliverable` makes
   that chain recoverable from disk after you die. Append to it at every launch.

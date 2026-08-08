@@ -4,7 +4,10 @@
 # versions. Keys are the harness binary's basename, lowercased, extension
 # stripped (argv[0] of the executor stanza). Values are dotted paths into the
 # JSON envelope the harness prints. Recognized fields: input_tokens,
-# output_tokens, cache_read_tokens, cache_write_tokens, cost.
+# output_tokens, cache_read_tokens, cache_write_tokens, cost, and model (a
+# dotted path to a STRING model id — only needed when the harness envelope
+# carries neither claude-style `modelUsage` nor a `model` field, both of
+# which are detected without configuration; pi-stream reads message.model).
 #
 # This file deliberately pre-proves the shape of the planned v1 stanza key
 # `usage_fields` (PROPOSAL-domain-cockpit, feature B) — it lives beside the

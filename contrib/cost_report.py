@@ -25,6 +25,10 @@ Sources (and their honest limits):
   cost-fields.toml (see cost-fields.toml.example — probe YOUR harness
   versions); executors with no envelope or no field map are reported as
   such, never as a fake 0.
+- model: recorded per attempt from the same envelopes (claude-style
+  `modelUsage`, pi-stream `message.model`, or an operator-mapped `model`
+  path). Each node row carries the full per-attempt history plus a `head`
+  tally (the kept attempt only) beside the everything-summed totals.
 - attempts / heal rounds: state.json + events.jsonl.
 - wall time: events.jsonl running->terminal transition pairs (state.json
   spans mislead on re-runs; map items emit no transition events, so item
@@ -41,6 +45,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -49,7 +54,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 KNOWN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost")
-KNOWN_KEYS = KNOWN_FIELDS + ("format",)
+# `model` is a STRING field (dotted path to the model id in the envelope);
+# optional — claude's modelUsage and pi's message.model are detected built-in.
+KNOWN_KEYS = KNOWN_FIELDS + ("format", "model")
 TERMINAL = {"done", "failed", "blocked"}
 RUNNING = "running"
 
@@ -82,6 +89,52 @@ def dig(obj, dotted: str):
             return None
         obj = obj[part]
     return obj if isinstance(obj, (int, float)) and not isinstance(obj, bool) else None
+
+
+def dig_str(obj, dotted: str) -> str | None:
+    for part in dotted.split("."):
+        if not isinstance(obj, dict) or part not in obj:
+            return None
+        obj = obj[part]
+    return obj if isinstance(obj, str) and obj else None
+
+
+def envelope_models(env: dict, fmap: dict[str, str] | None) -> dict[str, float]:
+    """model id -> weight, from one envelope. Weight is the model's reported
+    dollars when the envelope carries them, else its output tokens, else 1 —
+    only ever used to pick the DOMINANT model for a one-line display; the
+    weights themselves are never summed into a cost column.
+
+    Sources, in order: an operator-mapped `model` path (cost-fields.toml),
+    claude-style `modelUsage` (keyed per model — a spawn can use a sidecar
+    model for small calls, so one envelope can name several), a bare `model`
+    string field."""
+    if fmap and isinstance(fmap.get("model"), str):
+        v = dig_str(env, fmap["model"])
+        if v:
+            return {v: 1.0}
+    mu = env.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        out: dict[str, float] = {}
+        for name, rec in mu.items():
+            w = 1.0
+            if isinstance(rec, dict):
+                for key in ("costUSD", "outputTokens"):
+                    got = rec.get(key)
+                    if isinstance(got, (int, float)) and not isinstance(got, bool) and got:
+                        w = float(got)
+                        break
+            out[str(name)] = out.get(str(name), 0.0) + w
+        return out
+    v = env.get("model")
+    if isinstance(v, str) and v:
+        return {v: 1.0}
+    return {}
+
+
+def dominant_models(weights: dict[str, float]) -> list[str]:
+    """Model ids, heaviest first (ties broken by name for stable output)."""
+    return [m for m, _ in sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
 # --- lineage index (R-B2) ------------------------------------------------------
@@ -287,14 +340,19 @@ def wall_and_heals(events: list[dict]) -> tuple[dict[str, float], dict[str, int]
     return wall, heals
 
 
-def pi_stream_usage(text: str) -> tuple[dict[str, float], int]:
+def pi_stream_usage(text: str) -> tuple[dict[str, float], int, dict[str, float]]:
     """Sum per-message usage from a pi `--mode json` event stream (probed
     against pi 0.83.0): each assistant `message_end` carries
     usage{input, output, cacheRead, cacheWrite, cost{total}} — provider-
     computed, so on Copilot these are the credit-accurate dollars. Only
     `message_end` is summed: `turn_end`/`agent_end` repeat the same messages
-    and would double-count."""
+    and would double-count.
+
+    Third return: model id -> weight (dollars, else output tokens, else a
+    count of messages) — `message.model` is per-message, so a stream can name
+    several; the weight picks the dominant one for display."""
     sums: dict[str, float] = {}
+    models: dict[str, float] = {}
     seen = 0
     for line in text.splitlines():
         line = line.strip()
@@ -321,14 +379,60 @@ def pi_stream_usage(text: str) -> tuple[dict[str, float], int]:
             v = dig(usage, path)
             if v is not None:
                 sums[field] = sums.get(field, 0.0) + v
-    return sums, seen
+        model = msg.get("model")
+        if isinstance(model, str) and model:
+            w = dig(usage, "cost.total") or dig(usage, "output") or 1
+            models[model] = models.get(model, 0.0) + float(w)
+    return sums, seen, models
+
+
+_ATTEMPT_RE = re.compile(r"^stdout-attempt(\d+)\.log$")
+
+
+def _attempt_order(path: Path) -> tuple[int, int]:
+    """Numeric attempt order, head (stdout.log — the kept attempt) LAST.
+    Lexical sort put attempt10 before attempt2 and the head first."""
+    m = _ATTEMPT_RE.match(path.name)
+    return (0, int(m.group(1))) if m else (1, 0)
+
+
+def _log_usage(
+    text: str, fmap: dict[str, str] | None, stream_mode: bool
+) -> tuple[dict[str, float], dict[str, float], bool]:
+    """(sums, model weights, envelope seen) for ONE attempt's stdout."""
+    if stream_mode:
+        got, seen, models = pi_stream_usage(text)
+        return got, models, bool(seen)
+    env = last_envelope(text)
+    if env is None:
+        return {}, {}, False
+    sums: dict[str, float] = {}
+    if fmap:
+        for field, path in fmap.items():
+            if field in ("format", "model"):
+                continue
+            v = dig(env, path)
+            if v is not None:
+                sums[field] = sums.get(field, 0.0) + v
+    return sums, envelope_models(env, fmap), True
 
 
 def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
-    """Sum usage over every attempt's stdout (map items included). Two
-    formats: a single JSON envelope with dotted field paths (claude-code
-    style), or `format = "pi-stream"` (pi's per-message event stream)."""
-    logs = sorted(phase_dir.glob("stdout*.log")) + sorted(phase_dir.glob("items/*/stdout*.log"))
+    """Usage over every attempt's stdout (map items included). Two formats: a
+    single JSON envelope with dotted field paths (claude-code style), or
+    `format = "pi-stream"` (pi's per-message event stream).
+
+    Returns:
+    - sums: totals over EVERY attempt — retries and correctives cost money too
+    - head: totals over each scope's FINAL attempt only (the node's stdout.log
+      plus each item's) — what the kept result cost, the other half of the
+      history/head toggle
+    - attempts: per-attempt records, oldest first within a scope, the kept
+      attempt last — {scope, log, final, model, <KNOWN_FIELDS>}. This is the
+      node's recorded history: each rotated log is one spawn that happened.
+    - models: model ids seen, dominant first
+    - note: same honest-limits notes as before ("no envelope" / "no field map")
+    """
     binary = binary_of(phase_dir)
     if binary is None:
         for item in sorted(phase_dir.glob("items/*")):
@@ -337,33 +441,46 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
                 break
     fmap = maps.get(binary or "")
     stream_mode = bool(fmap) and fmap.get("format") == "pi-stream"
+
+    scopes: list[tuple[str, Path]] = [("", phase_dir)]
+    scopes += [(f"item {d.name}", d) for d in sorted(phase_dir.glob("items/*")) if d.is_dir()]
+
     sums: dict[str, float] = {}
+    head: dict[str, float] = {}
+    model_w: dict[str, float] = {}
+    attempts: list[dict] = []
     envelopes = 0
-    for log in logs:
-        text = log.read_text(encoding="utf-8", errors="replace")
-        if stream_mode:
-            got, seen = pi_stream_usage(text)
-            envelopes += 1 if seen else 0
+    logs_seen = 0
+    for scope, d in scopes:
+        logs = sorted(d.glob("stdout*.log"), key=_attempt_order)
+        logs_seen += len(logs)
+        for log in logs:
+            text = log.read_text(encoding="utf-8", errors="replace")
+            got, models, seen = _log_usage(text, fmap, stream_mode)
+            if seen:
+                envelopes += 1
+            final = log is logs[-1]
             for k, v in got.items():
                 sums[k] = sums.get(k, 0.0) + v
-            continue
-        env = last_envelope(text)
-        if env is None:
-            continue
-        envelopes += 1
-        if fmap:
-            for field, path in fmap.items():
-                if field == "format":
-                    continue
-                v = dig(env, path)
-                if v is not None:
-                    sums[field] = sums.get(field, 0.0) + v
+                if final:
+                    head[k] = head.get(k, 0.0) + v
+            for m, w in models.items():
+                model_w[m] = model_w.get(m, 0.0) + w
+            rec_models = dominant_models(models)
+            attempts.append({
+                "scope": scope,
+                "log": (f"items/{d.name}/{log.name}" if scope else log.name),
+                "final": final,
+                "model": rec_models[0] if rec_models else None,
+                **{f: got.get(f) for f in KNOWN_FIELDS},
+            })
     note = ""
-    if logs and envelopes == 0:
+    if logs_seen and envelopes == 0:
         note = "no envelope"
     elif envelopes and not fmap:
         note = f"no field map ({binary or 'unknown'})"
-    return {"sums": sums, "note": note}
+    return {"sums": sums, "head": head, "attempts": attempts,
+            "models": dominant_models(model_w), "note": note}
 
 
 def read_state(run_dir: Path, retries: int = 3) -> dict | None:
@@ -397,7 +514,7 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
         tokens = (
             node_tokens(phase_dir, maps)
             if rec.get("kind") != "shell" and phase_dir.is_dir()
-            else {"sums": {}, "note": ""}
+            else {"sums": {}, "head": {}, "attempts": [], "models": [], "note": ""}
         )
         note = tokens["note"]
         if status == RUNNING:
@@ -412,6 +529,12 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
             "heal_rounds": heals.get(node_id, 0),
             "wall_s": wall.get(node_id, _running_wall(rec) if status == RUNNING else None),
             **{f: tokens["sums"].get(f) for f in KNOWN_FIELDS},
+            # The history/head split and the recorded models (None, never 0,
+            # where nothing was reported — same policy as the flat fields).
+            "head": {f: tokens["head"].get(f) for f in KNOWN_FIELDS},
+            "attempts_detail": tokens["attempts"],
+            "models": tokens["models"],
+            "model": tokens["models"][0] if tokens["models"] else None,
             "note": note,
         })
     return {
@@ -447,6 +570,14 @@ def _fmt(v, money: bool = False) -> str:
     return str(v)
 
 
+def short_model(model: str | None) -> str:
+    """Display form: provider prefix stripped (`ollama/qwen3` -> `qwen3`),
+    same rule as pi-taskflow's shortModel."""
+    if not model:
+        return "-"
+    return model.split("/")[-1]
+
+
 def render(runs: list[dict]) -> str:
     out: list[str] = ["# lockstep cost report", ""]
     grand: dict[str, float] = {}
@@ -454,21 +585,25 @@ def render(runs: list[dict]) -> str:
     for run in runs:
         out.append(f"## {run['flow']}  `{run['run_dir']}`")
         out.append("")
-        out.append("| node | kind | attempts | heal | wall s | in tok | out tok | cache r | cache w | cost* | note |")
-        out.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        out.append("| node | kind | model | attempts | heal | wall s | in tok | out tok | cache r | cache w | cost* | note |")
+        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
         totals: dict[str, float] = {}
         for r in run["rows"]:
             for f in KNOWN_FIELDS:
                 if r[f] is not None:
                     totals[f] = totals.get(f, 0.0) + r[f]
+            models = r.get("models") or []
+            model_cell = short_model(models[0]) if models else "-"
+            if len(models) > 1:
+                model_cell += f" +{len(models) - 1}"
             out.append(
-                f"| {r['node']} | {r['kind']} | {r['attempts']} | {r['heal_rounds']} "
+                f"| {r['node']} | {r['kind']} | {model_cell} | {r['attempts']} | {r['heal_rounds']} "
                 f"| {_fmt(r['wall_s'])} | {_fmt(r['input_tokens'])} | {_fmt(r['output_tokens'])} "
                 f"| {_fmt(r['cache_read_tokens'])} | {_fmt(r['cache_write_tokens'])} "
                 f"| {_fmt(r['cost'], money=True)} | {r['note']} |"
             )
         out.append(
-            f"| **total** |  |  |  |  | {_fmt(totals.get('input_tokens'))} "
+            f"| **total** |  |  |  |  |  | {_fmt(totals.get('input_tokens'))} "
             f"| {_fmt(totals.get('output_tokens'))} | {_fmt(totals.get('cache_read_tokens'))} "
             f"| {_fmt(totals.get('cache_write_tokens'))} | {_fmt(totals.get('cost'), money=True)} "
             f"| token spawns: {run['token_spawns']} |"
@@ -620,6 +755,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--compact", action="store_true", help="pane-sized block instead of the tables")
     ap.add_argument("--watch", action="store_true", help="compact block on a loop until Ctrl-C")
     ap.add_argument("--interval", type=float, default=2.0, help="--watch poll seconds (default 2)")
+    ap.add_argument("--session", action="store_true",
+                    help="append the session block: the orchestrator's own spend "
+                         "plus every run started this session (contrib/session_spend.py)")
     ns = ap.parse_args(argv)
     maps = load_field_maps(ns.fields)
     if not maps and not ns.compact:
@@ -663,6 +801,20 @@ def main(argv: list[str] | None = None) -> int:
         print(text)
     else:
         print(render(runs))
+    if ns.session:
+        # Lazy import: session_spend imports this module, and the session
+        # block is display-only — its absence must never break the tables.
+        try:
+            here = str(Path(__file__).resolve().parent)
+            if here not in sys.path:
+                sys.path.insert(0, here)
+            import session_spend
+            repo_root = Path(__file__).resolve().parents[1]
+            root = Path(ns.runs_root) if ns.runs_root else Path.cwd() / "runs"
+            for line in session_spend.session_lines(repo_root, root, maps):
+                print(line)
+        except Exception as e:  # noqa: BLE001 - display-only, always
+            print(f"(session spend unavailable: {e})")
     return 0
 
 
