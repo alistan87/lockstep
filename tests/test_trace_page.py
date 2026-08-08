@@ -371,6 +371,111 @@ def test_the_timeline_still_draws_for_a_three_node_flow(tmp_path):
     assert wf["plotted"] is True and len(wf["rows"]) == 3
 
 
+# ------------------------------------------------------ interaction (§4.6.5)
+
+def test_hover_and_keyboard_focus_show_the_same_thing(tmp_path):
+    """`title` shows on hover only, which would put a value behind a pointer.
+    Every bar is focusable and carries the same text three ways: as its
+    accessible name, as a hint shown on hover, and as a hint shown on focus."""
+    run = page_run(tmp_path)
+    timeline = mission_server.render_timeline(
+        mission_server.waterfall(run, ROOT, now=PAGE_NOW))
+    assert timeline.count('tabindex="0"') == 3        # one per segment
+    assert 'role="img"' in timeline and "aria-label=" in timeline
+    assert '<span class="hint">' in timeline
+    css = mission_server.CSS
+    assert ".seg:hover .hint,.seg:focus-visible .hint{display:block}" in css
+    assert ".seg:focus-visible{outline:" in css
+
+
+def test_a_bars_hit_area_is_bigger_than_the_bar(tmp_path):
+    """A 12px bar is not a target. The hit area takes in the 2px gaps and
+    reaches ~28px, as a pseudo-element so it costs no layout."""
+    css = mission_server.CSS
+    assert ".seg::before{content:\"\";position:absolute;inset:-8px -2px" in css
+
+
+def test_a_hint_on_a_late_bar_cannot_overflow_the_plot(tmp_path):
+    """One of the four defects rendering the mockup caught. A bar past the
+    midpoint anchors its hint to the right edge instead of the left."""
+    run = page_run(tmp_path)
+    # `now` just after the last step ended, so its bar sits in the right half.
+    wf = mission_server.waterfall(run, ROOT, now=T0 + timedelta(minutes=11))
+    late = [s for r in wf["rows"] for s in r["segments"] if s["left"] + s["width"] > 60]
+    assert late, "the fixture needs a bar in the right half for this to mean anything"
+    timeline = mission_server.render_timeline(wf)
+    assert "seg good end" in timeline
+    assert ".seg.end .hint{left:auto;right:0}" in mission_server.CSS
+
+
+def test_the_tail_counters_occupy_a_stable_slot(tmp_path):
+    """Every completion removes a row and increments `N finished`, at 1 Hz. If
+    the counter line only appeared once there was something to count, the
+    chrome below it would jump the first time a step finished."""
+    run = page_run(tmp_path)
+    board = mission_server.render_board(run, ROOT)
+    assert board.count('class="tail"') == 1
+    assert "min-height:29px" in mission_server.CSS
+
+    # ...including when there is nothing to count yet.
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    for rec in state["nodes"].values():
+        rec["status"] = "running"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    assert mv.collapse_tail(run, ROOT) == []
+    assert mission_server.render_board(run, ROOT).count('class="tail"') == 1
+
+
+def test_the_live_pulse_respects_prefers_reduced_motion():
+    css = mission_server.CSS
+    assert "@media (prefers-reduced-motion:reduce){.live .dot{animation:none}}" in css
+
+
+# --------------------------------- the table view is also the fallback (§4.6.6)
+
+def test_forced_colors_and_print_fall_to_the_table_view():
+    """Both are contexts where a positioned bar says nothing. The twin carries
+    every value a bar carries, which is why it exists."""
+    css = mission_server.CSS
+    block = css.split("@media print,(forced-colors:active){")[1].split("\n}")[0]
+    assert ".wf-plot,.stack,.track,.ceil{display:none}" in block
+    assert "#l0,#l1{display:block!important}" in block, "ID selectors beat [hidden]"
+    assert ".viewswitch{display:none}" in block
+
+
+def test_the_table_twin_is_open_by_default(tmp_path):
+    """A `<details>` a browser has not been told to open prints closed."""
+    run = page_run(tmp_path)
+    timeline = mission_server.render_timeline(
+        mission_server.waterfall(run, ROOT, now=PAGE_NOW))
+    assert "<details open><summary>the same thing as a table" in timeline
+
+
+# ---------------------------------------------------- the stat row (§4.6.4)
+
+def test_the_fourth_stat_tile_is_chosen_mechanically(tmp_path):
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    # one approval, and only it is left: `steps_to_decision` says 1
+    assert "your decision" in body and ">next<" in body
+
+    # no approval in the graph at all: the number would be undefined, so the
+    # tile falls back to something that is always countable
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["approve"]["role"] = "work"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "sent back for rework" in body
+
+
+def test_a_large_standalone_number_is_not_tabular(tmp_path):
+    """`tabular-nums` is for the table's columns and the axis ticks."""
+    css = mission_server.CSS
+    tile = css.split(".tile .v{")[1].split("}")[0]
+    assert "tabular-nums" not in tile
+    assert "font-variant-numeric:tabular-nums" in css.split(".tick{")[1].split("}")[0]
+
+
 # ------------------------------------------- the colour and icon contract
 
 def test_the_status_map_keys_are_exactly_the_glossary():

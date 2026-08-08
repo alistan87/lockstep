@@ -488,7 +488,16 @@ body{margin:0;padding:28px 24px 64px;background:var(--plane);color:var(--ink);
 .ico.ser{color:var(--serious)}.ico.mut{color:var(--muted)}.ico.run{color:var(--ink)}
 .note{grid-column:2/-1;color:var(--ink-2);font-size:13px;border-left:2px solid var(--axis);
  padding-left:10px;margin:2px 0 4px}
-.tail{color:var(--muted);font-size:13.5px;padding:8px 8px 0}
+/* A STABLE SLOT, present from the first render even when it is empty. Every
+   completion removes a row and increments `N finished`, at 1 Hz; if the
+   counter line appeared only once there was something to count, the chrome
+   below it would jump the first time a step finished. The prohibition is on
+   CHROME jumping, not on the data changing — a row leaving is data. */
+.tail{color:var(--muted);font-size:13.5px;padding:8px 8px 0;min-height:29px}
+@media (prefers-reduced-motion:no-preference){
+ .step{animation:rowin .18s ease-out}
+ @keyframes rowin{from{opacity:0}to{opacity:1}}
+}
 .wf-plot{position:relative;--gutter:250px}
 .wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
 .wf-row{display:contents}
@@ -508,8 +517,19 @@ body{margin:0;padding:28px 24px 64px;background:var(--plane);color:var(--ink);
 .seg.run{background:transparent;border:2px solid var(--ink)}
 .seg.open::after{content:"";position:absolute;right:-1px;top:-2px;bottom:-2px;width:34px;
  background:linear-gradient(90deg,transparent,var(--surface));border-radius:4px}
+/* The hit area takes in the 2px gaps above and below and reaches ~28px, so a
+   1m step is not a 12px target. It is a pseudo-element, so it costs no layout. */
+.seg::before{content:"";position:absolute;inset:-8px -2px;border-radius:6px}
+.seg:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
 .seg .tip{position:absolute;left:calc(100% + 8px);top:-3px;font-size:12px;color:var(--ink-2);
  white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Hover and keyboard focus show the SAME thing. `title` would show on hover
+   only, which would put a value behind a pointer. */
+.seg .hint{display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:3;
+ background:var(--plane);border:1px solid var(--axis);border-radius:6px;padding:5px 9px;
+ font-size:12px;color:var(--ink-2);white-space:nowrap}
+.seg.end .hint{left:auto;right:0}   /* clamped: a tip must not overflow the plot */
+.seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
 .wf-scale{position:absolute;left:calc(var(--gutter) + 14px);right:0;top:0;bottom:30px;
@@ -533,6 +553,14 @@ pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,Consolas,monospace;
 .feed{display:grid;gap:2px;font-size:13.5px;color:var(--ink-2)}
 .feed div{padding:3px 0}
 .foot{color:var(--muted);font-size:12.5px;margin-top:26px;text-align:center}
+/* Under forced colours or on paper, the page falls to the TABLE VIEW. Both are
+   contexts where a positioned bar says nothing; the twin carries every value a
+   bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
+@media print,(forced-colors:active){
+ .wf-plot,.stack,.track,.ceil{display:none}
+ #l0,#l1{display:block!important}
+ .viewswitch{display:none}
+}
 @media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
 """
 
@@ -604,8 +632,10 @@ def render_board(run_dir: Path, repo_root: Path | None) -> str:
         )
         if row["note"]:
             out.append(f'<div class="note">{e(row["note"])}</div>')
-    for line in mv.collapse_tail(run_dir, repo_root):
-        out.append(f'<div class="tail">{e(line)}</div>')
+    # ONE tail element, always present even when it says nothing: the counters
+    # occupy a stable slot so a completion increments a number in place instead
+    # of inserting a row and shifting everything below it, at 1 Hz.
+    out.append(f'<div class="tail">{e("  ·  ".join(mv.collapse_tail(run_dir, repo_root)))}</div>')
     out.append("</div>")
     return "\n".join(out)
 
@@ -636,11 +666,16 @@ def render_timeline(wf: dict) -> str:
             )
             for seg in row["segments"]:
                 tip = f'<span class="tip">{e(seg["tip"])}</span>' if seg["tip"] else ""
-                openc = " open" if seg["open"] else ""
+                # `end` flips the hint to the right edge for a bar in the right
+                # half of the plot: a tip overflowing the plot was one of the
+                # four defects rendering the mockup caught.
+                extra = ("".join([" open" if seg["open"] else "",
+                                  " end" if seg["left"] + seg["width"] > 60 else ""]))
                 out.append(
-                    f'<div class="seg {e(seg["cls"])}{openc}" '
-                    f'style="left:{seg["left"]:.2f}%;width:{seg["width"]:.2f}%" '
-                    f'title="{e(seg["title"])}">{tip}</div>'
+                    f'<div class="seg {e(seg["cls"])}{extra}" tabindex="0" role="img" '
+                    f'aria-label="{e(seg["title"])}" '
+                    f'style="left:{seg["left"]:.2f}%;width:{seg["width"]:.2f}%">'
+                    f'<span class="hint">{e(seg["title"])}</span>{tip}</div>'
                 )
             out.append("</div></div>")
         out.append('</div><div class="wf-axis">')
@@ -663,18 +698,33 @@ def render_timeline(wf: dict) -> str:
     return "\n".join(out)
 
 
-def _stat_tiles(state: dict, run: dict | None, meter: dict) -> str:
+def _stat_tiles(state: dict, flow: dict | None, run: dict | None, meter: dict) -> str:
+    """Four tiles, and the fourth is chosen mechanically: how far away the
+    human's turn is when the flow has exactly one approval to measure against
+    (`steps_to_decision` returns None otherwise), else how much has been sent
+    back. Sentence-case labels, proportional figures — `tabular-nums` is for
+    the table's columns and the axis ticks, never for a large standalone
+    number."""
     recs = list((state.get("nodes") or {}).values())
     total = len(recs)
     settled = sum(1 for r in recs if r.get("status") in ("done", "skipped"))
     running = sum(1 for r in recs if r.get("status") == "running")
     heals = sum(int(r.get("heal_round") or 0) for r in recs)
     worked = sum((r.get("wall_s") or 0) for r in (run or {}).get("rows", []))
+    to_go = mv.steps_to_decision(state, flow)
+    if to_go is None:
+        fourth = ("sent back for rework", str(heals))
+    elif to_go <= 0:
+        fourth = ("your decision", "recorded")
+    elif to_go == 1:
+        fourth = ("your decision", "next")
+    else:
+        fourth = ("steps to your decision", str(to_go))
     tiles = [
         ("step", f"{min(settled + running, total)} of {total}"),
         ("worked for", mv.format_duration(worked) or "—"),
         ("agent tasks", str(meter["used"])),
-        ("sent back for rework", str(heals)),
+        fourth,
     ]
     return '<div class="stats">' + "".join(
         f'<div class="tile"><div class="k">{e(k)}</div><div class="v">{e(v)}</div></div>'
@@ -861,7 +911,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         '<p class="hero-sub">This page only reads files. Decisions are not made here — '
         'when something needs you, it happens in the terminal.</p>',
 
-        _stat_tiles(state, run, meter),
+        _stat_tiles(state, flow, run, meter),
         _meter_card(meter),
         '<div class="card"><h2>spend</h2><pre>'
         + e("\n".join(spend_lines(run_dir, repo_root, runs_root)))

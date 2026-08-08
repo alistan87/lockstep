@@ -411,6 +411,17 @@ Four things about it that are decisions, not accidents:
   state by construction; a poll does not, so at a segment boundary the client
   would hold segment A's cursor against segment B forever.
 
+Interaction, and the one thing that is not there. Every bar is focusable and
+shows the same hint on hover and on focus (a `title` would put a value behind a
+pointer); the hit area reaches ~28px and the hint flips to the right edge past
+the midpoint so it cannot overflow the plot. The poll holds the previous render
+at reduced opacity rather than flashing a skeleton, and the tail counters
+(`N finished`) sit in a slot that is present from the first render, so a
+completion increments a number instead of inserting a row. Under `forced-colors`
+or print the page falls to the table view. **A row LEAVING is not animated** —
+that needs client-side diffing, which is the one thing the JS may not have; the
+prohibition that stands is on chrome jumping, not on the data changing.
+
 The never-rules are unchanged, and none of them was ever a tier question. The
 page adds only GET routes — no `do_POST`, no form, no write verb — so **the
 decision still happens at a terminal**. Quiescence is still `quiescent.py`'s
