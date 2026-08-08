@@ -141,6 +141,18 @@ def test_replay_suite_bad_expected_exit_fails_the_fixture_not_the_suite(
     assert "bad expected_exit.txt" in out
 
 
-def test_replay_suite_with_no_fixtures_is_a_report_not_a_failure(tmp_path, capsys):
+def test_replay_suite_with_no_fixtures_says_nothing_was_checked(tmp_path, capsys):
+    """An empty net exits 0 — nothing regressed, because nothing ran. That
+    distinction has to be LOUD and on stderr, or this is the exit-0 placeholder
+    the SSSF review rejected as the first thing that will lie to you."""
     assert replay_suite.main(["--fixtures", str(tmp_path / "absent")]) == 0
-    assert "nothing to regress" in capsys.readouterr().out
+    err = capsys.readouterr().err
+    assert "0/0" in err and "NOTHING WAS CHECKED" in err
+    assert "export_fixture.py" in err, "it says how to fix it"
+    assert "ALL-SHELL" in err, "and why the directory is empty"
+
+
+def test_require_fixtures_turns_an_empty_net_into_a_failure(tmp_path):
+    """For a caller that wants coverage rather than an all-clear."""
+    assert replay_suite.main(
+        ["--fixtures", str(tmp_path / "absent"), "--require-fixtures"]) == 1

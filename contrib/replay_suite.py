@@ -14,7 +14,16 @@ being hunted, so there is deliberately no --replay-any here.
 A fixture that recorded a non-zero outcome (a gate block, say) declares it in
 `expected_exit.txt`; the default expectation is 0.
 
-Exit: 0 = every fixture replayed as expected; 1 = any mismatch; 2 = usage.
+WHY THE FIXTURE DIRECTORY MAY BE EMPTY, AND WHAT THAT COSTS. Strict matching is
+the point, and a harness node's input hash includes the LOCAL config digest —
+so a fixture recorded from a harness flow replays only on the machine that
+recorded it. Only an all-shell flow yields a portable one. With no fixtures the
+suite exits 0, because nothing regressed; it says `0/0 — NOTHING WAS CHECKED`
+on stderr so that cannot be read as an all-clear, and `--require-fixtures`
+turns it into a failure for a caller that wants coverage.
+
+Exit: 0 = every fixture replayed as expected; 1 = any mismatch (or an empty net
+under `--require-fixtures`); 2 = usage.
 """
 
 from __future__ import annotations
@@ -72,15 +81,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fixtures", default="tests/fixtures/replay",
                     help="directory of scrubbed run dirs (export_fixture.py output)")
     ap.add_argument("--repo-root", default=".")
+    ap.add_argument("--require-fixtures", action="store_true",
+                    help="fail when there are none, instead of reporting an empty net")
     ns = ap.parse_args(argv)
     fixtures_dir = Path(ns.fixtures)
-    if not fixtures_dir.is_dir():
-        print(f"no fixtures directory at {fixtures_dir} — nothing to regress against")
-        return 0  # an empty net is reported, not failed: fixtures accrue per flow
-    fixtures = sorted(p for p in fixtures_dir.iterdir() if (p / "state.json").exists())
+    fixtures = (sorted(p for p in fixtures_dir.iterdir() if (p / "state.json").exists())
+                if fixtures_dir.is_dir() else [])
     if not fixtures:
-        print(f"no fixtures under {fixtures_dir} — nothing to regress against")
-        return 0
+        # An empty net exits 0 — nothing regressed, because nothing was
+        # checked. That distinction has to be LOUD, or this becomes the
+        # exit-0 placeholder the SSSF review rejected as "the first thing that
+        # will lie to you". It goes to stderr, says zero out of zero, and
+        # `--require-fixtures` is there for a caller that wants coverage
+        # rather than an all-clear.
+        where = fixtures_dir if fixtures_dir.is_dir() else f"{fixtures_dir} (no such directory)"
+        print(f"replay suite: 0/0 — NOTHING WAS CHECKED. No fixtures under {where}.",
+              file=sys.stderr)
+        print("  Record one with: python contrib/export_fixture.py <run_dir> "
+              f"{fixtures_dir}/<name>", file=sys.stderr)
+        print("  Note that only an ALL-SHELL flow gives a portable fixture: a "
+              "harness node's", file=sys.stderr)
+        print("  input hash includes the local config digest, so its recorded "
+              "hashes will not", file=sys.stderr)
+        print("  match on another machine and strict replay will fail there.",
+              file=sys.stderr)
+        return 1 if ns.require_fixtures else 0
     failures = 0
     for fixture in fixtures:
         try:

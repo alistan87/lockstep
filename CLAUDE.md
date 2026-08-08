@@ -35,7 +35,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged
 .venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
-python contrib\replay_suite.py                     # zero-token flow regression over recorded fixtures
+python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
 pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-waiting / failed / stopped
 ```
