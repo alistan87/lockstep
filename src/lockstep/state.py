@@ -123,6 +123,13 @@ class PhaseRecord(BaseModel):
     # Set only on a hash-mismatch (or failed replan) at revalidation time —
     # a wrongly re-billed node is otherwise silent (the r7 heal-text lesson).
     invalidated_by: list[str] | None = None
+    # In-scope paths this node changed, for a node that declared spec.writes:
+    # a COUNT and a run-dir-relative path to the list, never the list. Every
+    # `record` call rewrites the whole of state.json, so a path list on one
+    # node is re-serialised on every subsequent record — and a file is better
+    # evidence at an approval on a 3 000-file codemod anyway.
+    touched_count: int | None = None
+    touched_path: str | None = None
 
 
 class RunState(BaseModel):

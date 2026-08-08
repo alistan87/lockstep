@@ -620,33 +620,37 @@ class Engine:
         locks = self._acquire(tokens)
         scope = [str(w) for w in (node.spec.get("writes") or [])]
         scope_ref = None
-        violations: list[str] = []
+        scope_error: str | None = None
         try:
             self._maybe_snapshot(node)
+            staged_before: set[str] = set()
             if scope and "tree" in tokens:
                 # Only while serialized on the tree: otherwise a concurrent
                 # node's writes would be attributed to this one, and a false
                 # accusation is worse than no check. `verify` warns when a
                 # declared scope lands on an unserialized node.
                 scope_ref = self._scope_baseline(node)
+                if scope_ref is not None:
+                    staged_before = self.workspace.staged_paths()
             raw = self._execute_with_retries(node, executor, work, phase_dir)
             if scope_ref is not None:
-                # INSIDE the token, not after `finally`. Outside it the baseline
-                # comparison measures the next node's tree, so a node that
-                # stayed in scope is accused of its peer's legitimate writes.
-                violations = self._scope_violations(scope_ref, scope)
+                # The WHOLE violation sequence — detect, patch, restore, record —
+                # is INSIDE the token, not after `finally`. Outside it the
+                # baseline comparison measures the next node's tree (so a node
+                # that stayed in scope is accused of its peer's writes), the
+                # evidence patch captures that peer's work, and the restore
+                # reverts the peer's live file while it goes on to record `done`.
+                in_scope, violations = self._scope_changes(scope_ref, scope)
+                if violations:
+                    scope_error = self._quarantine(
+                        node, phase_dir, scope, scope_ref, in_scope, violations, staged_before
+                    )
+                else:
+                    self._record_touched(node, phase_dir, in_scope)
         finally:
             self._release(locks)
-        if violations:
-            self._set_status(
-                node.id,
-                "failed",
-                error=(
-                    f"write scope violated: declares writes={scope} but wrote "
-                    f"{', '.join(violations)} — files left in place, since rollback "
-                    f"never deletes (SPEC §0.1 item 2)"
-                ),
-            )
+        if scope_error is not None:
+            self._set_status(node.id, "failed", error=scope_error)
             return
         self._finish(node, executor, work, phase_dir, raw)
 
@@ -663,12 +667,141 @@ class Engine:
             )
             return None
 
-    def _scope_violations(self, since: SnapshotRef, scope: list[str]) -> list[str]:
+    def _scope_changes(self, since: SnapshotRef, scope: list[str]) -> tuple[list[str], list[str]]:
+        """(in-scope changed paths, violations). Both halves are wanted: the
+        violations to quarantine, the in-scope list as touched-path evidence and
+        to spot a rename OUT of scope (§0.1 T1.3)."""
         try:
             changed = self.workspace.changed_paths(since)
         except WorkspaceError:
-            return []
-        return sorted(p for p in changed if not path_in_scope(p, scope))
+            return [], []
+        in_scope = sorted(p for p in changed if path_in_scope(p, scope))
+        violations = sorted(p for p in changed if not path_in_scope(p, scope))
+        return in_scope, violations
+
+    def _scope_violations(self, since: SnapshotRef, scope: list[str]) -> list[str]:
+        return self._scope_changes(since, scope)[1]
+
+    def _record_touched(self, node: Node, phase_dir: Path, in_scope: list[str]) -> None:
+        """Write the in-scope changed-path list beside the attempt and record a
+        COUNT plus its path — never the list itself (`FileStore.record` rewrites
+        all of state.json on every call). Attempt-scoped, because `phase_dir`
+        survives resume and heal rounds."""
+        rec = self._rec(node.id)
+        name = f"touched-{rec.attempts}.txt"
+        (phase_dir / name).write_text(
+            "".join(f"{p}\n" for p in in_scope), encoding="utf-8"
+        )
+        rec.touched_count = len(in_scope)
+        rec.touched_path = f"phases/{node.id}/{name}"
+        self.store.record(rec)
+
+    def _quarantine(
+        self,
+        node: Node,
+        phase_dir: Path,
+        scope: list[str],
+        scope_ref: SnapshotRef,
+        in_scope: list[str],
+        violations: list[str],
+        staged_before: set[str],
+    ) -> str:
+        """Preserve the blocked attempt, put the tree back, say what happened to
+        every path. Returns the failure message.
+
+        Runs inside the tree token — the mutation is the dangerous half, and
+        outside the token it reverts a concurrent node's live file while that
+        node goes on to record `done`.
+
+        Artifacts are ATTEMPT-scoped, as heal's are (`roles.py:_heal`):
+        `phase_dir` survives resume and heal rounds and `shutil.move` overwrites
+        silently, so fixed names would let attempt 2 destroy the evidence
+        attempt 1 exists to leave.
+
+        In-scope writes are left exactly as they are.
+        """
+        rec = self._rec(node.id)
+        stem = f"out-of-scope-{rec.attempts}"
+        patch_name = f"{stem}.patch"
+        discard = phase_dir / stem
+        outcomes: list[tuple[str, str]] = []
+        failure: str | None = None
+
+        try:
+            # BEFORE any restore (§9.4.4): this is the blocked attempt, and
+            # after the rollback there is nothing left to write down.
+            (phase_dir / patch_name).write_text(
+                self.workspace.diff_patch(scope_ref), encoding="utf-8"
+            )
+        except (WorkspaceError, OSError) as e:
+            failure = f"could not preserve the attempt patch: {e}"
+
+        if failure is None:
+            for p in violations:
+                try:
+                    # One path per call so a part-way failure is attributable:
+                    # a half rollback that reads as a clean one is the failure
+                    # mode this feature exists to prevent.
+                    self.workspace.restore(scope_ref, [p], discard)
+                except (WorkspaceError, OSError) as e:
+                    failure = f"{p}: {e}"
+                    break
+                outcomes.append((
+                    p,
+                    f"moved aside into {stem}/" if (discard / p).exists()
+                    else "restored to its state before this step",
+                ))
+
+        handled = [p for p, _ in outcomes]
+        agents = [p for p in handled if p not in staged_before]
+        operators = [p for p in handled if p in staged_before]
+        if agents:
+            try:
+                self.workspace.unstage(agents)
+            except (WorkspaceError, OSError) as e:
+                failure = f"{failure + '; ' if failure else ''}index not reset: {e}"
+
+        for p, outcome in outcomes:
+            append_event(
+                self.store.run_dir,
+                {"node": node.id, "status": "quarantined", "path": p, "outcome": outcome},
+            )
+        # As heal does after ITS restore: refresh the lineage head, or a
+        # crash-then-resume reads the rollback as external edits.
+        try:
+            _, detail = self.workspace.fingerprint_detail()
+            self.store.mutate(lambda st: setattr(st, "fingerprint_detail", detail))
+        except WorkspaceError:  # pragma: no cover — git tree by construction here
+            pass
+
+        lines = [
+            f"write scope violated: declares writes={scope} but wrote "
+            f"{', '.join(violations)}",
+            f"the blocked attempt is preserved at phases/{node.id}/{patch_name}",
+        ]
+        lines += [f"  {p} — {outcome}" for p, outcome in outcomes]
+        if operators:
+            lines.append(
+                f"  left staged as you had it, index untouched: {', '.join(operators)}"
+            )
+        if failure is not None:
+            unhandled = [p for p in violations if p not in handled]
+            lines.append(
+                f"THE ROLLBACK DID NOT COMPLETE: {failure}"
+                + (f"; not handled: {', '.join(unhandled)}" if unhandled else "")
+                + f" — the tree is part-way back and the whole attempt is in {patch_name}"
+            )
+        moved = [p for p, o in outcomes if o.startswith("moved aside")]
+        deleted_in_scope = [p for p in in_scope if not (self.repo_root / p).exists()]
+        if moved and deleted_in_scope:
+            lines.append(
+                f"an in-scope path is now gone ({', '.join(deleted_in_scope)}) and an "
+                f"out-of-scope path was created ({', '.join(moved)}): if that was a "
+                f"rename out of scope, the delete was in scope and permitted while only "
+                f"the new path was quarantined, so the file is in neither place — its "
+                f"content is in {stem}/"
+            )
+        return "\n".join(lines)
 
     def _maybe_snapshot(self, node: Node) -> None:
         """Baseline snapshot is PROACTIVE: taken immediately before the first

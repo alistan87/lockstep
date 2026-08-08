@@ -94,20 +94,45 @@ file records implementation-level departures below that bar.
   never an input to scheduling, hashing, gating, budgets, or retries. GenAI
   attributes are attached only to `harness`/`fake` nodes — labelling a shell
   subprocess a model call would corrupt any downstream cost view.
-- **2026-08-02 — nodes may declare `spec.writes`**, a repo-root-relative write
-  scope, as an optional key inside the per-kind spec model rather than a new
-  first-class node field. Why: this is the r7 "dedicated per-node write-scope
-  field" candidate, and a first-class field would bump `format_version` 1.0 →
-  1.1 (§15) for a feature that per-kind specs already accommodate. Empty means
-  unconstrained, so every existing flow is unaffected. The driver DETECTS
-  violations after the node finishes (it never sees tool calls) and only while
-  the node holds the `tree` token — otherwise a concurrent node's writes would
-  be misattributed, and `verify` emits `write-scope-unenforced` rather than
-  guessing. Violations fail the node and leave the files in place: rollback
-  never deletes (§0.1 item 2). A new `LOCKSTEP_WRITE_SCOPE` env var carries the
-  scope as a JSON array; `LOCKSTEP_WORKSPACE_SCOPE` is deliberately UNCHANGED
-  because ADDENDUM-A preamble note 2 documents it as a single directory and
-  `lockstep-guard.ts` prefix-matches against it.
+- **2026-08-02, rewritten 2026-08-08 — nodes may declare `spec.writes`**, a
+  repo-root-relative write scope, as an optional key inside the per-kind spec
+  model rather than a new first-class node field. Why: this is the r7
+  "dedicated per-node write-scope field" candidate, and a first-class field
+  would bump `format_version` 1.0 → 1.1 (§15) for a feature that per-kind specs
+  already accommodate. Empty means unconstrained, so every existing flow is
+  unaffected. The driver DETECTS violations rather than preventing them (it
+  never sees tool calls), by diffing a baseline tree taken before the spawn.
+
+  **Detection happens DURING the node, not after it** — inside the same `try`
+  that holds the node's exclusive tokens. Outside that token the diff measures
+  whatever the next node has already written, so a node that stayed in scope is
+  accused of its peer's work. For the same reason every write-capable kind now
+  takes the `tree` token, shell included (`shell.py`); `verify` emits
+  `write-scope-unenforced` only for the classes that still hold none (readonly
+  nodes), rather than guessing.
+
+  **Violations are QUARANTINED, not left in place.** The blocked attempt is
+  preserved as `phases/<node>/out-of-scope-<attempt>.patch` *before* anything is
+  touched; each violating path is then restored to its baseline content, or —
+  if the node created it — moved into `phases/<node>/out-of-scope-<attempt>/`.
+  Rollback still never deletes (§0.1 item 2): the file is moved, and the failure
+  message names every path and its outcome. Artifacts are attempt-scoped because
+  `phase_dir` survives resume and heal rounds. The index entry is reset for
+  violating paths the node itself staged, and **left alone, named in the
+  message, for any path the operator had already staged** before the node ran.
+  A rename out of scope splits into a permitted in-scope delete plus a
+  quarantined creation, leaving the file in neither place; that shape is
+  detected and said out loud. A part-way restore failure reports both the
+  violation and the restore error, and names the paths already handled.
+
+  On success, the in-scope changed-path list is written to
+  `phases/<node>/touched-<attempt>.txt` and the record carries only a count and
+  that path — `FileStore.record` rewrites all of `state.json` on every call.
+
+  A `LOCKSTEP_WRITE_SCOPE` env var carries the scope as a JSON array;
+  `LOCKSTEP_WORKSPACE_SCOPE` is deliberately UNCHANGED because ADDENDUM-A
+  preamble note 2 documents it as a single directory and `lockstep-guard.ts`
+  prefix-matches against it.
 - **2026-08-02 — `lockstep run --replay <run_dir>`** serves recorded results
   instead of spawning. Why: every node is already content-addressed by
   `input_hash` with its result persisted, so replay is a lookup rather than a

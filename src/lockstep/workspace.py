@@ -156,6 +156,39 @@ class GitWorkspace:
         current = self.snapshot()
         return self._git("diff-tree", "-r", "-p", "--no-renames", since.ref, current.ref)
 
+    def staged_paths(self) -> set[str]:
+        """Paths whose INDEX entry differs from HEAD — work someone staged and
+        has not committed.
+
+        Captured before a node runs so quarantine can tell the agent's staging
+        from the operator's: a path the operator had already staged is named in
+        the failure message and left exactly as they left it.
+        """
+        with self._lock:
+            if self._head() == "no-head":
+                # Unborn branch: every index entry is uncommitted by definition.
+                out = self._git("ls-files", "--cached", "-z")
+            else:
+                out = self._git("diff-index", "--cached", "--name-only", "-z", "HEAD")
+        return {p for p in out.split("\0") if p}
+
+    def unstage(self, paths: list[str]) -> None:
+        """Reset each path's index entry to HEAD (removing it where HEAD has no
+        such path).
+
+        An index-safe restore puts the WORKTREE back but deliberately leaves the
+        index alone — which would strand a violating blob in the index, where
+        the next commit picks it up and `snapshot()` (which reads the worktree)
+        can never see it. Quarantine calls this for the paths it reverted.
+        """
+        if not paths:
+            return
+        with self._lock:
+            if self._head() == "no-head":
+                self._git("rm", "--cached", "-q", "--ignore-unmatch", "--", *paths, check=False)
+            else:
+                self._git("reset", "-q", "HEAD", "--", *paths, check=False)
+
     def _in_tree(self, tree: str, rel: str) -> bool:
         proc = subprocess.run(
             ["git", "cat-file", "-e", f"{tree}:{rel}"],
@@ -212,5 +245,14 @@ class NullWorkspace:
     def changed_paths(self, since: SnapshotRef) -> list[str]:
         raise WorkspaceError("NullWorkspace cannot diff")
 
+    def diff_patch(self, since: SnapshotRef) -> str:
+        raise WorkspaceError("NullWorkspace cannot diff")
+
     def restore(self, ref: SnapshotRef, scope: list[str], discard_dir: Path) -> None:
         raise WorkspaceError("NullWorkspace cannot restore")
+
+    def staged_paths(self) -> set[str]:
+        return set()  # no index to protect
+
+    def unstage(self, paths: list[str]) -> None:
+        raise WorkspaceError("NullWorkspace has no index")
