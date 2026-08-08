@@ -14,6 +14,11 @@ mailbox, rotated attempts, approval evidence, snapshots — is sensitive and
 stays behind. The allowlist is written out, not inferred: a scrubber that
 guesses what is sensitive eventually guesses wrong in the expensive direction.
 
+Two FIELDS of the copied `state.json` are cleared as well, because the
+allowlist governs files and these travel inside one: `result_path` (an
+absolute path from the recording machine, which replay ignores) and
+`fingerprint_detail` (a map of that machine's dirty working tree).
+
 What it keeps is still model OUTPUT. The tool lists every file it kept and
 ends by saying so — review before committing a fixture remains a human act.
 Files containing NUL bytes are refused outright (results are text channels;
@@ -23,6 +28,7 @@ a binary result in a fixture is a bug somewhere else).
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -65,7 +71,31 @@ def export(run_dir: Path, dest: Path) -> list[str]:
                         src = item_dir / res
                         if src.exists():
                             _copy(src, dest, src.relative_to(run_dir), kept)
+    _scrub_state(dest / "state.json")
     return kept
+
+
+def _scrub_state(path: Path) -> None:
+    """Drop the two machine-local fields `state.json` carries.
+
+    `result_path` is an ABSOLUTE path from the recording machine — replay
+    deliberately ignores it and reads the phase dir instead (`replay.py`
+    `_read_result`), so it is dead weight that names somebody's home directory
+    in a committed file. `fingerprint_detail` is a path → content-hash map of
+    the recording machine's dirty working tree; nothing in replay reads it.
+
+    The allowlist above decides which FILES leave; this decides which fields
+    of the one structured file do.
+    """
+    if not path.exists():
+        return
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["fingerprint_detail"] = {}
+    for rec in (state.get("nodes") or {}).values():
+        rec["result_path"] = None
+        for irec in (rec.get("items") or {}).values():
+            irec["result_path"] = None
+    path.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:

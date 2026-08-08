@@ -156,3 +156,56 @@ def test_require_fixtures_turns_an_empty_net_into_a_failure(tmp_path):
     """For a caller that wants coverage rather than an all-clear."""
     assert replay_suite.main(
         ["--fixtures", str(tmp_path / "absent"), "--require-fixtures"]) == 1
+
+
+# ----------------------------------------- the committed net, actually run
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_the_committed_fixtures_replay(capsys):
+    """The regression net, run for real over `tests/fixtures/replay`.
+
+    Running the suite from pytest is what makes it a net rather than a command
+    somebody remembers. It costs no tokens and spawns nothing: every executor
+    is wrapped by `ReplayExecutor`, so the recorded result is served and the
+    STRICT `input_hash` comparison is the whole point.
+    """
+    code = replay_suite.main(["--flows", str(ROOT / "flows"),
+                              "--fixtures", str(ROOT / "tests" / "fixtures" / "replay"),
+                              "--repo-root", str(ROOT),
+                              "--require-fixtures"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "0/0" not in out
+    assert "passed" in out
+
+
+def test_the_selftest_flow_is_shell_only_so_its_hashes_are_portable():
+    """A harness node's input hash includes the LOCAL executor-config digest,
+    so a fixture recorded from one replays only on the machine that recorded
+    it. A shell node's is composed from its rendered argv alone. That is the
+    whole reason this flow exists in the shape it does — and the reason a
+    kind change here would quietly make the committed fixture machine-local."""
+    from lockstep.taskgraph import load_flow
+
+    tg, _ = load_flow(ROOT / "flows" / "selftest-replay.tg.json")
+    assert {n.kind for n in tg.nodes} == {"shell"}
+    assert (tg.budget.max_agent_spawns or 0) == 0
+    # and nothing it interpolates comes from an upstream result: every hash
+    # input is declared in the flow file or carried in the recorded args.
+    for node in tg.nodes:
+        assert "{steps." not in json.dumps(node.spec)
+
+
+def test_the_committed_fixture_carries_no_machine_local_paths():
+    """`export_fixture` clears `result_path` and `fingerprint_detail`; this is
+    the assertion that a re-recorded fixture cannot be committed with somebody's
+    home directory in it."""
+    state = json.loads(
+        (ROOT / "tests" / "fixtures" / "replay" / "selftest-replay" / "state.json")
+        .read_text(encoding="utf-8")
+    )
+    assert state["fingerprint_detail"] == {}
+    for rec in state["nodes"].values():
+        assert rec["result_path"] is None

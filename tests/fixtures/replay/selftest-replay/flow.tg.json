@@ -1,0 +1,77 @@
+{
+  "format_version": "1.0",
+  "name": "selftest-replay",
+  "description": "Zero-token self-check, and the repository's PORTABLE replay fixture. Three chained shell gates assert that the three documents everything else cites still carry the sections it cites them for: the domain expert's guide, the driver's operating manual, and the spec. It spawns no model, writes nothing, and reads three files. Its second purpose is structural: a shell node's input hash is composed from its rendered argv ALONE, while a harness node's includes the local executor-config digest — so this is the only shape of flow whose recorded hashes match on a machine other than the one that recorded them, which is what `contrib/replay_suite.py` needs in order to be a regression net rather than an empty one. Everything it interpolates comes from `args`, never from `{steps...}`, for the same reason: keep every hash input declared in the flow file and in the recorded args, where a fixture carries them. Re-record with `contrib/export_fixture.py` after any deliberate change to hash composition.",
+  "budget": {
+    "max_agent_spawns": 0,
+    "max_run_minutes": 5
+  },
+  "args": {
+    "guide": "docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md",
+    "guide_sections": "The screen,What you never have to do,Saying STOP",
+    "driver": "docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md",
+    "driver_sections": "What you must never do,The standing bargain",
+    "spec": "docs/spec/SPEC.md",
+    "spec_sections": "Static verification,Execution,Run state on disk"
+  },
+  "nodes": [
+    {
+      "id": "guide-sections",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.required_sections",
+          "{args.guide}",
+          "{args.guide_sections}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 60
+    },
+    {
+      "id": "driver-sections",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "guide-sections"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.required_sections",
+          "{args.driver}",
+          "{args.driver_sections}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 60
+    },
+    {
+      "id": "spec-sections",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "driver-sections"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.required_sections",
+          "{args.spec}",
+          "{args.spec_sections}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 60,
+      "final": true
+    }
+  ]
+}

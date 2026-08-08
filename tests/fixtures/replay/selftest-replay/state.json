@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0",
+  "flow_name": "selftest-replay",
+  "flow_hash": "fa51873ae695bbec9b11f51177f0353dc59a788ef86d6c73bd9cddc12351e743",
+  "format_version": "1.0",
+  "args": {
+    "guide": "docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md",
+    "guide_sections": "The screen,What you never have to do,Saying STOP",
+    "driver": "docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md",
+    "driver_sections": "What you must never do,The standing bargain",
+    "spec": "docs/spec/SPEC.md",
+    "spec_sections": "Static verification,Execution,Run state on disk"
+  },
+  "nodes": {
+    "guide-sections": {
+      "node_id": "guide-sections",
+      "role": "gate",
+      "kind": "shell",
+      "status": "done",
+      "input_hash": "1ccfa38d4332658e277f9b9b0a08584d7418872f89523b316c6754f3f59b5678",
+      "workspace_fingerprint": "715c99a2aa5175e168d684929ad9c49fe04727ba73a54cc8011f5dd225d5315a",
+      "started_at": "2026-08-08T23:19:20.712251Z",
+      "ended_at": "2026-08-08T23:19:20.800144Z",
+      "attempts": 1,
+      "heal_round": 0,
+      "result_path": null,
+      "error": null,
+      "items": {},
+      "hash_parts": {
+        "argv": "6f12588b7a6012b3a8ffc39459208a0e0c2a23a4df480e4ed11374c743529b32"
+      },
+      "invalidated_by": null,
+      "touched_count": null,
+      "touched_path": null
+    },
+    "driver-sections": {
+      "node_id": "driver-sections",
+      "role": "gate",
+      "kind": "shell",
+      "status": "done",
+      "input_hash": "9129f0cf90a0f4dece0a424e1f5b5b6f1557008918260a04088c96a7b38fcf74",
+      "workspace_fingerprint": "715c99a2aa5175e168d684929ad9c49fe04727ba73a54cc8011f5dd225d5315a",
+      "started_at": "2026-08-08T23:19:20.806162Z",
+      "ended_at": "2026-08-08T23:19:20.897113Z",
+      "attempts": 1,
+      "heal_round": 0,
+      "result_path": null,
+      "error": null,
+      "items": {},
+      "hash_parts": {
+        "argv": "41f34a4b5ddb9817a60362c9764eb4cba1e0a943c32b7650d9a7ea736f27c88e"
+      },
+      "invalidated_by": null,
+      "touched_count": null,
+      "touched_path": null
+    },
+    "spec-sections": {
+      "node_id": "spec-sections",
+      "role": "work",
+      "kind": "shell",
+      "status": "done",
+      "input_hash": "ed0026c4c494bd1ae9fdc6356f5d3309bf707fa5f26f30bd73ba44a6bac7290b",
+      "workspace_fingerprint": "715c99a2aa5175e168d684929ad9c49fe04727ba73a54cc8011f5dd225d5315a",
+      "started_at": "2026-08-08T23:19:20.902148Z",
+      "ended_at": "2026-08-08T23:19:20.986322Z",
+      "attempts": 1,
+      "heal_round": 0,
+      "result_path": null,
+      "error": null,
+      "items": {},
+      "hash_parts": {
+        "argv": "8e495777fad0213be4c04752fe5dcad1533536327189d924968f5ad59b9f5ee4"
+      },
+      "invalidated_by": null,
+      "touched_count": null,
+      "touched_path": null
+    }
+  },
+  "verdicts": {
+    "guide-sections": "pass",
+    "driver-sections": "pass"
+  },
+  "token_spawns": 0,
+  "started_at": "2026-08-08T23:19:20.709208Z",
+  "fingerprint_detail": {},
+  "workspace_kind": "git",
+  "heal_baselines": {},
+  "heal_texts": {}
+}

@@ -35,6 +35,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged
 .venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
+.venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
 pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-waiting / failed / stopped
@@ -42,7 +43,14 @@ pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-w
 
 Deterministic gate bodies live in `src/lockstep/gates/` (invoked as
 `python -m lockstep.gates.<name>` from shell gate nodes — tested programs, not
-inline one-liners; see FLOW-AUTHORING). Factory flows (release-cut, codemod
+inline one-liners; see FLOW-AUTHORING). `flows/selftest-replay.tg.json` is the
+one flow that must stay **shell-only**: a harness node's input hash includes the
+local executor-config digest, so only an all-shell flow yields a fixture whose
+recorded hashes match on another machine — which is what makes
+`tests/fixtures/replay/` a regression net instead of an empty directory. It
+regresses the ENGINE (hash composition, contracts, gate handling); running it
+for real regresses the DOCS it checks. Re-record after any deliberate change to
+hash composition. Factory flows (release-cut, codemod
 propose/apply, triage-intake, research-report, status-digest, run-postmortem)
 live in `flows/factory/` with custom contracts in `flows/factory_contracts.py`;
 `contrib/bakeoff_gen.py` generates the harness-bakeoff flow from lockstep.toml.
