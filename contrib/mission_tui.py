@@ -226,6 +226,13 @@ def compose(run_dir: Path, repo_root: Path, spend: list[str], session: list[str]
     frame += ["-" * mv.WIDTH, f"{CYAN}ACTIVITY{RESET}"]
     frame += ["  " + ln for ln in mv.activity_lines(run_dir, repo_root=repo_root)]
 
+    # The question card, verbatim. The DE guide promises a clarification's exact
+    # words appear in the ACTIVITY area and only cockpit.ps1 kept that promise —
+    # no surface may carry the banner without the words.
+    card = mv.question_card(run_dir)
+    if card:
+        frame += [""] + [f"{CYAN}  {ln}{RESET}" for ln in card.splitlines()]
+
     state = mv.read_json(Path(run_dir) / "state.json")
     if mv.needs_you(state):
         frame += ["", f"{RED}  NEEDS YOU - read the approval pane, or the chat{RESET}"]

@@ -319,24 +319,53 @@ def _ts(s: str) -> datetime | None:
         return None
 
 
-def wall_and_heals(events: list[dict]) -> tuple[dict[str, float], dict[str, int]]:
-    wall: dict[str, float] = {}
-    heals: dict[str, int] = {}
-    open_at: dict[str, datetime] = {}
+def node_intervals(events: list[dict]) -> dict[str, list[tuple[str, str | None]]]:
+    """node -> the `running` → terminal windows it actually ran in, as ISO
+    timestamp pairs. A still-open interval ends `None`.
+
+    Exposed BEFORE they are summed because `state.json`'s `started_at` is the
+    FIRST start and `ended_at` the LAST end, kept across every attempt, heal
+    round and resume — a node blocked overnight would draw a fourteen-hour bar
+    of which minutes were work. A timeline draws one segment per interval and
+    `wall_and_heals` sums the same intervals, so the picture and the number
+    cannot disagree.
+    """
+    out: dict[str, list[tuple[str, str | None]]] = {}
+    open_idx: dict[str, int] = {}
     for e in events:
         node, status = e.get("node"), e.get("status")
-        if not node:
+        if not node or status == "heal-round":
             continue
-        if status == "heal-round":
-            heals[node] = heals.get(node, 0) + 1
-            continue
-        t = _ts(e.get("ts", ""))
-        if t is None:
+        ts = e.get("ts", "")
+        if _ts(ts) is None:
             continue
         if status == "running":
-            open_at[node] = t
-        elif status in TERMINAL and node in open_at:
-            wall[node] = wall.get(node, 0.0) + (t - open_at.pop(node)).total_seconds()
+            # A second `running` without a terminal between (a crash, then a
+            # resume) leaves the first interval open rather than fusing them.
+            out.setdefault(node, []).append((ts, None))
+            open_idx[node] = len(out[node]) - 1
+        elif status in TERMINAL and node in open_idx:
+            i = open_idx.pop(node)
+            out[node][i] = (out[node][i][0], ts)
+    return out
+
+
+def wall_and_heals(events: list[dict]) -> tuple[dict[str, float], dict[str, int]]:
+    """(node -> seconds actually running, node -> heal rounds). The seconds are
+    summed from `node_intervals`, so the table twin and the timeline agree."""
+    heals: dict[str, int] = {}
+    for e in events:
+        if e.get("node") and e.get("status") == "heal-round":
+            heals[e["node"]] = heals.get(e["node"], 0) + 1
+    wall: dict[str, float] = {}
+    for node, spans in node_intervals(events).items():
+        closed = [(a, b) for a, b in spans if b is not None]
+        if not closed:
+            continue
+        wall[node] = sum(
+            (_ts(b) - _ts(a)).total_seconds()  # type: ignore[operator]
+            for a, b in closed
+        )
     return wall, heals
 
 

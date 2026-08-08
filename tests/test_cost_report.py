@@ -287,3 +287,65 @@ def test_last_envelope_ignores_nested_objects(tmp_path):
 def test_not_a_run_dir_errors(tmp_path, capsys):
     assert cost_report.main([str(tmp_path)]) == 2
     assert "no state.json" in capsys.readouterr().err
+
+
+# ------------------------------------------------ per-node run intervals
+
+def _ev(node: str, status: str, ts: str) -> dict:
+    return {"ts": ts, "node": node, "status": status}
+
+
+def test_node_intervals_keeps_every_window_separate():
+    """`state.json` keeps the FIRST start and the LAST end across every attempt,
+    heal round and resume, so a node blocked overnight would draw a fourteen-
+    hour bar of which minutes were work. The true windows are in the journal."""
+    events = [
+        _ev("a", "running", "2026-08-01T10:00:00Z"),
+        _ev("a", "blocked", "2026-08-01T10:01:00Z"),
+        _ev("a", "heal-round", "2026-08-01T10:01:30Z"),
+        _ev("a", "running", "2026-08-01T14:00:00Z"),
+        _ev("a", "done", "2026-08-01T14:02:00Z"),
+    ]
+    assert cost_report.node_intervals(events) == {
+        "a": [("2026-08-01T10:00:00Z", "2026-08-01T10:01:00Z"),
+              ("2026-08-01T14:00:00Z", "2026-08-01T14:02:00Z")],
+    }
+
+
+def test_an_open_interval_ends_none():
+    events = [_ev("a", "running", "2026-08-01T10:00:00Z")]
+    assert cost_report.node_intervals(events) == {"a": [("2026-08-01T10:00:00Z", None)]}
+
+
+def test_a_crash_and_resume_leaves_the_first_interval_open():
+    """Two `running` with no terminal between is a crash, then a resume. Fusing
+    them into one span would draw the dead time as work."""
+    events = [
+        _ev("a", "running", "2026-08-01T10:00:00Z"),
+        _ev("a", "running", "2026-08-01T11:00:00Z"),
+        _ev("a", "done", "2026-08-01T11:00:30Z"),
+    ]
+    assert cost_report.node_intervals(events) == {
+        "a": [("2026-08-01T10:00:00Z", None),
+              ("2026-08-01T11:00:00Z", "2026-08-01T11:00:30Z")],
+    }
+
+
+def test_wall_and_heals_sums_the_same_intervals_a_timeline_draws():
+    """The picture and the number cannot disagree, because they are one walk."""
+    events = [
+        _ev("a", "running", "2026-08-01T10:00:00Z"),
+        _ev("a", "blocked", "2026-08-01T10:01:00Z"),
+        _ev("a", "heal-round", "2026-08-01T10:01:30Z"),
+        _ev("a", "running", "2026-08-01T14:00:00Z"),
+        _ev("a", "done", "2026-08-01T14:02:00Z"),
+    ]
+    wall, heals = cost_report.wall_and_heals(events)
+    assert wall == {"a": 180.0}
+    assert heals == {"a": 1}
+    spans = cost_report.node_intervals(events)["a"]
+    summed = sum(
+        (cost_report._ts(b) - cost_report._ts(a)).total_seconds()
+        for a, b in spans if b
+    )
+    assert summed == wall["a"]

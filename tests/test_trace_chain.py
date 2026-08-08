@@ -14,7 +14,7 @@ from pathlib import Path
 
 from lockstep import EXIT_OK, EXIT_VERIFY
 from lockstep.cli import main
-from lockstep.state import append_event, chain_head, read_events, verify_trace
+from lockstep.state import append_event, chain_head, read_events, trace_status, verify_trace
 
 from conftest import build
 
@@ -183,3 +183,62 @@ def test_unchained_run_is_reported_not_claimed_verified(tmp_path, git_repo, caps
     out = capsys.readouterr().out
     assert "unchained" in out.lower()
     assert "verified" not in out.lower()
+
+
+# ---------------------------------------------- the four-way render rule
+
+def test_trace_status_reports_total_and_chained(tmp_path, git_repo):
+    """`ok` alone cannot be rendered. A tamper returns ok=False with a
+    NON-EMPTY head (the last good digest) and a healthy fresh run returns
+    ok=True with an empty one, so "green tick iff head" is wrong in both
+    directions. `total`/`chained` are what tell the three ok cases apart."""
+    h = build(tmp_path, FLOW, git_repo)
+    assert h.engine.run() == EXIT_OK
+    s = trace_status(h.run_dir)
+    assert s["ok"] is True
+    assert s["head"] and s["total"] == s["chained"] > 0
+    assert s["first_bad_line"] is None
+
+
+def test_a_healthy_empty_journal_is_nothing_to_verify(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    s = trace_status(run)
+    assert (s["ok"], s["head"], s["total"], s["chained"]) == (True, "", 0, 0)
+
+
+def test_an_unchained_journal_is_reported_as_unchained(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "events.jsonl").write_text(
+        json.dumps({"ts": "2026-08-01T10:00:00Z", "node": "a", "status": "done"}) + "\n",
+        encoding="utf-8",
+    )
+    s = trace_status(run)
+    assert s["ok"] is True and s["total"] == 1 and s["chained"] == 0
+    assert "unchained" in s["detail"]
+
+
+def test_a_tamper_is_broken_even_though_the_head_is_not_empty(tmp_path, git_repo):
+    h = build(tmp_path, FLOW, git_repo)
+    assert h.engine.run() == EXIT_OK
+    path = h.run_dir / "events.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    doc = json.loads(lines[2])
+    doc["status"] = "skipped"
+    lines[2] = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    s = trace_status(h.run_dir)
+    assert s["ok"] is False
+    assert s["head"], "a tamper leaves the last GOOD digest — rendering it as verified is the bug"
+    assert s["first_bad_line"] == 3
+
+
+def test_verify_trace_is_the_four_tuple_view_of_trace_status(tmp_path, git_repo):
+    h = build(tmp_path, FLOW, git_repo)
+    assert h.engine.run() == EXIT_OK
+    s = trace_status(h.run_dir)
+    assert verify_trace(h.run_dir) == (
+        s["ok"], s["head"], s["first_bad_line"], s["detail"]
+    )

@@ -280,29 +280,30 @@ def node_word(node_id: str, rec: dict, budgets: dict[str, int]) -> str:
     return word
 
 
-def mission_rows(run_dir: Path, repo_root: Path | None = None,
-                 now: datetime | None = None) -> list[tuple[str | None, str]]:
-    """The DE tier, collapsed, as (node_id | None, text) rows.
-
-    Rows carry their node id so a consumer can offer a drill-down without
-    re-deriving which line is which — matching a rendered line back to a node by
-    string prefix is the kind of cleverness that selects the wrong step the
-    first time a label changes.
+def _walk_steps(run_dir: Path, repo_root: Path | None = None, *, collapsed: bool = True):
+    """(state, flow, rows, counters) — the ONE implementation of the collapse
+    rules. `mission_rows` formats it for a terminal, `step_rows` hands it to a
+    caller that has its own layout; neither reimplements the other.
 
     What is NEVER collapsed: anything running, anything needing the human,
     anything that failed, anything sent back for rework, and any node that
     dropped a mission.txt. Collapsing is applied to the quiet majority so the
     loud minority is legible — not the other way round.
+
+    `collapsed=False` returns every node in recorded order: a timeline shows
+    every step by definition, so it is a different rendering of the step list,
+    not an expansion of the collapsed one.
     """
     run_dir = Path(run_dir)
     state = read_json(run_dir / "state.json")
     if state is None:
-        return [(None, "(reading state...)")]
+        return None, None, [], {}
     flow = read_json(run_dir / "flow.tg.json")
     budgets = heal_budgets(flow)
     labels = load_labels(run_dir, repo_root)
+    kinds = {n.get("id"): n.get("kind") for n in ((flow or {}).get("nodes") or [])}
 
-    rows: list[tuple[str | None, str]] = [(None, headline(state, flow, now=now)), (None, "")]
+    rows: list[dict] = []
     collapsed_done = collapsed_skip = pending_shown = pending_hidden = 0
 
     for node_id, rec in (state.get("nodes") or {}).items():
@@ -312,36 +313,108 @@ def mission_rows(run_dir: Path, repo_root: Path | None = None,
         note_path = run_dir / "phases" / node_id / "mission.txt"
         has_note = note_path.is_file()
 
-        if status == "done" and not healed and not is_map and not has_note:
-            collapsed_done += 1
-            continue
-        if status == "skipped":
-            collapsed_skip += 1
-            continue
-        if status == "pending" and not healed:
-            if pending_shown >= 3:
-                pending_hidden += 1
+        if collapsed:
+            if status == "done" and not healed and not is_map and not has_note:
+                collapsed_done += 1
                 continue
-            pending_shown += 1
+            if status == "skipped":
+                collapsed_skip += 1
+                continue
+            if status == "pending" and not healed:
+                if pending_shown >= 3:
+                    pending_hidden += 1
+                    continue
+                pending_shown += 1
 
-        name = label_for(labels, node_id)
-        if len(name) > LABEL_WIDTH:
-            name = name[: LABEL_WIDTH - 1] + "…"
-        rows.append((node_id, f"{name:<{LABEL_WIDTH}} {node_word(node_id, rec, budgets)}"))
-
+        note = ""
         if has_note:
             body = read_text(note_path) or ""
-            first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
-            if first:
-                rows.append((None, f"{'':<{LABEL_WIDTH}}   {first}"))
+            note = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
 
-    if pending_hidden:
-        rows.append((None, f"{'':<{LABEL_WIDTH}} + {pending_hidden} more waiting"))
+        rows.append({
+            "node_id": node_id,
+            "label": label_for(labels, node_id),
+            "word": node_word(node_id, rec, budgets),
+            "status": status or "",
+            "icon": COST_ICON.get(status, "○"),
+            "note": note,
+            "kind": kinds.get(node_id) or rec.get("kind") or "",
+        })
+
+    counters = {
+        "pending_hidden": pending_hidden,
+        "collapsed_done": collapsed_done,
+        "collapsed_skip": collapsed_skip,
+    }
+    return state, flow, rows, counters
+
+
+def step_rows(run_dir: Path, repo_root: Path | None = None, *,
+              collapsed: bool = True) -> list[dict]:
+    """One dict per step: `{node_id, label, word, status, icon, note, kind}`.
+
+    `mission_rows` returns preformatted terminal strings — `f"{name:<34} {word}"`
+    with a 33-character truncation — and there was no accessor that returned the
+    parts separately. Shipping 72-column padding into HTML, or re-splitting it
+    in JavaScript, would each put a rendered word outside pytest's reach.
+
+    `icon` is the existing `COST_ICON`; `word` is `node_word`. No new glyphs and
+    no second glossary.
+    """
+    return _walk_steps(run_dir, repo_root, collapsed=collapsed)[2]
+
+
+def collapse_tail(run_dir: Path, repo_root: Path | None = None) -> list[str]:
+    """The rows `mission_rows` SYNTHESIZES rather than reads: `+ N more waiting`
+    and `N finished, M not needed`. They have no per-node counterpart, which is
+    why L0→L1 is a switch and not an expansion — a caller that shows every step
+    must not show these, and one that collapses must."""
+    counters = _walk_steps(run_dir, repo_root)[3]
+    out: list[str] = []
+    if counters.get("pending_hidden"):
+        out.append(f"+ {counters['pending_hidden']} more waiting")
+    counts = []
+    if counters.get("collapsed_done"):
+        counts.append(f"{counters['collapsed_done']} finished")
+    if counters.get("collapsed_skip"):
+        counts.append(f"{counters['collapsed_skip']} not needed")
+    if counts:
+        out.append(", ".join(counts))
+    return out
+
+
+def mission_rows(run_dir: Path, repo_root: Path | None = None,
+                 now: datetime | None = None) -> list[tuple[str | None, str]]:
+    """The DE tier, collapsed, as (node_id | None, text) rows.
+
+    Rows carry their node id so a consumer can offer a drill-down without
+    re-deriving which line is which — matching a rendered line back to a node by
+    string prefix is the kind of cleverness that selects the wrong step the
+    first time a label changes.
+
+    The terminal rendering stays the thing that FORMATS: `step_rows` supplies
+    the parts, this pads them.
+    """
+    state, flow, steps, counters = _walk_steps(run_dir, repo_root)
+    if state is None:
+        return [(None, "(reading state...)")]
+
+    rows: list[tuple[str | None, str]] = [(None, headline(state, flow, now=now)), (None, "")]
+    for step in steps:
+        name = step["label"]
+        if len(name) > LABEL_WIDTH:
+            name = name[: LABEL_WIDTH - 1] + "…"
+        rows.append((step["node_id"], f"{name:<{LABEL_WIDTH}} {step['word']}"))
+        if step["note"]:
+            rows.append((None, f"{'':<{LABEL_WIDTH}}   {step['note']}"))
+
+    if counters["pending_hidden"]:
+        rows.append((None, f"{'':<{LABEL_WIDTH}} + {counters['pending_hidden']} more waiting"))
     tail = []
-    if collapsed_done:
-        tail.append(f"{collapsed_done} finished")
-    if collapsed_skip:
-        tail.append(f"{collapsed_skip} not needed")
+    if counters["collapsed_done"]:
+        tail.append(f"{counters['collapsed_done']} finished")
+    if counters["collapsed_skip"]:
+        tail.append(f"{counters['collapsed_skip']} not needed")
     if tail:
         rows += [(None, ""), (None, f"{'':<{LABEL_WIDTH}} {', '.join(tail)}")]
     return rows
@@ -548,9 +621,123 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None) -> l
 
 
 def needs_you(state: dict | None) -> bool:
+    """ANY blocked node — a clarify gate as much as an approval. Not the
+    handover predicate: that is `quiescent.py`'s, and nothing here re-derives
+    it. A surface deciding whether to show approval evidence must use
+    `approval_waiting`, or it puts an approval's evidence on screen at a
+    clarification, where there is no approval and no decision to make."""
     if not state:
         return False
     return any(r.get("status") == "blocked" for r in (state.get("nodes") or {}).values())
+
+
+# --------------------------------------------------- questions and evidence
+
+def question_card(run_dir: Path) -> str | None:
+    """`<run_dir>/question-card.txt`, verbatim, or None.
+
+    The DE guide promises that at a clarification "the exact words the system
+    used will appear on screen in the ACTIVITY area" — and only `cockpit.ps1`
+    rendered the file. Neither this module nor the TUI read it, so every
+    non-PowerShell surface carried the banner without the words. A pre-existing
+    broken promise, not new work.
+    """
+    text = read_text(Path(run_dir) / "question-card.txt")
+    if text is None or not text.strip():
+        return None
+    return text
+
+
+def approval_waiting(run_dir: Path) -> str | None:
+    """The node id of the one approval awaiting a decision, or None.
+
+    Delegates to `quiescent.check` — the predicate that decides a handover is
+    the predicate that decides whether evidence belongs on screen, and there is
+    exactly one of it.
+    """
+    try:
+        import quiescent
+        approvals, blockers = quiescent.check(Path(run_dir))
+    except Exception:  # noqa: BLE001 - a view never raises
+        return None
+    if blockers or len(approvals) != 1:
+        return None
+    return approvals[0]
+
+
+def evidence_writer(flow: dict | None, approval_id: str | None) -> str | None:
+    """Which node writes `approval-evidence.txt`, from the run's own flow copy.
+
+    Mechanical, in two steps and no further: a shell node whose argv mentions
+    `render_evidence`, else the approval's single direct shell dependency.
+    Neither found means we cannot say — and saying so beats guessing, because
+    the answer decides whether the DE is told their evidence is stale.
+    """
+    nodes = (flow or {}).get("nodes") or []
+    for n in nodes:
+        cmd = n.get("spec", {}).get("cmd") or []
+        if any("render_evidence" in str(part) for part in cmd):
+            return n.get("id")
+    if approval_id:
+        by_id = {n.get("id"): n for n in nodes}
+        approval = by_id.get(approval_id) or {}
+        shells = [d for d in (approval.get("depends_on") or [])
+                  if (by_id.get(d) or {}).get("kind") == "shell"]
+        if len(shells) == 1:
+            return shells[0]
+    return None
+
+
+def evidence_status(run_dir: Path) -> dict | None:
+    """The evidence a waiting approval is decided from, and whether it is fresh.
+
+    `{approval, path, text, stale, writer}` — or None when no approval waits.
+    `stale` is None when freshness cannot be established.
+
+    `approval-evidence.txt` is a FIXED path holding a point-in-time snapshot
+    (`render_evidence.impact()` counts `git status` at render time), so a later
+    segment overwrites it and a stale one survives. Freshness is the file
+    against **the writing node's most recent run interval** — not against the
+    approval's `started_at`, which is stamped when the approval goes running,
+    i.e. always AFTER the render node wrote the file, so every fresh file would
+    be flagged stale.
+    """
+    run_dir = Path(run_dir)
+    approval = approval_waiting(run_dir)
+    if approval is None:
+        return None
+    path = run_dir / "approval-evidence.txt"
+    text = read_text(path)
+    if text is None:
+        return {"approval": approval, "path": str(path), "text": None,
+                "stale": None, "writer": None}
+
+    flow = read_json(run_dir / "flow.tg.json")
+    writer = evidence_writer(flow, approval)
+    stale: bool | None = None
+    if writer:
+        try:
+            import cost_report
+            spans = cost_report.node_intervals(cost_report._read_events(run_dir)).get(writer) or []
+            starts = [_parse_ts(a) for a, _ in spans]
+            last = max([s for s in starts if s], default=None)
+            if last is not None:
+                written = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                stale = written < last
+        except Exception:  # noqa: BLE001 - a view never raises
+            stale = None
+    return {"approval": approval, "path": str(path), "text": text,
+            "stale": stale, "writer": writer}
+
+
+def rejection_text(run_dir: Path) -> str | None:
+    """`<run_dir>/rejection.txt` — the human's own words, the one artifact the
+    doctrine singles out as theirs. Reachable, never automatic: when an
+    approval is waiting, its evidence is what is on screen."""
+    text = read_text(Path(run_dir) / "rejection.txt")
+    if text is None or not text.strip():
+        return None
+    return text
 
 
 # --------------------------------------------------------------- COST panel
@@ -587,8 +774,13 @@ def _cost_str(v: float | None) -> str | None:
     return f"${v:.2f}" if v >= 0.01 else f"${v:.4f}"
 
 
-def _elapsed_str(seconds: float | None) -> str | None:
-    """pi-taskflow's elapsed: 5s / 3m30s / 1h05m."""
+def format_duration(seconds: float | None) -> str | None:
+    """pi-taskflow's elapsed: 5s / 3m30s / 1h05m.
+
+    Public because a time axis needs a duration renderer and the page must not
+    have one of its own: a formatter in the browser is a rendering pytest
+    cannot execute. It was `_elapsed_str`, private and cost-panel-only.
+    """
     if seconds is None:
         return None
     s = int(seconds)
@@ -597,6 +789,23 @@ def _elapsed_str(seconds: float | None) -> str | None:
     if s < 3600:
         return f"{s // 60}m{s % 60:02d}s"
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
+def format_clock(iso: str | None, tz=None) -> str | None:
+    """An absolute wall-clock tick label, `HH:MM`.
+
+    A SECOND formatter, not a variant of the first: a time axis carries clock
+    times and a running step carries a duration, and one function cannot
+    produce both. Local time by default — the reader is watching a run now;
+    `tz` pins it for a test.
+    """
+    stamp = _parse_ts(iso)
+    if stamp is None:
+        return None
+    return stamp.astimezone(tz).strftime("%H:%M")
+
+
+_elapsed_str = format_duration  # the cost panel's original name
 
 
 def _short_model(model: str | None) -> str | None:

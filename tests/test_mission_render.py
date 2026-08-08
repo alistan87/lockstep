@@ -15,6 +15,7 @@ cannot drift apart quietly.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -412,6 +413,158 @@ def test_topo_layers_orders_dependents_after_dependencies():
     assert mv.topo_layers(flow, ["a", "b", "c", "d"]) == [["a"], ["b", "c"], ["d"]]
     # nodes the flow does not know come back as a final layer, state order
     assert mv.topo_layers(None, ["x", "y"]) == [["x", "y"]]
+
+
+# ------------------------------------------- the accessors the page needs
+
+def test_step_rows_carry_the_parts_mission_rows_formats(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done"), "b": rec("running")},
+                   flow={"nodes": [{"id": "a", "kind": "shell"},
+                                   {"id": "b", "kind": "harness"}]})
+    (run / "flow.labels.json").write_text(
+        json.dumps({"nodes": {"b": "write the thing"}}), encoding="utf-8")
+    rows = {r["node_id"]: r for r in mv.step_rows(run)}
+    assert set(rows) == {"b"}, "a done node collapses, as on the board"
+    assert rows["b"] == {
+        "node_id": "b", "label": "write the thing", "word": "running",
+        "status": "running", "icon": mv.COST_ICON["running"], "note": "", "kind": "harness",
+    }
+
+
+def test_step_rows_uncollapsed_returns_every_node(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done"), "b": rec("skipped"), "c": rec("running")})
+    assert [r["node_id"] for r in mv.step_rows(run, collapsed=False)] == ["a", "b", "c"]
+
+
+def test_mission_rows_is_step_rows_formatted(tmp_path):
+    """The terminal rendering stays the thing that FORMATS — one collapse
+    implementation, two renderings."""
+    run = make_run(tmp_path, {f"n{i}": rec("pending") for i in range(6)} |
+                             {"hot": rec("failed")})
+    board = [nid for nid, _ in mv.mission_rows(run) if nid]
+    assert board == [r["node_id"] for r in mv.step_rows(run)]
+
+
+def test_collapse_tail_carries_the_synthesized_rows(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done"), "b": rec("done"), "c": rec("skipped"),
+                              **{f"p{i}": rec("pending") for i in range(5)}})
+    assert mv.collapse_tail(run) == ["+ 2 more waiting", "2 finished, 1 not needed"]
+    # and none of them has a per-node counterpart, which is why L0->L1 is a switch
+    assert all(r["node_id"] for r in mv.step_rows(run))
+
+
+def test_a_note_is_carried_on_the_row_not_only_in_the_text(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done")})
+    phase = run / "phases" / "a"
+    phase.mkdir(parents=True, exist_ok=True)
+    (phase / "mission.txt").write_text("found three broken links\n", encoding="utf-8")
+    rows = mv.step_rows(run)
+    assert rows[0]["note"] == "found three broken links"
+    assert any("found three broken links" in text for _, text in mv.mission_rows(run))
+
+
+def test_format_duration_is_the_cost_panels_own_shape():
+    assert mv.format_duration(5) == "5s"
+    assert mv.format_duration(210) == "3m30s"
+    assert mv.format_duration(3900) == "1h05m"
+    assert mv.format_duration(None) is None
+    assert mv._elapsed_str is mv.format_duration
+
+
+def test_format_clock_renders_an_absolute_tick():
+    assert mv.format_clock("2026-08-03T09:07:00Z", tz=timezone.utc) == "09:07"
+    assert mv.format_clock("2026-08-03T23:59:59Z", tz=timezone.utc) == "23:59"
+    assert mv.format_clock(None) is None
+    assert mv.format_clock("not a time") is None
+
+
+def test_the_question_card_is_returned_verbatim(tmp_path):
+    run = make_run(tmp_path, {"g": rec("blocked", role="gate")})
+    assert mv.question_card(run) is None
+    body = "  Which of the two schemas is authoritative?\n\n  (b) is cheaper.\n"
+    (run / "question-card.txt").write_text(body, encoding="utf-8")
+    assert mv.question_card(run) == body
+    (run / "question-card.txt").write_text("   \n", encoding="utf-8")
+    assert mv.question_card(run) is None, "whitespace is not a question"
+
+
+def test_evidence_writer_is_found_mechanically():
+    flow = {"nodes": [
+        {"id": "produce", "kind": "harness"},
+        {"id": "render-evidence", "kind": "shell",
+         "spec": {"cmd": ["python", "contrib/render_evidence.py", "--headings"]}},
+        {"id": "approve", "role": "approval", "depends_on": ["render-evidence"]},
+    ]}
+    assert mv.evidence_writer(flow, "approve") == "render-evidence"
+    # no render_evidence in argv: the approval's single direct shell dependency
+    flow2 = {"nodes": [
+        {"id": "prep", "kind": "shell", "spec": {"cmd": ["python", "x.py"]}},
+        {"id": "approve", "role": "approval", "depends_on": ["prep"]},
+    ]}
+    assert mv.evidence_writer(flow2, "approve") == "prep"
+    assert mv.evidence_writer(None, "approve") is None
+
+
+def _approval_run(tmp_path: Path, *, evidence_offset_s: int) -> Path:
+    """The canonical shape: produce -> render-evidence -> approve -> deliver.
+    `evidence_offset_s` is the evidence file's mtime relative to the render
+    node's last START (negative = written before it ran, i.e. stale)."""
+    flow = {"nodes": [
+        {"id": "produce", "kind": "harness"},
+        {"id": "render-evidence", "kind": "shell", "depends_on": ["produce"],
+         "spec": {"cmd": ["python", "contrib/render_evidence.py", "--headings"]}},
+        {"id": "approve", "role": "approval", "depends_on": ["render-evidence"]},
+        {"id": "deliver", "kind": "shell", "depends_on": ["approve"],
+         "spec": {"cmd": ["python", "contrib/deliver.py"]}},
+    ]}
+    run = make_run(tmp_path, {
+        "produce": rec("done"),
+        "render-evidence": rec("done", kind="shell"),
+        "approve": rec("blocked", role="approval", kind=""),
+        "deliver": rec("pending", kind="shell"),
+    }, flow=flow)
+
+    start = NOW - timedelta(minutes=2)
+    (run / "events.jsonl").write_text(
+        json.dumps({"ts": start.isoformat().replace("+00:00", "Z"),
+                    "node": "render-evidence", "status": "running"}) + "\n"
+        + json.dumps({"ts": (start + timedelta(seconds=3)).isoformat().replace("+00:00", "Z"),
+                      "node": "render-evidence", "status": "done"}) + "\n",
+        encoding="utf-8")
+
+    ev = run / "approval-evidence.txt"
+    ev.write_text("EVIDENCE\n\nblast radius: 2 files\n", encoding="utf-8")
+    stamp = start.timestamp() + evidence_offset_s
+    os.utime(ev, (stamp, stamp))
+    return run
+
+
+def test_a_just_rendered_evidence_file_is_not_stale(tmp_path):
+    """The rev-3 rule compared the file's mtime against the APPROVAL's
+    started_at, which is stamped when the approval goes running — always after
+    the render node wrote the file. Every legitimate case read as stale."""
+    run = _approval_run(tmp_path, evidence_offset_s=+1)
+    status = mv.evidence_status(run)
+    assert status is not None
+    assert status["approval"] == "approve"
+    assert status["writer"] == "render-evidence"
+    assert status["stale"] is False
+    assert "blast radius" in status["text"]
+
+
+def test_evidence_left_over_from_an_earlier_segment_is_stale(tmp_path):
+    run = _approval_run(tmp_path, evidence_offset_s=-3600)
+    assert mv.evidence_status(run)["stale"] is True
+
+
+def test_there_is_no_evidence_block_when_no_approval_waits(tmp_path):
+    """The predicate is `quiescent.py`'s, never `needs_you` — which fires on a
+    clarify gate too, and would put approval evidence on screen where there is
+    no approval."""
+    run = make_run(tmp_path, {"g": rec("blocked", role="gate"), "w": rec("pending")})
+    (run / "approval-evidence.txt").write_text("stale leftovers\n", encoding="utf-8")
+    assert mv.needs_you(mv.read_json(run / "state.json")) is True
+    assert mv.evidence_status(run) is None
 
 
 # ------------------------------------------------------ the anti-drift test

@@ -226,8 +226,18 @@ def append_event(run_dir: Path, event: dict) -> None:
             f.write(line + "\n")
 
 
-def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
-    """Recompute the event chain. Returns (ok, head, first_bad_line, detail).
+def trace_status(run_dir: Path) -> dict:
+    """Recompute the event chain and report everything a reader needs.
+
+    `{ok, head, first_bad_line, detail, total, chained}`. `verify_trace` is the
+    4-tuple view of this; `cli.py` unpacks that arity, so it does not move.
+
+    `total` and `chained` exist because `ok` alone cannot be rendered. A tamper
+    returns `ok=False` with a NON-EMPTY head (the last good digest), and a
+    healthy fresh run returns `ok=True` with an empty one — so "green tick iff
+    head" is wrong in both directions. The four-way rule is: not ok → BROKEN;
+    ok with no events → nothing to verify; ok with events but none chained →
+    unchained; otherwise verified, with the head.
 
     `first_bad_line` is 1-indexed for humans. A torn trailing line is tolerated
     (SPEC §10.3). A file whose lines carry no `h` is UNCHAINED — reported as
@@ -238,9 +248,16 @@ def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
     line changed, dropped, or appended — survives, and that a head digest
     recorded elsewhere pins the whole file.
     """
+
+    def result(ok, head, bad, detail, total, chained) -> dict:
+        return {
+            "ok": ok, "head": head, "first_bad_line": bad,
+            "detail": detail, "total": total, "chained": chained,
+        }
+
     path = Path(run_dir) / "events.jsonl"
     if not path.exists():
-        return True, "", None, "no events.jsonl"
+        return result(True, "", None, "no events.jsonl", 0, 0)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     prev, chained, total = "", 0, 0
     for i, line in enumerate(lines):
@@ -251,7 +268,7 @@ def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
         except json.JSONDecodeError:
             if i == len(lines) - 1:
                 continue  # torn trailing line after a crash (§10.3)
-            return False, prev, i + 1, f"line {i + 1} is not valid JSON"
+            return result(False, prev, i + 1, f"line {i + 1} is not valid JSON", total, chained)
         total += 1
         recorded = record.pop("h", None)
         if recorded is None:
@@ -260,14 +277,21 @@ def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
         payload = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
         expected = _chain_link(prev, payload)
         if expected != recorded:
-            return False, prev, i + 1, (
+            return result(False, prev, i + 1, (
                 f"line {i + 1} does not match the chain "
                 f"(expected {expected[:12]}…, found {str(recorded)[:12]}…)"
-            )
+            ), total, chained)
         prev = recorded
     if chained == 0 and total:
-        return True, "", None, f"unchained: {total} events carry no chain digest"
-    return True, prev, None, f"{chained} events verified"
+        return result(True, "", None, f"unchained: {total} events carry no chain digest", total, 0)
+    return result(True, prev, None, f"{chained} events verified", total, chained)
+
+
+def verify_trace(run_dir: Path) -> tuple[bool, str, int | None, str]:
+    """(ok, head, first_bad_line, detail) — the `cli.py verify-trace` view of
+    `trace_status`. Frozen arity; new fields go on the dict, not here."""
+    s = trace_status(run_dir)
+    return s["ok"], s["head"], s["first_bad_line"], s["detail"]
 
 
 def read_events(run_dir: Path) -> list[dict]:
