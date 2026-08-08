@@ -3,9 +3,36 @@ type: plan
 title: "Work order: SSSF adoptions — write-scope quarantine and the trace page"
 description: Build-ready implementation plan for PROPOSAL-sssf-adoptions.md. Five batches — engine lock correctness and index-safe restore (0), quarantine and touched-path evidence (1), the mission_view accessors the page needs (2), the trace page itself (3), and the doc edits that bind it (4). Written to be executed in a fresh session with no prior context.
 resource: docs/proposals/sssf-adoptions-work-order.md
-status: draft
+status: stable
 ---
 # Work order: SSSF adoptions
+
+**ADOPTED AND BUILT, 2026-08-08.** Batches 0–4 shipped in order, each green:
+`engine: the write-scope check runs inside the lock, and restore is index-safe`,
+`engine: quarantine out-of-scope writes, and record what a node touched`,
+`cockpit: the accessors the trace page needs`, and
+`cockpit: the trace page, and the docs that bind it` (Batch 4 folded into
+Batch 3's commit, as §7 requires). What the build changed from this document:
+
+- **§9 was answered (i)** — shell nodes acquire `tree`. Measured first: worst
+  case is exactly linear (4 × 1.0s shell nodes in one wave, 1.17s → 4.17s), but
+  only 2 of 25 shipped flows have a wave with parallel shell work at all, and on
+  the one that matters — `status-digest` wave 0 — it is 53.69s → 53.84s, +0.3%.
+  `verify`'s `write-scope-unenforced` now fires only for readonly nodes.
+- **Two engine bugs, neither in this document**, both found by running a
+  deliberate violation end to end rather than by a test: the run directory was
+  itself being quarantined where `runs/` is not gitignored (the engine moved its
+  own `stdout.log` aside and rolled `state.json` back mid-run — excluded from the
+  scope check and from heal rollback), and `touched-<attempt>.txt` was written
+  for a *failed* spawn.
+- **§9's measurement could not be run as written** — there is no
+  `tests/fixtures/replay` on this machine, so the replay-based comparison was
+  replaced by a static wave analysis over all 25 shipped flows plus a timed
+  engine run of the one wave that has parallel shell work.
+
+Nothing in §8 was started.
+
+---
 
 **Execute this in order. Each batch is a commit; full pytest is green before the
 next one starts.**

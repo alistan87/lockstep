@@ -3,11 +3,18 @@ type: proposal
 title: "Proposal: adoptions from Super Simple Software Factory — write-scope quarantine and the trace page"
 description: Import what survived review from disler/super-simple-software-factory — a lock-correctness fix, an index-safe restore, and quarantine for out-of-scope writes (A), and a polled trace page replacing the meta-refresh MISSION page (B). The protected-path floor (A2) and agent profiles (C) are deferred with their findings recorded.
 resource: docs/proposals/PROPOSAL-sssf-adoptions.md
-status: draft
+status: stable
 ---
 # Proposal: adoptions from Super Simple Software Factory
 
-**Status: draft, rev 5, 2026-08-08.** Rev 4 changed one thing on the operator's
+**ADOPTED AND BUILT, 2026-08-08 (rev 5).** A0/A0b/A0c/A1/A3 and all of B ship;
+A0c is option **(i)** — shell nodes acquire `tree`, measured at +0.3% on the one
+shipped flow with a parallel shell wave. The floor (§5) and profiles (§6) were
+not started. `docs/proposals/sssf-adoptions-work-order.md` records what the
+build changed from the plan, including two engine bugs neither document
+anticipated. This document stays as the reasoning; the authority is the commits.
+
+**Status: stable, rev 5, 2026-08-08.** Rev 4 changed one thing on the operator's
 instruction: **the DE-tier promise is relaxed and the tier split abandoned.**
 There is one page, with progressive disclosure, aimed at being a surface a
 domain expert opens by choice — §4.6 is the design spec. Rev 5 is that spec
