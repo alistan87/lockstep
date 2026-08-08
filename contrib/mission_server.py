@@ -1,77 +1,711 @@
 #!/usr/bin/env python
-"""mission_server.py — MISSION as a read-only local page (proposal T3.2).
+"""mission_server.py — MISSION as a read-only local trace page.
 
     python contrib/mission_server.py                    # http://127.0.0.1:8787
     python contrib/mission_server.py --port 9000 runs/<run>
 
-Renders the same functions as the TUI (`mission_view.py`), so the page and the
-pane cannot disagree. It removes the WezTerm dependency for OBSERVATION and
-works from a phone on the same machine.
+Four levels of disclosure on ONE page, for one audience:
+
+  L0  board     the headline, the stat row, the collapsed step list, the spend
+                meter, both cost blocks, ACTIVITY, and — when a decision waits —
+                the evidence, verbatim. Server-rendered; it works with
+                JavaScript switched off.
+  L1  timeline  every step on a shared time axis, IN PLACE OF the step list,
+                with a server-rendered table twin beside it.
+  L2  step      a drawer: what a step produced, by name and size.
+  L3  raw       node id, hash parts, what moved, the chain head — each with a
+                one-line gloss, pinned by test.
+
+Every word and every formatted time comes from `mission_view`. The page's
+JavaScript swaps server-rendered fragments and advances an event cursor; it
+formats nothing, because a formatter in the browser is a rendering pytest
+cannot execute. The table twin is the accessibility path, the no-JS fallback,
+and the test surface — which is what makes "no logic that can be wrong lives in
+the JS" a structural fact rather than a discipline.
 
 THE APPROVAL NEVER MOVES. There is no form on this page, no POST handler, and no
 route that writes anything — not as policy, but as the absence of the code. A
 browser button is exactly the forgeable channel this design exists to prevent:
 the whole guarantee is that a decision happens at a keyboard, in a terminal, at
-a prompt nothing can type into. The page says so in its own header, because a
-surface that shows a decision without offering it has to explain why.
+a prompt nothing can type into. `a` and `r` are the keys the domain expert was
+taught, so pressing them here says where the decision happens rather than doing
+nothing at all — a silent no-op at a decision moment is the worst available
+behaviour.
+
+ONE RUN, ONE TOKEN, NO ENUMERATION. Run identity stays mechanical — pinned, or
+newest by mtime, re-resolved per request. A picker would create N MISSIONs and
+strip the referent from "when two surfaces disagree, MISSION is right". But a
+POLLED page breaks something a meta-refresh page could not: when the next
+segment starts, the server begins answering for a different run while the
+client still holds the old cursor. So every response carries a run token, and
+the client discards its cursor and its rendered state when the token changes.
 
 Bound to loopback by default. `--host` requires an explicit value and prints a
-warning naming what is being exposed: `runs/` holds prompts, diffs and model
-output, it is gitignored for that reason, and this server applies no
-authentication whatsoever.
+warning naming what is being exposed: `runs/` holds prompts, diffs, model output
+and — when one exists — `rejection.txt`, the human's own words. It is gitignored
+for those reasons, and this server applies no authentication whatsoever.
 """
 
 from __future__ import annotations
 
 import argparse
 import html
+import json
 import sys
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import mission_view as mv  # noqa: E402
 
-REFRESH_S = 5
+# ---------------------------------------------------------------- palette
+#
+# Validated, not eyeballed. The cost stack is categorical slots 1-4 in fixed
+# order; the status steps are the reserved status palette. Recorded output of
+#   node scripts/validate_palette.js "#3987e5,#d95926,#199e70,#c98500" \
+#        --mode dark --surface "#1a1a19"
+#   [PASS] Lightness band · Chroma floor · Contrast vs surface
+#   [PASS] CVD separation      worst adjacent #c98500<->#199e70 dE 8.4 (protan)
+#   [PASS] Normal-vision floor worst adjacent #c98500<->#199e70 dE 19.8
 
-PAGE = """<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="{refresh}">
-<title>MISSION - {name}</title>
-<style>
-  body {{ background:#111; color:#ddd; font:14px/1.5 ui-monospace,Consolas,monospace;
-         margin:0; padding:1rem; }}
-  h1 {{ font-size:1rem; color:#6cf; margin:0 0 .25rem; }}
-  .note {{ color:#888; font-size:.8rem; margin:0 0 1rem; }}
-  .decide {{ background:#3a2a00; color:#fc6; padding:.5rem .75rem; border-radius:4px;
-             margin:0 0 1rem; }}
-  pre {{ white-space:pre-wrap; margin:0 0 1rem; }}
-  .spend {{ color:#dc4; }}
-  .needs {{ color:#f66; font-weight:bold; }}
-  hr {{ border:0; border-top:1px solid #333; margin:1rem 0; }}
-</style>
-<h1>MISSION &mdash; {name}</h1>
-<p class="note">This page only reads files. It never changes the run,
-and it updates by itself every {refresh} seconds.</p>
-<p class="decide">Decisions are not made here. When something needs you, it happens
-in the terminal &mdash; that is what makes it impossible for anything but a person
-to answer.</p>
-{needs}
-<pre>{mission}</pre>
-<pre class="spend">{spend}</pre>
-{costs}
-<hr>
-<h1>ACTIVITY</h1>
-<pre>{activity}</pre>
-<hr>
-<h1>what happened at each step</h1>
-{details}
+COST_SERIES = ("input", "output", "cache read", "cache write")
+COST_HEX = ("#3987e5", "#d95926", "#199e70", "#c98500")
+COST_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+
+# Step state -> a CSS class over the status palette. The keys are EXACTLY
+# `mission_view.GLOSSARY`'s, and every one of them is drawn with its COST_ICON
+# glyph and its glossary word beside it: colour never carries meaning alone.
+#
+# `running` takes no status hue — it is not a severity, and painting it as one
+# would misstate it. `pending` and `skipped` draw an empty track.
+#
+# DECORATED FORMS. `node_word` synthesizes "sent back for rework (1 of 2)" and
+# appends map counters; neither is a glossary entry. Rework is a MODIFIER on a
+# base status: the row keeps its base status class and the redone segments draw
+# `ser`. The map counter is text, never colour. An unknown status renders
+# `mut` with whatever string `node_word` returned.
+STATUS_CLASS = {
+    "done": "good",
+    "blocked": "warn",
+    "failed": "crit",
+    "running": "run",
+    "pending": "mut",
+    "skipped": "mut",
+}
+
+# L3's own vocabulary, glossed. Pinned by test exactly as GLOSSARY is: the page
+# must not acquire DE-facing words that nothing checks.
+L3_GLOSSARY = {
+    "step id": "the name the system uses for this step",
+    "input-hash parts": "the things this step was given — if any of them changes, "
+                        "the step is done again rather than reused",
+    "what moved": "which of those things changed last time, and so why this step "
+                  "could not be reused",
+    "record head": "a fingerprint of this run's whole history; it changes if "
+                   "anything in that history is altered",
+    "record check": "whether that history still adds up when it is recomputed, "
+                    "just now",
+}
+
+TERMINAL_SENTENCE = (
+    "This decision happens in your terminal, at the prompt — a to approve, "
+    "r to send back. Those keys do nothing here, and that is deliberate: "
+    "nothing but a person at a keyboard can answer."
+)
+
+POLL_MS = 1000
+FEED_LIMIT = 12
+
+
+# ----------------------------------------------------------------- reading
+
+def _trace_status(run_dir: Path) -> dict | None:
+    try:
+        from lockstep.state import trace_status
+        return trace_status(Path(run_dir))
+    except Exception:  # noqa: BLE001 - a view never raises
+        return None
+
+
+def _events(run_dir: Path) -> list[dict]:
+    try:
+        import cost_report
+        return cost_report._read_events(Path(run_dir))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _intervals(run_dir: Path) -> dict[str, list[tuple[str, str | None]]]:
+    try:
+        import cost_report
+        return cost_report.node_intervals(_events(run_dir))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _collect(run_dir: Path) -> dict | None:
+    try:
+        import cost_report
+        return cost_report.collect_run(Path(run_dir), cost_report.load_field_maps(None))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _cap(run_dir: Path) -> int | None:
+    try:
+        import cost_report
+        return cost_report._budget_cap(Path(run_dir))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def run_token(run_dir: Path | None) -> str:
+    """Which run every response is about.
+
+    A meta-refresh page reset its whole client state by construction; a poll
+    does not. Without this, the segment boundary leaves the client asking for
+    `after=400` of a twelve-event run and getting nothing, forever.
+    """
+    if run_dir is None:
+        return ""
+    state = mv.read_json(Path(run_dir) / "state.json") or {}
+    return f"{Path(run_dir).name}:{state.get('started_at', '')}"
+
+
+# ------------------------------------------------------------- projections
+
+def chain_chip(run_dir: Path) -> dict:
+    """The four-way trace rule, and it belongs at L0, not three levels down.
+
+    `ok` alone cannot be rendered: a tamper returns ok=False WITH a non-empty
+    head, and a healthy fresh run returns ok=True with an empty one. A journal
+    that renders BROKEN must appear on the landing view of the surface the
+    domain expert is now expected to open.
+    """
+    s = _trace_status(run_dir)
+    if s is None:
+        return {"cls": "mut", "text": "record check unavailable", "detail": ""}
+    if not s["ok"]:
+        line = f" (line {s['first_bad_line']})" if s["first_bad_line"] else ""
+        return {"cls": "crit", "text": f"BROKEN — the record does not add up{line}",
+                "detail": s["detail"]}
+    if not s["total"]:
+        return {"cls": "mut", "text": "nothing to verify yet", "detail": s["detail"]}
+    if not s["chained"]:
+        return {"cls": "warn", "text": f"unchained — {s['total']} events carry no fingerprint",
+                "detail": s["detail"]}
+    return {"cls": "good", "text": f"record verified · {s['chained']} events",
+            "detail": s["detail"]}
+
+
+def spend_meter(runs: list[dict], caps: list[int | None]) -> dict:
+    """`{used, cap, partial, label, pct, over}` — the meter's numbers.
+
+    The denominator is `cost_report._budget_cap`, which reads THE RUN'S OWN
+    FLOW COPY: the number the domain expert was quoted at the consent beat, not
+    a live config and emphatically not the cockpit journal, which is
+    agent-authored, has no schema, and is by doctrine evidence of what was said
+    rather than truth about state.
+
+    Two cases a bare meter cannot do. No cap declared -> the count with no
+    denominator and no meter, as `plan_card.py` does. Several segments -> caps
+    sum, degrading to `of at least N` when one of them declares none; the
+    guard that fixed a real `used 38 of 25`.
+
+    NO SEVERITY RAMP. Nothing in the run dir says 80% of a ceiling is a
+    warning, and inventing that threshold would be the first editorial judgment
+    on a view that is summary-free by construction. One hue, the ceiling
+    marked; the only colour change is AT or OVER it, which is mechanical.
+    """
+    used = sum(int(r.get("token_spawns") or 0) for r in runs)
+    known = [c for c in caps if c]
+    cap = sum(known) if known else None
+    partial = bool(known) and len(known) < len(runs)
+    if cap is None:
+        return {"used": used, "cap": None, "partial": False, "pct": None,
+                "over": False, "label": f"agent tasks used {used}"}
+    label = (f"agent tasks used {used} of at least {cap}" if partial
+             else f"agent tasks used {used} of {cap}")
+    return {"used": used, "cap": cap, "partial": partial,
+            "pct": min(100.0, 100.0 * used / cap), "over": used >= cap, "label": label}
+
+
+def cost_stack(run: dict | None) -> list[dict]:
+    """The four cost series as `{name, hex, value, pct}`, in fixed order. Empty
+    when nothing was reported — the page omits the block rather than drawing a
+    bar of zeroes."""
+    if not run:
+        return []
+    totals = [sum(int(r.get(f) or 0) for r in run["rows"]) for f in COST_FIELDS]
+    grand = sum(totals)
+    if not grand:
+        return []
+    return [
+        {"name": name, "hex": hexv, "value": value, "pct": 100.0 * value / grand}
+        for name, hexv, value in zip(COST_SERIES, COST_HEX, totals)
+    ]
+
+
+_TICK_LADDER = (10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400)
+
+
+def _tick_step(span_s: float) -> int:
+    for step in _TICK_LADDER:
+        if 3 <= span_s / step <= 8:
+            return step
+    return _TICK_LADDER[-1] if span_s / _TICK_LADDER[-1] > 8 else _TICK_LADDER[0]
+
+
+def waterfall(run_dir: Path, repo_root: Path | None = None,
+              now: datetime | None = None) -> dict:
+    """`{rows, ticks, plotted, span_s}` — the timeline's whole geometry, here.
+
+    ONE SEGMENT PER INTERVAL, never one span per node: `state.json`'s
+    `started_at` is the first start and `ended_at` the last end, kept across
+    every attempt, heal round and resume, so a node blocked overnight would
+    draw a fourteen-hour bar of which minutes were work. The table twin sums
+    the same intervals, so the picture and the number cannot disagree.
+
+    Row order is first `running` event; nodes that never ran sort last, in
+    graph order, and draw an empty track.
+    """
+    steps = mv.step_rows(run_dir, repo_root, collapsed=False)
+    spans = _intervals(run_dir)
+    now = now or datetime.now(timezone.utc)
+
+    def start_of(step: dict):
+        got = spans.get(step["node_id"]) or []
+        return mv._parse_ts(got[0][0]) if got else None
+
+    ran = [s for s in steps if start_of(s)]
+    never = [s for s in steps if not start_of(s)]
+    ran.sort(key=start_of)  # type: ignore[arg-type]
+    ordered = ran + never
+
+    stamps: list[datetime] = []
+    open_span = False
+    for s in ran:
+        for a, b in spans.get(s["node_id"], []):
+            ta, tb = mv._parse_ts(a), mv._parse_ts(b)
+            if ta:
+                stamps.append(ta)
+            if tb:
+                stamps.append(tb)
+            else:
+                open_span = True
+    t0 = min(stamps) if stamps else None
+    t1 = max(stamps) if stamps else None
+    if t0 is not None and (open_span or t1 is None or t1 < now):
+        t1 = max(t1 or now, now)
+    total = (t1 - t0).total_seconds() if (t0 and t1) else 0.0
+    plotted = bool(t0) and total > 0
+
+    def pct(t: datetime) -> float:
+        return max(0.0, min(100.0, 100.0 * (t - t0).total_seconds() / total))  # type: ignore[operator]
+
+    rows = []
+    for step in ordered:
+        node_spans = spans.get(step["node_id"], [])
+        base = STATUS_CLASS.get(step["status"], "mut")
+        segs = []
+        worked = 0.0
+        first_start = None
+        for i, (a, b) in enumerate(node_spans):
+            ta = mv._parse_ts(a)
+            if ta is None:
+                continue
+            first_start = first_start or ta
+            tb = mv._parse_ts(b) if b else None
+            end = tb or now
+            seconds = max(0.0, (end - ta).total_seconds())
+            if tb is not None:
+                worked += seconds
+            # A healed node's earlier segments are the attempts that were sent
+            # back: a modifier on the base status, not a status of their own.
+            cls = "ser" if (i < len(node_spans) - 1 and step["status"] == "done") else base
+            if plotted:
+                left, right = pct(ta), pct(end)
+                segs.append({
+                    "left": left, "width": max(0.0, right - left), "cls": cls,
+                    "open": tb is None,
+                    "title": (f"{step['label']} — {step['word']} · "
+                              f"{mv.format_clock(a)}–{mv.format_clock(b) if b else 'now'} · "
+                              f"{mv.format_duration(seconds)}"),
+                    # A duration at the bar tip ONLY for the running step and
+                    # any failed step. Never a number on every bar.
+                    "tip": (mv.format_duration(seconds)
+                            if step["status"] in ("running", "failed", "blocked") else ""),
+                })
+        rows.append({
+            **step,
+            "cls": base,
+            "segments": segs,
+            "started": mv.format_clock(node_spans[0][0]) if node_spans else "",
+            "worked": mv.format_duration(worked) if worked else "",
+            "tries": len(node_spans),
+        })
+
+    ticks = []
+    if plotted:
+        step_s = _tick_step(total)
+        first = t0 + timedelta(seconds=step_s - (t0.timestamp() % step_s))  # type: ignore[operator]
+        cur = first
+        while cur < t1:  # type: ignore[operator]
+            ticks.append({"pct": pct(cur), "label": mv.format_clock(cur.isoformat())})
+            cur = cur + timedelta(seconds=step_s)
+    return {"rows": rows, "ticks": ticks, "plotted": plotted, "span_s": total}
+
+
+def event_text(ev: dict, labels: dict[str, str]) -> str:
+    """One journal line, in the DE's words and with the clock already applied.
+
+    The client appends this string. It does not build it — a status word or a
+    time formatted in JavaScript is a glossary pytest cannot execute.
+    """
+    when = mv.format_clock(ev.get("ts")) or "--:--"
+    node = ev.get("node") or ""
+    status = ev.get("status") or ""
+    word = mv.GLOSSARY.get(status, status)
+    if node:
+        return f"{when}  {mv.label_for(labels, node)}  {word}".rstrip()
+    return f"{when}  {word}".rstrip()
+
+
+def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None) -> dict:
+    """L2. `node_detail`'s body, named in L0's words — the FULL label, without
+    the board's 33-character truncation and without the `(step id: …)` suffix.
+    The identifier lives at L3.
+
+    Names and sizes, never stdout bodies: `stdout.log` is the harness envelope,
+    i.e. the model's whole result text, and tailing it was rejected for good
+    reason.
+    """
+    labels = mv.load_labels(run_dir, repo_root)
+    lines = mv.node_detail(run_dir, node_id, repo_root)
+    body = [ln for ln in lines
+            if not ln.startswith("=") and not ln.strip().startswith("(step id:")]
+    # The label line node_detail prints as its heading is now the drawer title.
+    if body and body[0].strip() == mv.label_for(labels, node_id):
+        body = body[1:]
+    return {"node_id": node_id, "label": mv.label_for(labels, node_id),
+            "lines": [ln.rstrip() for ln in body]}
+
+
+def raw_record(run_dir: Path, node_id: str | None = None) -> list[dict]:
+    """L3, every term glossed. `{term, gloss, value}`."""
+    state = mv.read_json(Path(run_dir) / "state.json") or {}
+    rec = (state.get("nodes") or {}).get(node_id or "") or {}
+    chain = _trace_status(run_dir) or {}
+    parts = rec.get("hash_parts") or {}
+    moved = rec.get("invalidated_by")
+    out = []
+    if node_id:
+        out.append({"term": "step id", "gloss": L3_GLOSSARY["step id"], "value": node_id})
+        out.append({"term": "input-hash parts", "gloss": L3_GLOSSARY["input-hash parts"],
+                    "value": ", ".join(sorted(parts)) if parts else "—"})
+        out.append({"term": "what moved", "gloss": L3_GLOSSARY["what moved"],
+                    "value": ", ".join(moved) if moved else "nothing — it was reused"})
+    out.append({"term": "record head", "gloss": L3_GLOSSARY["record head"],
+                "value": (chain.get("head") or "—")[:16] or "—"})
+    out.append({"term": "record check", "gloss": L3_GLOSSARY["record check"],
+                "value": chain.get("detail") or "—"})
+    return out
+
+
+# ------------------------------------------------------------------- HTML
+
+def e(text) -> str:
+    return html.escape("" if text is None else str(text))
+
+
+CSS = """
+:root{--plane:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink-2:#c3c2b7;--muted:#898781;
+ --grid:#2c2c2a;--axis:#383835;--hairline:rgba(255,255,255,.10);
+ --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--c1:#3987e5}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;padding:28px 24px 64px;background:var(--plane);color:var(--ink);
+ font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;transition:opacity .12s}
+.wrap.stale{opacity:.62}
+.top{display:flex;align-items:center;gap:12px;margin-bottom:22px;flex-wrap:wrap}
+.brand{font-weight:600;letter-spacing:.04em}
+.runid{color:var(--muted);font-variant-numeric:tabular-nums}
+.spacer{flex:1}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:999px;
+ border:1px solid var(--hairline);background:var(--surface);color:var(--ink-2);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.good{background:var(--good)}.dot.warn{background:var(--warning)}
+.dot.crit{background:var(--critical)}.dot.run{background:var(--ink)}
+.live .dot{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
+.hero{font-size:27px;font-weight:600;line-height:1.3;margin:0 0 4px}
+.hero-sub{color:var(--muted);margin:0 0 22px;font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
+.tile{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:13px 15px}
+.tile .k{color:var(--muted);font-size:12.5px;margin-bottom:5px}
+.tile .v{font-size:23px;font-weight:600}
+.card{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;
+ padding:16px 18px;margin-bottom:14px}
+.card>h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 12px;letter-spacing:.02em}
+.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.meter-head .lab{color:var(--ink-2);font-size:14px}
+.meter-head .num{font-size:15px;font-variant-numeric:tabular-nums}
+.track{position:relative;height:10px;border-radius:5px;background:#123055}
+.fill{position:absolute;inset:0 auto 0 0;border-radius:5px;background:var(--c1)}
+.fill.over{background:var(--critical)}
+.ceil{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink-2);right:0}
+.meter-foot{color:var(--muted);font-size:12.5px;margin-top:8px}
+.decide{border-left:3px solid var(--warning)}
+.decide h2{color:var(--warning);font-size:14px}
+.ask{border-left:3px solid var(--c1)}
+.ask h2{color:var(--c1);font-size:14px}
+.evidence{background:var(--plane);border:1px solid var(--hairline);border-radius:8px;
+ padding:14px 16px;margin:4px 0 12px;font:13.5px/1.6 ui-monospace,Consolas,monospace;
+ color:var(--ink-2);white-space:pre-wrap}
+.stale-note{color:var(--warning);font-size:13px;margin:0 0 10px}
+.terminal-note{color:var(--muted);font-size:13px}
+.key-echo{color:var(--warning);font-size:13px;margin-top:8px}
+.cardhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.cardhead h2{margin:0}
+.viewswitch{display:flex;gap:6px;margin-left:auto}
+.btn{background:var(--plane);color:var(--ink-2);border:1px solid var(--axis);border-radius:7px;
+ padding:5px 11px;font:inherit;font-size:13px;cursor:pointer}
+.btn[aria-pressed="true"]{background:#202020;color:var(--ink);border-color:var(--muted)}
+.steps{display:grid;gap:2px}
+.step{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:10px;
+ padding:7px 8px;border-radius:7px}
+.step:hover{background:#212120}
+.step .ico{text-align:center;font-size:14px}
+.step .word{color:var(--ink-2);font-size:13.5px}
+.step .name,.wf-lab a{color:var(--ink);text-decoration:none}
+.step .name:hover,.wf-lab a:hover{text-decoration:underline}
+.ico.good{color:var(--good)}.ico.warn{color:var(--warning)}.ico.crit{color:var(--critical)}
+.ico.ser{color:var(--serious)}.ico.mut{color:var(--muted)}.ico.run{color:var(--ink)}
+.note{grid-column:2/-1;color:var(--ink-2);font-size:13px;border-left:2px solid var(--axis);
+ padding-left:10px;margin:2px 0 4px}
+.tail{color:var(--muted);font-size:13.5px;padding:8px 8px 0}
+.wf-plot{position:relative;--gutter:250px}
+.wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
+.wf-row{display:contents}
+.wf-lab{display:flex;flex-direction:column;justify-content:center;height:38px;font-size:13.5px;
+ min-width:0}
+.wf-lab .n{display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap}
+.wf-lab .w{color:var(--muted);font-size:12px;padding-left:22px;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+.wf-track{position:relative;height:38px}
+.wf-track::before{content:"";position:absolute;left:0;right:0;top:13px;height:4px;
+ background:#232322;border-radius:2px}
+.seg{position:absolute;top:13px;height:12px;min-width:3px;border-radius:4px}
+.seg.good{background:var(--good)}.seg.ser{background:var(--serious)}
+.seg.crit{background:var(--critical)}.seg.warn{background:var(--warning)}
+.seg.mut{background:var(--muted)}
+.seg.run{background:transparent;border:2px solid var(--ink)}
+.seg.open::after{content:"";position:absolute;right:-1px;top:-2px;bottom:-2px;width:34px;
+ background:linear-gradient(90deg,transparent,var(--surface));border-radius:4px}
+.seg .tip{position:absolute;left:calc(100% + 8px);top:-3px;font-size:12px;color:var(--ink-2);
+ white-space:nowrap;font-variant-numeric:tabular-nums}
+/* the axis and the gridlines share the TRACK column's coordinate space, not
+   the card's, so a tick and a bar edge mean the same x */
+.wf-scale{position:absolute;left:calc(var(--gutter) + 14px);right:0;top:0;bottom:30px;
+ pointer-events:none}
+.gridline{position:absolute;top:0;bottom:0;width:1px;background:var(--grid)}
+.wf-axis{position:relative;height:26px;margin-top:4px;border-top:1px solid var(--axis);
+ margin-left:calc(var(--gutter) + 14px)}
+.tick{position:absolute;top:0;font-size:11.5px;color:var(--muted);transform:translateX(-50%);
+ padding-top:5px;font-variant-numeric:tabular-nums}
+.stack{display:flex;gap:2px;height:14px;margin:4px 0 12px}
+.stack>i{display:block;border-radius:3px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:10px;height:10px;border-radius:3px;display:inline-block}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--grid);color:var(--ink-2)}
+th{color:var(--muted);font-weight:500}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+details>summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px}
+pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,Consolas,monospace;color:var(--ink-2)}
+.feed{display:grid;gap:2px;font-size:13.5px;color:var(--ink-2)}
+.feed div{padding:3px 0}
+.foot{color:var(--muted);font-size:12.5px;margin-top:26px;text-align:center}
+@media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
+"""
+
+# The whole of the client. It toggles two fragments, swaps server-rendered HTML,
+# unhides a server-rendered sentence, and advances an integer. It renders no
+# word, formats no time, and computes no geometry.
+JS = """
+(function () {
+  var wrap = document.querySelector('.wrap');
+  function show(which) {
+    var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
+    if (!l0 || !l1) return;
+    l0.hidden = which !== 'l0'; l1.hidden = which !== 'l1';
+    document.querySelectorAll('.viewswitch .btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.view === which));
+    });
+    try { sessionStorage.setItem('lockstep-view', which); } catch (err) {}
+  }
+  window.lockstepShow = show;
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('.viewswitch .btn');
+    if (b) show(b.dataset.view);
+  });
+  try { show(sessionStorage.getItem('lockstep-view') || 'l0'); } catch (err) { show('l0'); }
+
+  // `a` and `r` are the keys the domain expert was taught. The sentence they
+  // reveal is rendered by the server; this only unhides it.
+  addEventListener('keydown', function (ev) {
+    if (ev.key !== 'a' && ev.key !== 'r') return;
+    var echo = document.getElementById('key-echo');
+    if (echo) echo.hidden = false;
+  });
+
+  var token = document.body.dataset.runToken || '';
+  var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+
+  function poll() {
+    wrap.classList.add('stale');   // hold the previous render, never a skeleton
+    fetch('api/state', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (doc) {
+        if (doc.token !== token) { token = doc.token; cursor = 0; }
+        var view = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
+        var keep = view ? view.dataset.view : 'l0';
+        wrap.innerHTML = doc.html;
+        show(keep);
+        cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+      })
+      .catch(function () {})
+      .then(function () { wrap.classList.remove('stale'); });
+  }
+  setInterval(poll, POLL_MS);
+})();
 """
 
 
+def _icon_span(row: dict) -> str:
+    return f'<span class="ico {e(row["cls"])}">{e(row["icon"])}</span>'
+
+
+def render_board(run_dir: Path, repo_root: Path | None) -> str:
+    """L0's step list: the collapsed board, exactly `mission_rows`' row set."""
+    out = ['<div id="l0" class="steps">']
+    for row in mv.step_rows(run_dir, repo_root):
+        cls = STATUS_CLASS.get(row["status"], "mut")
+        out.append(
+            f'<div class="step"><span class="ico {cls}">{e(row["icon"])}</span>'
+            f'<a class="name" href="#step-{e(row["node_id"])}">{e(row["label"])}</a>'
+            f'<span class="word">{e(row["word"])}</span></div>'
+        )
+        if row["note"]:
+            out.append(f'<div class="note">{e(row["note"])}</div>')
+    for line in mv.collapse_tail(run_dir, repo_root):
+        out.append(f'<div class="tail">{e(line)}</div>')
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def render_timeline(wf: dict) -> str:
+    """L1: the waterfall, and the table twin that is its fallback and its test
+    surface. The switch REPLACES the step list — `mission_rows` synthesizes and
+    reorders rows, so nothing here claims the two agree row for row. What must
+    not be lost is a note, which travels as a marker on its row."""
+    # NOT `hidden` in the served HTML. With JavaScript off, both views render
+    # and nothing switches — which is the honest fallback. The client hides one
+    # of them on load; a table twin behind a `hidden` attribute would be a
+    # fallback that only works when the thing it falls back from does.
+    out = ['<div id="l1">']
+    if wf["plotted"]:
+        out.append('<div class="wf-plot"><div class="wf-scale">')
+        for tick in wf["ticks"]:
+            out.append(f'<div class="gridline" style="left:{tick["pct"]:.2f}%"></div>')
+        out.append('</div><div class="wf">')
+        for row in wf["rows"]:
+            marker = ' <span class="ico mut" title="this step left a note">•</span>' if row["note"] else ""
+            out.append(
+                '<div class="wf-row">'
+                f'<div class="wf-lab"><span class="n">{_icon_span(row)}'
+                f'<a href="#step-{e(row["node_id"])}">{e(row["label"])}</a>{marker}</span>'
+                f'<span class="w">{e(row["word"])}</span></div>'
+                '<div class="wf-track">'
+            )
+            for seg in row["segments"]:
+                tip = f'<span class="tip">{e(seg["tip"])}</span>' if seg["tip"] else ""
+                openc = " open" if seg["open"] else ""
+                out.append(
+                    f'<div class="seg {e(seg["cls"])}{openc}" '
+                    f'style="left:{seg["left"]:.2f}%;width:{seg["width"]:.2f}%" '
+                    f'title="{e(seg["title"])}">{tip}</div>'
+                )
+            out.append("</div></div>")
+        out.append('</div><div class="wf-axis">')
+        for tick in wf["ticks"]:
+            out.append(f'<span class="tick" style="left:{tick["pct"]:.2f}%">{e(tick["label"])}</span>')
+        out.append("</div></div>")
+
+    out.append("<details open><summary>the same thing as a table</summary><table>")
+    out.append('<tr><th>step</th><th>state</th><th class="n">started</th>'
+               '<th class="n">worked for</th><th class="n">tries</th></tr>')
+    for row in wf["rows"]:
+        note = f'<div class="note">{e(row["note"])}</div>' if row["note"] else ""
+        out.append(
+            f'<tr><td>{e(row["label"])}{note}</td><td>{e(row["word"])}</td>'
+            f'<td class="n">{e(row["started"] or "—")}</td>'
+            f'<td class="n">{e(row["worked"] or "—")}</td>'
+            f'<td class="n">{e(row["tries"] or "—")}</td></tr>'
+        )
+    out.append("</table></details></div>")
+    return "\n".join(out)
+
+
+def _stat_tiles(state: dict, run: dict | None, meter: dict) -> str:
+    recs = list((state.get("nodes") or {}).values())
+    total = len(recs)
+    settled = sum(1 for r in recs if r.get("status") in ("done", "skipped"))
+    running = sum(1 for r in recs if r.get("status") == "running")
+    heals = sum(int(r.get("heal_round") or 0) for r in recs)
+    worked = sum((r.get("wall_s") or 0) for r in (run or {}).get("rows", []))
+    tiles = [
+        ("step", f"{min(settled + running, total)} of {total}"),
+        ("worked for", mv.format_duration(worked) or "—"),
+        ("agent tasks", str(meter["used"])),
+        ("sent back for rework", str(heals)),
+    ]
+    return '<div class="stats">' + "".join(
+        f'<div class="tile"><div class="k">{e(k)}</div><div class="v">{e(v)}</div></div>'
+        for k, v in tiles
+    ) + "</div>"
+
+
+def _meter_card(meter: dict) -> str:
+    if meter["cap"] is None:
+        # No cap declared: the count, no denominator, no meter — as plan_card does.
+        return (f'<div class="card"><div class="meter-head"><span class="lab">'
+                f'{e(meter["label"])}</span></div><div class="meter-foot">'
+                f'This flow declares no ceiling, so there is no number to be under.'
+                f'</div></div>')
+    over = " over" if meter["over"] else ""
+    return (
+        '<div class="card"><div class="meter-head">'
+        '<span class="lab">agent tasks used</span>'
+        f'<span class="num">{e(meter["label"].replace("agent tasks used ", ""))}</span></div>'
+        f'<div class="track"><div class="fill{over}" style="width:{meter["pct"]:.1f}%"></div>'
+        '<div class="ceil"></div></div>'
+        '<div class="meter-foot">The ceiling is the number this flow declared — the one '
+        'you agreed to before anything started.</div></div>'
+    )
+
+
 def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path) -> list[str]:
+    """The spend block the board has always carried: `compact_block` plus this
+    session's own transcript spend. The meter above it is the same numerator
+    and denominator drawn; this keeps the qualifiers — rework rounds, node
+    time, tokens in/out, unmapped harnesses — that a bar cannot say."""
     try:
         import cost_report
         maps = cost_report.load_field_maps(None)
@@ -79,60 +713,286 @@ def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path) -> list[str]:
         cap = cost_report._budget_cap(Path(run_dir))
         text, _ = cost_report.compact_block([run], [cap])
         lines = text.splitlines()
-    except Exception as e:  # noqa: BLE001 - display-only, always
-        return [f"(spend unavailable: {e})"]
+    except Exception as exc:  # noqa: BLE001 - display-only, always
+        return [f"(spend unavailable: {exc})"]
     try:
         import session_spend
         lines += session_spend.session_lines(Path(repo_root), Path(runs_root))
-    except Exception as e:  # noqa: BLE001
-        lines += [f"(session spend unavailable: {e})"]
+    except Exception as exc:  # noqa: BLE001
+        lines += [f"(session spend unavailable: {exc})"]
     return lines
 
 
-def cost_details(run_dir: Path) -> str:
-    """The cost panel, both modes, as collapsed sections — the page has no
-    keyboard, so the TUI's `c` toggle becomes two <details> blocks."""
-    out = []
-    for mode, title in (("history", "costs — history (every attempt is counted)"),
-                        ("head", "costs — head (kept attempts only)")):
+def _decision_card(run_dir: Path) -> str:
+    """The evidence, verbatim, or the question card, verbatim — never a
+    narration of either, and never both at once. Which kind of attention is
+    wanted is named: a question, or a decision."""
+    card = mv.question_card(run_dir)
+    ev = mv.evidence_status(run_dir)
+    if ev is not None and ev.get("text"):
+        stale = ""
+        if ev.get("stale"):
+            stale = ('<p class="stale-note">This was written before the step that '
+                     'produces it last ran — it may describe an earlier attempt.</p>')
+        return (
+            '<div class="card decide"><h2>⊗ needs you — a decision</h2>'
+            f'{stale}<div class="evidence">{e(ev["text"])}</div>'
+            f'<p class="terminal-note" id="terminal-note">{e(TERMINAL_SENTENCE)}</p>'
+            f'<p class="key-echo" id="key-echo" role="status" hidden>{e(TERMINAL_SENTENCE)}</p>'
+            "</div>"
+        )
+    if card:
+        return (
+            '<div class="card ask"><h2>◐ needs you — a question</h2>'
+            f'<div class="evidence">{e(card)}</div>'
+            f'<p class="terminal-note" id="terminal-note">{e(TERMINAL_SENTENCE)}</p>'
+            f'<p class="key-echo" id="key-echo" role="status" hidden>{e(TERMINAL_SENTENCE)}</p>'
+            "</div>"
+        )
+    return ""
+
+
+def _cost_card(run_dir: Path, stack: list[dict]) -> str:
+    out = ['<div class="card"><h2>what it has cost</h2>']
+    if stack:
+        out.append('<div class="stack">')
+        for s in stack:
+            out.append(f'<i style="background:{e(s["hex"])};width:{s["pct"]:.2f}%" '
+                       f'title="{e(s["name"])} {s["value"]:,}"></i>')
+        out.append('</div><div class="legend">')
+        for s in stack:
+            out.append(f'<span><i class="sw" style="background:{e(s["hex"])}"></i>'
+                       f'{e(s["name"])} {s["value"]:,}</span>')
+        out.append("</div>")
+    else:
+        out.append('<p class="meter-foot">No usage was reported for this run.</p>')
+    for mode, title in (("history", "per step, every attempt counted"),
+                        ("head", "per step, kept attempts only")):
         body = "\n".join(mv.cost_lines(run_dir, mode=mode))
-        out.append(f"<details><summary>{html.escape(title)}</summary>"
-                   f"<pre>{html.escape(body)}</pre></details>")
+        out.append(f"<details><summary>{e(title)}</summary><pre>{e(body)}</pre></details>")
+    out.append("</div>")
     return "\n".join(out)
 
 
-def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path) -> str:
+def _focus_node(state: dict) -> str | None:
+    """Which step L3 opens on: whatever is happening now, then whatever wants
+    the human, then the last thing recorded. Mechanical, not a guess."""
+    nodes = state.get("nodes") or {}
+    for want in ("running", "blocked", "failed"):
+        for node_id, rec in nodes.items():
+            if rec.get("status") == want:
+                return node_id
+    ran = [n for n, r in nodes.items() if r.get("started_at")]
+    return ran[-1] if ran else (next(iter(nodes), None))
+
+
+def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
+               focus: str | None, repo_root: Path | None) -> str:
+    out = ['<div class="card"><h2>what just happened</h2><div class="feed" id="feed">']
+    for ev in events[-FEED_LIMIT:]:
+        out.append(f"<div>{e(event_text(ev, labels))}</div>")
+    if not events:
+        out.append("<div>Nothing has been recorded yet.</div>")
+    out.append("</div>")
+    out.append('<details><summary>show the raw record</summary><table>')
+    out.append("<tr><th>term</th><th>what it means</th><th>value</th></tr>")
+    for item in raw_record(run_dir, focus):
+        out.append(f'<tr><td>{e(item["term"])}</td><td>{e(item["gloss"])}</td>'
+                   f'<td>{e(item["value"])}</td></tr>')
+    out.append("</table></details></div>")
+    return "\n".join(out)
+
+
+def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None) -> str:
+    """L2, one per step, reached by clicking a row in either view.
+
+    The link is a fragment, not a fetch: a `<details>` a browser jumps into
+    opens itself, so the drawer works with JavaScript off — and `/api/node/<id>`
+    stays a route rather than the only way in.
+    """
+    out = ['<div class="card"><h2>what happened at each step</h2>']
+    for node_id in node_ids:
+        drawer = node_drawer(run_dir, node_id, repo_root)
+        body = "\n".join(drawer["lines"])
+        out.append(f'<details id="step-{e(node_id)}">'
+                   f'<summary>{e(drawer["label"])}</summary>'
+                   f"<pre>{e(body)}</pre></details>")
+    if not node_ids:
+        out.append("<p>(nothing to show yet)</p>")
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
+                now: datetime | None = None) -> tuple[str, int]:
+    """The whole `.wrap` fragment, server-rendered, plus the event cursor it
+    was rendered at. `GET /` embeds it; the poll swaps it."""
     if run_dir is None:
-        return PAGE.format(
-            refresh=REFRESH_S, name="no run yet", needs="",
-            mission="Tell the assistant what you would like to work on;\n"
-                    "this page fills in by itself once something starts.",
-            spend="", costs="", activity="", details="")
+        return (
+            '<div class="top"><span class="brand">MISSION</span>'
+            '<span class="runid">no run yet</span></div>'
+            '<p class="hero">Nothing is running.</p>'
+            '<p class="hero-sub">Tell the assistant what you would like to work on; '
+            "this page fills in by itself once something starts.</p>"
+            '<p class="foot">This page only reads files. It never changes the run.</p>',
+            0,
+        )
 
-    state = mv.read_json(run_dir / "state.json")
-    needs = ('<p class="needs">NEEDS YOU &mdash; read the terminal pane.</p>'
-             if mv.needs_you(state) else "")
-
-    # Read the sidecar ONCE. It was being re-read (state.json plus a recursive
-    # flows/** glob) for every node on every request, twice over.
+    state = mv.read_json(run_dir / "state.json") or {}
+    flow = mv.read_json(run_dir / "flow.tg.json")
     labels = mv.load_labels(run_dir, repo_root)
-    details = []
-    for node_id in mv.visible_nodes(run_dir, repo_root):
-        body = "\n".join(mv.node_detail(run_dir, node_id, repo_root))
-        details.append(
-            f"<details><summary>{html.escape(mv.label_for(labels, node_id))}"
-            f"</summary><pre>{html.escape(body)}</pre></details>")
+    run = _collect(run_dir)
+    meter = spend_meter([run] if run else [], [_cap(run_dir)] if run else [])
+    chain = chain_chip(run_dir)
+    events = _events(run_dir)
+    node_ids = list((state.get("nodes") or {}).keys())
+    running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
 
-    return PAGE.format(
-        refresh=REFRESH_S,
-        name=html.escape(run_dir.name),
-        needs=needs,
-        mission=html.escape("\n".join(mv.mission_lines(run_dir, repo_root=repo_root))),
-        spend=html.escape("\n".join(spend_lines(run_dir, repo_root, runs_root))),
-        costs=cost_details(run_dir),
-        activity=html.escape("\n".join(mv.activity_lines(run_dir, repo_root=repo_root))),
-        details="\n".join(details) or "<p>(nothing to show yet)</p>",
+    parts = [
+        '<div class="top"><span class="brand">MISSION</span>'
+        f'<span class="runid">{e(run_dir.name)}</span><span class="spacer"></span>'
+        f'<span class="chip{" live" if running else ""}">'
+        f'<span class="dot {"run" if running else "mut"}"></span>'
+        f'{"running" if running else "not running"}</span>'
+        f'<span class="chip" title="{e(chain["detail"])}">'
+        f'<span class="dot {e(chain["cls"])}"></span>{e(chain["text"])}</span></div>',
+
+        f'<p class="hero">{e(mv.headline(state, flow, now=now))}</p>',
+        '<p class="hero-sub">This page only reads files. Decisions are not made here — '
+        'when something needs you, it happens in the terminal.</p>',
+
+        _stat_tiles(state, run, meter),
+        _meter_card(meter),
+        '<div class="card"><h2>spend</h2><pre>'
+        + e("\n".join(spend_lines(run_dir, repo_root, runs_root)))
+        + "</pre></div>",
+        _decision_card(run_dir),
+
+        '<div class="card"><div class="cardhead"><h2>the steps</h2>'
+        '<div class="viewswitch">'
+        '<button class="btn" data-view="l0" aria-pressed="true">board</button>'
+        '<button class="btn" data-view="l1" aria-pressed="false">show every step</button>'
+        "</div></div>",
+        render_board(run_dir, repo_root),
+        render_timeline(waterfall(run_dir, repo_root, now=now)),
+        "</div>",
+
+        _cost_card(run_dir, cost_stack(run)),
+
+        '<div class="card"><h2>ACTIVITY</h2><pre>'
+        + e("\n".join(mv.activity_lines(run_dir, repo_root=repo_root)))
+        + "</pre></div>",
+
+        _feed_card(run_dir, events, labels, _focus_node(state), repo_root),
+        _drawers(run_dir, node_ids, repo_root),
+
+        '<p class="foot">This page only reads files. It never changes the run.</p>',
+    ]
+    if mv.needs_you(state):
+        parts.insert(3, '<p class="hero-sub" style="color:var(--warning)">'
+                        "NEEDS YOU &mdash; read the terminal pane.</p>")
+    return "\n".join(p for p in parts if p), len(events)
+
+
+def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
+                now: datetime | None = None) -> str:
+    body, cursor = render_wrap(run_dir, repo_root, runs_root, now=now)
+    name = run_dir.name if run_dir else "no run yet"
+    return (
+        "<!doctype html>\n<meta charset=\"utf-8\">\n"
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>MISSION - {e(name)}</title>\n"
+        f"<style>{CSS}</style>\n"
+        f'<body data-run-token="{e(run_token(run_dir))}" data-event-cursor="{cursor}">\n'
+        f'<div class="wrap">{body}</div>\n'
+        f"<script>{JS.replace('POLL_MS', str(POLL_MS))}</script>\n"
     )
+
+
+# ----------------------------------------------------------------- routes
+#
+# Enumerated, and pinned by test. `/api/node/<id>` is the only one with a
+# variable segment; node ids already match `^[a-z0-9][a-z0-9-]*$` and
+# `node_detail` looks the id up in state.json before touching a path, so the
+# allowlist below is for a clean 404 rather than for safety — the traversal
+# test stays anyway.
+
+ROUTES = ("/", "/index.html", "/api/state", "/api/events", "/api/node/<id>",
+          "/api/evidence", "/api/question")
+
+JSON_CT = "application/json; charset=utf-8"
+HTML_CT = "text/html; charset=utf-8"
+
+
+def _json(payload: dict) -> tuple[int, str, bytes]:
+    return 200, JSON_CT, json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
+           now: datetime | None = None) -> tuple[int, str, bytes]:
+    """(status, content type, body) for one GET. Every branch reads and formats.
+
+    No branch writes — asserted two ways in `tests/test_cockpit_ux.py`: the
+    handler class has no `do_*` method but `do_GET` (a mechanism), and a harness
+    that makes every write API raise drives every route (coverage-bounded, and
+    the docstring there says so).
+    """
+    parsed = urlparse(path)
+    route = parsed.path
+    run_dir = pinned or mv.newest_run(runs_root)
+    token = run_token(run_dir)
+
+    if route in ("/", "/index.html"):
+        return 200, HTML_CT, render_page(run_dir, repo_root, runs_root, now=now).encode("utf-8")
+
+    if route == "/api/state":
+        body, cursor = render_wrap(run_dir, repo_root, runs_root, now=now)
+        return _json({"token": token, "cursor": cursor, "html": body,
+                      "run": run_dir.name if run_dir else None})
+
+    if route == "/api/events":
+        raw = (parse_qs(parsed.query).get("after") or ["0"])[0]
+        if not raw.isdigit():          # rejects "abc", "-1", "1.5", ""
+            return 404, HTML_CT, b"bad cursor"
+        after = int(raw)
+        if run_dir is None:
+            return _json({"token": token, "next": 0, "events": []})
+        events = _events(run_dir)
+        labels = mv.load_labels(run_dir, repo_root)
+        fresh = events[after:]
+        return _json({
+            "token": token,
+            "next": after + len(fresh),
+            "events": [{"text": event_text(ev, labels), "node": ev.get("node") or "",
+                        "status": ev.get("status") or ""} for ev in fresh],
+        })
+
+    if route.startswith("/api/node/"):
+        node_id = route[len("/api/node/"):]
+        if run_dir is None:
+            return 404, HTML_CT, b"no run"
+        state = mv.read_json(run_dir / "state.json") or {}
+        if node_id not in (state.get("nodes") or {}):
+            return 404, HTML_CT, b"no such step"
+        drawer = node_drawer(run_dir, node_id, repo_root)
+        drawer["raw"] = raw_record(run_dir, node_id)
+        drawer["token"] = token
+        return _json(drawer)
+
+    if route == "/api/evidence":
+        if run_dir is None:
+            return 404, HTML_CT, b"no run"
+        status = mv.evidence_status(run_dir)
+        return _json({"token": token, "evidence": status,
+                      "rejection": mv.rejection_text(run_dir),
+                      "sentence": TERMINAL_SENTENCE})
+
+    if route == "/api/question":
+        if run_dir is None:
+            return 404, HTML_CT, b"no run"
+        return _json({"token": token, "question": mv.question_card(run_dir)})
+
+    return 404, HTML_CT, b"not found"
 
 
 def make_handler(runs_root: Path, pinned: Path | None, repo_root: Path):
@@ -141,16 +1001,13 @@ def make_handler(runs_root: Path, pinned: Path | None, repo_root: Path):
         # absence of the method IS the guarantee. BaseHTTPRequestHandler answers
         # anything else with 501, which is the correct answer.
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
-            if self.path not in ("/", "/index.html"):
-                self.send_error(404)
-                return
-            run_dir = pinned or mv.newest_run(runs_root)
             try:
-                body = render_page(run_dir, repo_root, runs_root).encode("utf-8")
-            except Exception as e:  # noqa: BLE001 - a view never takes the run down
-                body = f"<pre>view error: {html.escape(str(e))}</pre>".encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+                status, ctype, body = handle(self.path, runs_root, pinned, repo_root)
+            except Exception as exc:  # noqa: BLE001 - a view never takes the run down
+                status, ctype = 200, HTML_CT
+                body = f"<pre>view error: {html.escape(str(exc))}</pre>".encode()
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -178,6 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         print("  output - to anything that can reach this machine, with no authentication.",
               file=sys.stderr)
+        print("  That includes rejection.txt, which is the human's own words.", file=sys.stderr)
         print("  runs/ is gitignored precisely because it is sensitive.", file=sys.stderr)
 
     handler = make_handler(Path(ns.runs_root),

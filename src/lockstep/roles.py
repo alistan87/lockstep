@@ -645,7 +645,9 @@ class Engine:
                     scope_error = self._quarantine(
                         node, phase_dir, scope, scope_ref, in_scope, violations, staged_before
                     )
-                else:
+                elif not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None:
+                    # Evidence of what a node touched, on SUCCESS. A failed
+                    # spawn's changed paths are the wreckage, not the record.
                     self._record_touched(node, phase_dir, in_scope)
         finally:
             self._release(locks)
@@ -667,12 +669,30 @@ class Engine:
             )
             return None
 
+    def _outside_run_dir(self, paths: list[str]) -> list[str]:
+        """Drop the driver's OWN bookkeeping from a tree diff.
+
+        `runs/` is gitignored in this repo, so `git add -A` never sees it — but
+        that is a convention of one repository, not a property of the design.
+        Where the run dir sits inside the work tree and is NOT ignored, every
+        prompt, log and `state.json` write shows up as a change the node made.
+        Before quarantine that was a spurious accusation; with it the engine
+        would move its own `stdout.log` aside and roll `state.json` back
+        mid-run. Found by running a deliberate violation end to end.
+        """
+        try:
+            rel = self.store.run_dir.resolve().relative_to(self.repo_root.resolve())
+        except (ValueError, OSError):
+            return paths  # run dir is outside the tree: nothing to exclude
+        prefix = str(rel).replace("\\", "/").strip("/") + "/"
+        return [p for p in paths if not p.replace("\\", "/").startswith(prefix)]
+
     def _scope_changes(self, since: SnapshotRef, scope: list[str]) -> tuple[list[str], list[str]]:
         """(in-scope changed paths, violations). Both halves are wanted: the
         violations to quarantine, the in-scope list as touched-path evidence and
         to spot a rename OUT of scope (§0.1 T1.3)."""
         try:
-            changed = self.workspace.changed_paths(since)
+            changed = self._outside_run_dir(self.workspace.changed_paths(since))
         except WorkspaceError:
             return [], []
         in_scope = sorted(p for p in changed if path_in_scope(p, scope))
@@ -1066,7 +1086,10 @@ class Engine:
             # inspectable; scope is git-derived, never StepResult.files_written.
             patch = self.workspace.diff_patch(baseline)
             (gate_phase / f"attempt-{round_n}.patch").write_text(patch, encoding="utf-8")
-            scope = self.workspace.changed_paths(baseline)
+            # Same exclusion as the scope check, for the same reason and with a
+            # sharper edge: a rollback that reverts the run dir would restore
+            # `state.json` from under the engine mid-heal.
+            scope = self._outside_run_dir(self.workspace.changed_paths(baseline))
             discard = gate_phase / f"discarded-{round_n}"
             self.workspace.restore(baseline, scope, discard)
             for p in scope:

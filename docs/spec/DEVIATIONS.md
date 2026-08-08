@@ -125,9 +125,21 @@ file records implementation-level departures below that bar.
   detected and said out loud. A part-way restore failure reports both the
   violation and the restore error, and names the paths already handled.
 
+  **The run directory is excluded** from both the scope check and heal
+  rollback. `runs/` is gitignored in this repository so `git add -A` never sees
+  it, but that is a convention rather than a property of the design: where the
+  run dir sits inside an un-ignored work tree, every prompt, log and
+  `state.json` write reads as a change the node made, and the engine would move
+  its own `stdout.log` aside and roll `state.json` back mid-run. The M7 lineage
+  fingerprint is deliberately NOT changed to match — that would move recorded
+  fingerprints — so an un-ignored run dir still makes resume warn about
+  external edits to its own files.
+
   On success, the in-scope changed-path list is written to
   `phases/<node>/touched-<attempt>.txt` and the record carries only a count and
   that path — `FileStore.record` rewrites all of `state.json` on every call.
+  On failure it is not written: a failed spawn's changed paths are wreckage,
+  not a record.
 
   A `LOCKSTEP_WRITE_SCOPE` env var carries the scope as a JSON array;
   `LOCKSTEP_WORKSPACE_SCOPE` is deliberately UNCHANGED because ADDENDUM-A

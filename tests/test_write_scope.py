@@ -356,6 +356,47 @@ def test_a_rename_out_of_scope_is_reported(tmp_path, git_repo):
     assert not (git_repo / "src" / "a.py").exists(), "the in-scope delete stands"
 
 
+def test_the_run_dir_is_never_quarantined(tmp_path, git_repo):
+    """`runs/` is gitignored in THIS repo, so `git add -A` never sees it — a
+    convention of one repository, not a property of the design. With the run dir
+    inside a tree that does not ignore it, every prompt, log and state.json
+    write is a change the node appears to have made: the engine would move its
+    own stdout.log aside and roll state.json back mid-run."""
+    run_dir = git_repo / "runs" / "inside"
+    run_dir.mkdir(parents=True)
+    h = build(tmp_path, _flow(["src"], write_files={"src/a.py": "x"}), git_repo,
+              run_dir=run_dir)
+    assert h.engine.run() == 0
+    rec = load_state(run_dir).nodes["w"]
+    assert rec.status == "done", rec.error
+    assert (run_dir / "state.json").exists()
+    assert rec.touched_count == 1, "the run dir is not touched-path evidence either"
+
+
+def test_a_heal_rollback_never_reverts_the_run_dir(tmp_path, git_repo):
+    """The same exclusion, with a sharper edge: a rollback that reverted the run
+    dir would restore state.json from under the engine mid-heal."""
+    run_dir = git_repo / "runs" / "healing"
+    run_dir.mkdir(parents=True)
+    flow = {
+        "name": "heal-inside",
+        "nodes": [
+            {"id": "t", "kind": "fake",
+             "spec": {"outputs": ["one", "two"], "write_files": {"src/t.py": "x"}}},
+            {"id": "g", "role": "gate", "kind": "fake", "final": True, "depends_on": ["t"],
+             "output": "json", "contract": "Verdict",
+             "heal": {"max_rounds": 1, "targets": ["t"], "rollback": True},
+             "spec": {"outputs": [{"verdict": "block", "reason": "again", "findings": []},
+                                  {"verdict": "pass", "reason": "ok", "findings": []}]}},
+        ],
+    }
+    h = build(tmp_path, flow, git_repo, run_dir=run_dir)
+    assert h.engine.run() == 0
+    assert (run_dir / "state.json").exists()
+    discarded = list((run_dir / "phases" / "g").glob("discarded-*/**/*"))
+    assert not any("state.json" in str(p) for p in discarded), discarded
+
+
 # -------------------------------------------------------- touched evidence
 
 
@@ -382,6 +423,18 @@ def test_the_path_list_is_not_put_on_the_record(tmp_path, git_repo):
         json.loads((h.run_dir / "state.json").read_text(encoding="utf-8"))["nodes"]["w"]
     )
     assert "src/a.py" not in node_json
+
+
+def test_a_failed_node_leaves_no_touched_list(tmp_path, git_repo):
+    """A failed spawn's changed paths are the wreckage, not the record."""
+    flow = _flow(["src"], write_files={"src/a.py": "x"})
+    flow["nodes"][0]["spec"]["exit_code"] = 1
+    h = build(tmp_path, flow, git_repo)
+    assert h.engine.run() == 3
+    rec = load_state(h.run_dir).nodes["w"]
+    assert rec.status == "failed"
+    assert rec.touched_count is None
+    assert not list((h.run_dir / "phases" / "w").glob("touched-*.txt"))
 
 
 def test_a_node_without_a_scope_records_no_touched_list(tmp_path, git_repo):

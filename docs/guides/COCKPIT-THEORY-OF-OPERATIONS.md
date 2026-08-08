@@ -378,6 +378,48 @@ pinned against `cockpit.ps1`'s by `tests/test_mission_render.py` — the DE was
 told that when two surfaces disagree MISSION is right, and that stops being a
 usable instruction the moment there are two MISSIONs that can drift.
 
+### 7.1 The trace page
+
+`mission_server.py` is one page with four disclosure levels, aimed at being a
+surface the domain expert opens *by choice*. There is no tier split and no
+`--driver` flag: a CLI flag is a per-process seam, so a DE and a driver at the
+same URL would see the same page anyway.
+
+| Level | What it shows | Entry |
+|---|---|---|
+| **L0 board** | everything the old page showed — headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, per-step drawers, and the evidence or the question card when one waits | on load |
+| **L1 timeline** | every step on a shared time axis, **in place of** the step list, with a server-rendered table twin | "show every step" |
+| **L2 step** | a drawer per step: names, sizes, attempts, cost. Never stdout bodies | click a row |
+| **L3 raw** | node id, hash parts, what moved, the chain head — each glossed | "show the raw record" |
+
+Four things about it that are decisions, not accidents:
+
+- **L0→L1 is a switch, not an expansion.** `mission_rows` synthesizes rows
+  (`+ N more waiting`, `N finished, M not needed`), injects `mission.txt` notes,
+  and iterates in recorded order; a timeline shows every node in first-run
+  order. They do not agree row for row and nothing claims they do. What must
+  survive the switch is a note, which travels as a marker on its row.
+- **One segment per run interval**, from `events.jsonl` via
+  `cost_report.node_intervals`. `state.json`'s `started_at`/`ended_at` are the
+  first start and the last end across every attempt and resume, so a node
+  blocked overnight would draw a fourteen-hour bar of which minutes were work.
+  The table twin sums the same intervals.
+- **Every word and every formatted time comes from `mission_view`** over the
+  wire. The client swaps server-rendered fragments and advances an integer; a
+  formatter in the browser would be a glossary pytest cannot execute.
+- **Every response carries a run token.** A meta-refresh page reset its client
+  state by construction; a poll does not, so at a segment boundary the client
+  would hold segment A's cursor against segment B forever.
+
+The never-rules are unchanged, and none of them was ever a tier question. The
+page adds only GET routes — no `do_POST`, no form, no write verb — so **the
+decision still happens at a terminal**. Quiescence is still `quiescent.py`'s
+answer and never the page's; the evidence block appears on `quiescent.check`'s
+predicate, not on `needs_you`, which fires on clarify gates too. Evidence is
+**quoted, never narrated**, and flagged stale when it predates the last run of
+the node that writes it. `a` and `r` are the keys the DE was taught, so on the
+page they say where the decision happens rather than doing nothing at all.
+
 Diagnosis order for a failed harness node: `state.json` error → the node's
 `stderr.log` (provider limits are named there) → `result.*` against its contract
 → `prompt.txt` (did interpolation render what you expected?).

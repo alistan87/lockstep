@@ -58,7 +58,7 @@ python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is ru
 python contrib\session_spend.py               # this session: orchestrator transcript spend + runs it started
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
 pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
-python contrib\mission_server.py                       # read-only page, loopback only
+python contrib\mission_server.py                       # the trace page: board -> timeline -> step -> raw record; GET only, loopback
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
 ```
 
@@ -69,9 +69,9 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
 - `contracts.py` — built-in output contracts (Verdict, Finding, …) + resolver
 - `protocols.py`, `registry.py`, `policy.py` — seams (Executor/Workspace/Store/Policy; AllowAllPolicy is the v1 no-op); kind → executor
 - `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `proc.py` (spawn + kill_tree)
-- `workspace.py` — GitWorkspace (temp-index write-tree snapshots; restore never deletes), NullWorkspace
-- `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs
-- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets
+- `workspace.py` — GitWorkspace (temp-index write-tree snapshots AND restores; restore never deletes; `staged_paths`/`unstage` for quarantine), NullWorkspace
+- `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
+- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine
 - `cli.py`, `render.py`, `doctor.py` — frozen exit codes, Mermaid, executor probes
 
 ## Frozen surfaces — stop and ask before changing
@@ -107,6 +107,16 @@ a feature over adding a dependency. Full pytest after every change.
 - `runs/` holds prompts, diffs, and model output: sensitive, gitignored,
   never committed. `lockstep.toml` is local (gitignored); the committed
   template is `lockstep.toml.example`.
+- **`runs/` being gitignored means no git-derived mechanism can protect
+  `<run_dir>/approval-evidence.txt`** from a node that rewrites it: `snapshot()`
+  uses `git add -A`, which honours `.gitignore`, so the artifact every decision
+  is made from is invisible to write-scope detection and to any future
+  protected-path floor. Recorded ahead of any floor work
+  (PROPOSAL-sssf-adoptions §5 item 5, O6); it has no fix today. The mirror of
+  this: keep `runs/` gitignored. The engine excludes the run dir from the
+  write-scope check and from heal rollback, but NOT from the M7 lineage
+  fingerprint, so an un-ignored run dir makes every resume warn about external
+  edits to its own `state.json`.
 
 Project skills: `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
 a run dir), `/getting-started` (first-run setup on a new machine). Subagents:
@@ -119,9 +129,12 @@ failure triage).
 detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
 zero dependencies) plus `mission_view.py` — pure render functions shared by
-`mission_tui.py` (one process, keyboard) and `mission_server.py` (read-only
-localhost page). A test pins the two glossaries to each other; keep them in
-step. If you are the session driving it, read
+`mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
+trace page: board → timeline → step drawer → raw record, GET routes only, every
+word and time rendered server-side). Two tests pin vocabulary across surfaces —
+`mission_view.GLOSSARY` against `cockpit.ps1`'s, and the page's `L3_GLOSSARY`
+against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. If you are the session
+driving it, read
 `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
 `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds
 what you may say. Three rules that are enforced by code, not discretion:

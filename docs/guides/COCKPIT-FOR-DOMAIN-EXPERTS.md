@@ -85,6 +85,41 @@ started. You may see `no envelope` next to some tasks — that just means one of
 the tools cannot report its own token usage. It is not an error and nothing is
 wrong.
 
+### The page
+
+There is a fourth thing, and it is optional: **the same board in a browser**, on
+this machine only. Ask for it and you will be given a link. It shows everything
+MISSION shows, and it opens further if you want it to:
+
+- **the board** — where you land. The same steps, the same words, the same spend
+  figure. If you read nothing else, read this.
+- **show every step** — the same run drawn on a clock, so you can see what took
+  the time and what was redone. Beside it is the same thing as a plain table, in
+  case that reads better.
+- **click a step** — what that step produced: file names and sizes, what it
+  cost, which checks ran. Never the raw text a worker wrote; that is not
+  something anyone should have to read.
+- **show the raw record** — the machinery's own names for things, each with one
+  line saying what it means. Nothing here is ever something you have to act on.
+
+Two things about the page are worth knowing. It **only reads files** — there is
+no button on it that can change anything, which is why a decision still happens
+in your terminal even while you are looking at it. And near the top it says
+whether the run's own record still adds up; if it ever says **BROKEN**, stop and
+say so.
+
+Under "show the raw record" the words stop being plain, so each one carries its
+own line. These are the only unfamiliar words anywhere on the page, and none of
+them is on the path to a decision:
+
+| Word | What it means |
+|---|---|
+| **step id** | the name the system uses for this step |
+| **input-hash parts** | the things this step was given — if any of them changes, the step is done again rather than reused |
+| **what moved** | which of those things changed last time, and so why this step could not be reused |
+| **record head** | a fingerprint of this run's whole history; it changes if anything in that history is altered |
+| **record check** | whether that history still adds up when it is recomputed, just now |
+
 ---
 
 ## The four things you actually do
@@ -210,9 +245,19 @@ to be readable by you, and if it is not, that gets fixed.
 
 ## What you never have to do
 
-Write or read code. Use git. Type a command. Decide whether something is safe to
-restart. Remember which files matter. Know what a "run directory" is. Work out
-what a number means.
+Write or read code. Use git. Type a command. Remember which files matter.
 
 If you are ever asked to do one of those, something has gone wrong upstream —
 say so, and it will be corrected.
+
+Three things used to be on that list and are not any more, because the page
+below now lets you open them if you want to: knowing what a "run directory" is,
+working out what a number means, and deciding whether something is safe to
+restart. What replaces them is a promise about *where* things are, not a promise
+that they do not exist:
+
+> **Nothing you need in order to decide is behind a word you do not know.
+> Everything else is one click away, labelled in plain language, and never
+> something you are required to act on.**
+
+You can open every level of detail this system has. You never have to.
