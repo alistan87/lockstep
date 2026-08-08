@@ -150,7 +150,7 @@ $ contrib\start-cockpit.cmd                        # the only entry point, ever
 $ python contrib\plan_card.py <flow>               # consent, backed by prior runs
 $ pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the status board
 $ pwsh -File contrib\cockpit.ps1 -Tui               # or one process, keyboard-driven
-$ python contrib\mission_server.py                  # or a read-only page on loopback
+$ python contrib\mission_server.py                  # or the trace page on loopback, GET only
 $ python contrib\quiescent.py <run_dir>             # is this safe to hand over?
 $ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Approve   # spawn the decision pane
 $ python contrib\cost_report.py --compact <run_dir> # spend, in honest units

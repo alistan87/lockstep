@@ -369,7 +369,7 @@ Views, all read-only and none of them a second source of truth:
 ```powershell
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the shipped default
 pwsh -File contrib\cockpit.ps1 -Tui                     # one process, keyboard
-python contrib\mission_server.py                        # read-only page, loopback
+python contrib\mission_server.py                        # the trace page (§7.1), loopback
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>
 ```
 
