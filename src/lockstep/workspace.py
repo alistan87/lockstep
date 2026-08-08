@@ -165,12 +165,25 @@ class GitWorkspace:
 
     def restore(self, ref: SnapshotRef, scope: list[str], discard_dir: Path) -> None:
         """Check out the baseline version of each in-scope path; paths created
-        since baseline are MOVED into discard_dir, never rm'd."""
+        since baseline are MOVED into discard_dir, never rm'd.
+
+        The checkout runs against a THROWAWAY index, the way `snapshot()` does:
+        `git checkout` writes the index as well as the worktree, and the
+        baseline tree was built from the WORKTREE — so index-only content was
+        never captured, and taking it is pure loss. A hunk the operator staged
+        but never wrote out survives a rollback.
+
+        It stays `checkout` rather than becoming a `cat-file blob` write: only
+        checkout runs the smudge filters, so eol/`.gitattributes`, clean-smudge
+        pairs (git-lfs), file modes and symlinks all round-trip. A blob write
+        corrupts every one of those, and `git status` reports nothing.
+        """
         discard_dir = Path(discard_dir)
-        with self._lock:
+        with self._lock, tempfile.TemporaryDirectory() as td:
+            env = {"GIT_INDEX_FILE": str(Path(td) / "index")}
             for rel in scope:
                 if self._in_tree(ref.ref, rel):
-                    self._git("checkout", ref.ref, "--", rel)
+                    self._git("checkout", ref.ref, "--", rel, env=env)
                 else:
                     src = self.root / rel
                     if src.exists():

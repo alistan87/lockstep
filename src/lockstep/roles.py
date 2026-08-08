@@ -620,6 +620,7 @@ class Engine:
         locks = self._acquire(tokens)
         scope = [str(w) for w in (node.spec.get("writes") or [])]
         scope_ref = None
+        violations: list[str] = []
         try:
             self._maybe_snapshot(node)
             if scope and "tree" in tokens:
@@ -629,21 +630,24 @@ class Engine:
                 # declared scope lands on an unserialized node.
                 scope_ref = self._scope_baseline(node)
             raw = self._execute_with_retries(node, executor, work, phase_dir)
+            if scope_ref is not None:
+                # INSIDE the token, not after `finally`. Outside it the baseline
+                # comparison measures the next node's tree, so a node that
+                # stayed in scope is accused of its peer's legitimate writes.
+                violations = self._scope_violations(scope_ref, scope)
         finally:
             self._release(locks)
-        if scope_ref is not None:
-            violations = self._scope_violations(scope_ref, scope)
-            if violations:
-                self._set_status(
-                    node.id,
-                    "failed",
-                    error=(
-                        f"write scope violated: declares writes={scope} but wrote "
-                        f"{', '.join(violations)} — files left in place, since rollback "
-                        f"never deletes (SPEC §0.1 item 2)"
-                    ),
-                )
-                return
+        if violations:
+            self._set_status(
+                node.id,
+                "failed",
+                error=(
+                    f"write scope violated: declares writes={scope} but wrote "
+                    f"{', '.join(violations)} — files left in place, since rollback "
+                    f"never deletes (SPEC §0.1 item 2)"
+                ),
+            )
+            return
         self._finish(node, executor, work, phase_dir, raw)
 
     def _scope_baseline(self, node: Node) -> SnapshotRef | None:

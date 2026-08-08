@@ -236,6 +236,22 @@ def _node_templates(node: Node) -> list[tuple[str, str]]:
     return out
 
 
+def _serialized_on_tree(node: Node) -> bool:
+    """Does this node's executor take the `tree` token unconditionally?
+
+    Mirrors `PlannedWork.exclusive` at the three write-capable executors:
+    `shell` always (`shell.py`), `harness`/`fake` unless readonly. An approval
+    spawns nothing and takes none. Write-scope detection is only sound while
+    the node is serialized on the tree, so this is what decides whether a
+    declared scope is enforceable — keep it in step with the executors.
+    """
+    if node.role == "approval":
+        return False
+    if node.kind == "shell":
+        return True
+    return node.kind in ("harness", "fake") and not node.spec.get("readonly")
+
+
 def verify_flow(
     tg: TaskGraph,
     *,
@@ -417,9 +433,7 @@ def verify_flow(
                 f"map node {n.id!r} declares spec.writes; per-item write scopes are not "
                 f"supported (the items share one tree and one diff)",
             )
-        elif "tree" not in n.exclusive and not (
-            n.role != "approval" and n.kind in ("harness", "fake") and not n.spec.get("readonly")
-        ):
+        elif "tree" not in n.exclusive and not _serialized_on_tree(n):
             # The declaration still reaches the spawn as LOCKSTEP_WRITE_SCOPE,
             # so an in-harness extension can enforce it; only the driver's
             # after-the-fact detection needs serialization.

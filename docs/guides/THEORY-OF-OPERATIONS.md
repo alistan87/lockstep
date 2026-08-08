@@ -74,8 +74,16 @@ its answer. Spend model judgment only on what genuinely needs it.
 ## 3. Execution: waves, not a queue
 
 The engine repeatedly computes the set of nodes whose dependencies are satisfied
-and runs them concurrently, subject to **exclusive tokens**. A harness node that
-can write files declares the token `tree`; nodes holding the same token serialise.
+and runs them concurrently, subject to **exclusive tokens**. Every node that can
+write files declares the token `tree` — harness and fake nodes unless `readonly`,
+and shell nodes always; nodes holding the same token serialise.
+
+Shell nodes take it because write-scope detection compares against a *whole-tree*
+baseline (§8): one token-less writer running beside a scoped node makes that
+comparison measure someone else's work, and the scoped node is accused — or, once
+its writes are quarantined, has a peer's live file reverted. The cost of
+serialising is bounded by the shell work in the wave that was not already the
+critical path: on the one shipped flow with a parallel shell wave it is +0.15s.
 
 That is the entire concurrency model. Its virtue is that it is explainable:
 `--dry-run` prints the wave plan before anything spends, and the plan is what
@@ -190,12 +198,23 @@ and not by heal.
 
 `GitWorkspace` snapshots by `git add -A` into a **temporary index** followed by
 `git write-tree` — a real tree object, without touching your staging area or
-making a commit.
+making a commit. **Restore uses a temporary index too**, for the same reason:
+`git checkout` writes the index as well as the worktree, and the baseline tree
+was built from the worktree, so a hunk you staged but never wrote out was never
+captured and must not be taken. It stays `checkout` rather than becoming a blob
+write, because only checkout runs the smudge filters — eol, clean/smudge pairs,
+file modes and symlinks all round-trip.
 
 **Restore never deletes.** A rollback resets tracked content and moves anything
 unexpected aside into a discard directory. The driver will not remove a file it
 did not create, because the cost of being wrong is unbounded and the cost of
 leaving a stray file is a puzzled human.
+
+**Write scope** (`spec.writes`) is checked by diffing that same baseline against
+the tree when the node finishes — *while the node still holds the `tree` token*.
+Outside the token the diff measures whatever the next node has already written,
+which is why §3 gives every write-capable kind the token rather than only the
+model-driven ones.
 
 The driver also compares a **lineage-head fingerprint** on resume, so an external
 edit between runs is reported by path rather than silently absorbed. It warns; it

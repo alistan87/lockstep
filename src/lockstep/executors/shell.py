@@ -98,7 +98,15 @@ class ShellExecutor:
             render=argv,
             fingerprint_parts=[f"argv:{json.dumps(argv, ensure_ascii=False)}"],
             costs_tokens=False,
-            exclusive=[],
+            # A shell node mutates the tree like any other writer, and the
+            # write-scope check compares against a WHOLE-TREE baseline: a
+            # token-less writer running beside a scoped node invalidates that
+            # comparison, so the scoped node is accused of writes it did not
+            # make — and under quarantine would have a peer's live file
+            # reverted. Measured cost of serializing: +0.15s on the one shipped
+            # flow with a parallel shell wave (status-digest, 53.69 -> 53.84s
+            # at --max-workers 3).
+            exclusive=["tree"],
             meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role,
                   "contract": node.contract or "", "writes": list(spec.writes)},
         )

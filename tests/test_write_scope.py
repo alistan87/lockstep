@@ -7,7 +7,9 @@ ADDENDUM-A's rule — extensions enforce, they never enable — so deleting the
 extension changes only how fast a violation surfaces, never whether it does.
 
 Detection needs the node to be serialized on the tree, or a concurrent node's
-writes would be attributed to it. `verify` says so rather than guessing.
+writes would be attributed to it — which is why the check runs INSIDE the
+token, and why every write-capable executor takes it (shell included).
+`verify` warns on the classes that still cannot be checked (readonly nodes).
 """
 
 from __future__ import annotations
@@ -70,6 +72,54 @@ def test_the_offending_file_is_not_deleted(tmp_path, git_repo):
     h = build(tmp_path, _flow(["src"], write_files={"docs/leak.md": "x"}), git_repo)
     h.engine.run()
     assert (git_repo / "docs" / "leak.md").exists()
+
+
+def test_a_node_is_not_accused_of_a_concurrent_peers_write(tmp_path, git_repo):
+    """The check compares against a whole-tree baseline, so it is only sound
+    while this node is serialized on the tree. It used to run in the window
+    AFTER `finally: _release(locks)`, where the next node has already taken the
+    token and written — a false accusation of a node that stayed in scope."""
+    flow = {
+        "name": "concurrent-scope",
+        "nodes": [
+            # Holds `tree` long enough that the peer is queued behind it, so the
+            # peer's write lands in the window the check used to run in.
+            {"id": "scoped", "kind": "fake",
+             "spec": {"outputs": ["ok"], "writes": ["src"],
+                      "write_files": {"src/a.py": "x"}, "sleep_s": 0.3}},
+            {"id": "peer", "kind": "fake", "final": True,
+             "spec": {"outputs": ["ok"], "write_files": {"docs/x.md": "y"}}},
+        ],
+    }
+    h = build(tmp_path, flow, git_repo, max_workers=2)
+    assert h.engine.run() == 0
+    rec = load_state(h.run_dir).nodes["scoped"]
+    assert rec.status == "done", rec.error
+
+
+def test_a_node_is_not_accused_of_a_concurrent_shell_nodes_write(tmp_path, git_repo):
+    """A shell node used to hold no token at all, so it wrote freely while a
+    scoped node was being measured against a whole-tree baseline. Shell nodes
+    now take `tree` (§9 decision, measured at +0.15s on the one shipped flow
+    with a parallel shell wave)."""
+    flow = {
+        "name": "shell-scope",
+        "nodes": [
+            {"id": "scoped", "kind": "fake",
+             "spec": {"outputs": ["ok"], "writes": ["src"],
+                      "write_files": {"src/a.py": "x"}, "sleep_s": 0.3}},
+            {"id": "sh", "kind": "shell", "final": True,
+             "spec": {"cmd": [PY, "-c",
+                              "import pathlib;"
+                              "p=pathlib.Path('docs');p.mkdir(exist_ok=True);"
+                              "(p/'from-shell.md').write_text('y');print('ok')"]}},
+        ],
+    }
+    h = build(tmp_path, flow, git_repo, max_workers=2)
+    assert h.engine.run() == 0
+    rec = load_state(h.run_dir).nodes["scoped"]
+    assert rec.status == "done", rec.error
+    assert (git_repo / "docs" / "from-shell.md").exists()
 
 
 def test_scope_matches_a_directory_prefix(tmp_path, git_repo):
@@ -162,16 +212,29 @@ def test_verify_accepts_an_ordinary_scope():
 
 
 def test_verify_warns_when_the_scope_cannot_be_enforced():
-    """A shell node holds no tree token, so a concurrent write would be
+    """A readonly node holds no tree token, so a concurrent write would be
     misattributed; the declaration stands but detection is off."""
     flow = {
         "name": "scope-unenforced",
+        "nodes": [
+            {"id": "r", "kind": "fake", "final": True,
+             "spec": {"outputs": ["ok"], "readonly": True, "writes": ["src"]}},
+        ],
+    }
+    assert "write-scope-unenforced" in _codes(flow)
+
+
+def test_verify_no_longer_warns_for_a_shell_node():
+    """Shell nodes take the `tree` token, so their declared scope IS enforced
+    (see `_serialized_on_tree`)."""
+    flow = {
+        "name": "scope-shell",
         "nodes": [
             {"id": "s", "kind": "shell", "final": True,
              "spec": {"cmd": ["git", "--version"], "writes": ["src"]}},
         ],
     }
-    assert "write-scope-unenforced" in _codes(flow)
+    assert "write-scope-unenforced" not in _codes(flow)
 
 
 def test_verify_rejects_writes_on_a_map_node():
