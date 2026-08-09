@@ -238,6 +238,17 @@ actually wrong.
 against a known-bad input and a known-good one first. Every round trip through
 a model to discover that your gate has a bug is a round trip wasted.
 
+**Two healing gates with `rollback: true` must not heal concurrently.** A
+rollback's scope is every path changed since ITS baseline (SPEC §9.4.4) — not
+just the paths its own target wrote. Two gates that snapshot the same tree and
+then heal in parallel therefore discard each other's output. Seen on
+`webapp-local`: the backend gate's restore removed the frontend's module three
+rounds running, and the frontend gate then blocked on a file the other branch
+had deleted — three wasted heal rounds and a diagnosis that pointed at the
+wrong node. `heal-target-overlap` does NOT catch this, because the targets are
+disjoint; it is the baselines that collide. The fix is a dependency edge that
+serialises the branches, even where no data flows along it.
+
 ## Harnesses with no file tools, and choosing a model per node
 
 A harness that can only print — `ollama run`, or any bare model CLI — is a

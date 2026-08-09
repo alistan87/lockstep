@@ -225,6 +225,12 @@ worked version of each).
 - **Normalise at the boundary.** A ``` fence is a shell node's job
   (`save_result.py --strip-fence`), not three heal rounds.
 - **Run the gate against a known-bad and a known-good input before the flow.**
+- **Never let two healing gates with `rollback: true` heal concurrently.** A
+  rollback discards every path changed since its own baseline, not just its
+  target's, so concurrent gates delete each other's work — three wasted rounds
+  on `webapp-local` before it was spotted. `heal-target-overlap` misses it
+  (disjoint targets, colliding baselines). Serialise the branches with a
+  dependency edge.
 
 ## Tool-less harnesses, and one model per node
 
