@@ -30,7 +30,7 @@ Two things are being installed, and they go to different places:
 ```powershell
 cd <your-work-repo>
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install lockstep-0.3.0-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install lockstep-0.3.1-py3-none-any.whl
 .venv\Scripts\lockstep.exe --help
 ```
 
@@ -56,6 +56,12 @@ Add-Content .gitignore "`nruns/`nDeliverables/`nlockstep.toml`ncontrib/cost-fiel
 **`runs/` holds rendered prompts, diffs, and raw model output over your
 proprietary data.** On this machine that is the single most important line in
 the setup. `lockstep doctor --setup` fails if it is not ignored.
+
+There is a second, quieter reason. The engine excludes the run directory from
+the write-scope check and from heal rollback, but **not** from the lineage
+fingerprint — so an un-ignored `runs/` makes every resume warn about external
+edits to its own `state.json`, and the warning that should mean "somebody
+touched your tree" becomes noise you learn to skip.
 
 ## 4. Configure the executors
 
@@ -157,7 +163,16 @@ pwsh -File contrib\cockpit.ps1 -RunDir runs\<run> -Approve   # hand over a decis
 python contrib\quiescent.py runs\<run>                       # is it safe to hand over?
 python contrib\cost_report.py --compact runs\<run>           # spend right now
 python contrib\retrospect.py runs\                           # friction across runs
+python contrib\mission_server.py                             # the trace page, loopback
 ```
+
+The trace page is the surface to give the domain expert if they would rather
+look at a browser than a terminal: board → timeline → step → raw record, all
+server-rendered so it works with JavaScript off, and no route that writes. It
+binds to loopback; `--host` requires an explicit value and prints a warning
+naming what it exposes, because `runs/` is exactly the sensitive material this
+setup exists to keep ignored — and, when one exists, `rejection.txt`, which is
+the human's own words.
 
 Rules that matter:
 
@@ -181,7 +196,55 @@ start and the morning after a crash are the same double-click.
 Closing a laptop, a pane, or the assistant never loses paid work: the run and
 the assistant are separate processes and either can die without the other.
 
-## 10. Known local quirks
+## 10. If the work repo is a FastAPI + Jinja2 + DuckDB application
+
+Lockstep drops into that stack, but three boundaries decide whether it stays
+trustworthy afterwards. None of them is a preference; each protects a guarantee
+something else already relies on.
+
+**The driver stays dependency-free; the cockpit may not.** `pydantic` is the
+only runtime dependency of `src/lockstep/`, and that is what lets the driver run
+anywhere without negotiating with the host application's environment. FastAPI is
+pydantic v2 + starlette, so there is no version conflict — but make the boundary
+explicit: **`src/lockstep/` keeps the rule, `contrib/` (or a `cockpit/` package)
+may use the house stack.** A dependency that reaches the driver is a dependency
+every future machine has to satisfy before a run can start.
+
+**The page ports; the no-write guarantee does not port by itself.** `mission_view.py`
+and `cost_report.py` are pure projections of the run directory — a FastAPI app
+imports them unchanged and the CSS and markup move into Jinja2 templates as they
+are. Jinja2 actually helps the standing rule that every word comes from
+`mission_view`, because a template receives already-worded values and "no
+template contains a status word or a time format" is greppable. Two things to
+carry over deliberately:
+
+- Today "no route writes" is *the absence of the code*: `mission_server` has no
+  `do_POST`, and a test asserts the method does not exist. Under FastAPI a
+  router is one decorator away, so replace that mechanism rather than dropping
+  it — `assert {m for r in app.routes for m in r.methods} == {"GET"}` — and port
+  the write-patching purity harness with it. It is the guarantee the whole
+  cockpit is sold on.
+- Use `def` routes, not `async def`. The projections are blocking file I/O
+  (~40 ms for a full page render on a 40-node run); Starlette runs sync handlers
+  in a threadpool, while an `async def` doing that work stalls the event loop
+  for every other request.
+
+**DuckDB is a read model, never the store.** This was decided, with reasons, in
+`docs/proposals/PROPOSAL-sssf-adoptions.md` §8b — written about SQLite and true
+verbatim of DuckDB: the journal is hash-chained and `verify-trace` is a
+guarantee, so a mirror is a second store that can disagree with the one thing a
+reader can check, and the failure is silent. `CLAUDE.md` says the same about the
+`Store` protocol: do not design against it.
+
+What DuckDB *is* good for here is everything downstream of the record — spend
+and cost analytics across many runs, lineage rollups, a fleet view over `runs/`.
+Build it as a **derived cache rebuilt from `events.jsonl` and `state.json`, safe
+to delete at any moment**, and keep MISSION reading the run directory, so the
+sentence the domain expert was given — *when two surfaces disagree, MISSION is
+right* — stays true. One operational note: DuckDB is embedded and single-writer,
+so the ingester and the dashboard need separate read-only connections.
+
+## 11. Known local quirks
 
 - Transient `PermissionError` on file replaces and git object writes (AV in the
   path). Retry once before investigating; `resume` absorbs it.

@@ -102,7 +102,13 @@ While a run is going:
 pwsh -File contrib\cockpit.ps1 -RunDir runs\<run-dir>          # panes
 python contrib\cost_report.py --compact runs\<run-dir>         # spend right now
 python contrib\quiescent.py runs\<run-dir>                     # safe to hand over?
+python contrib\mission_server.py                               # or the same board in a browser
 ```
+
+The last one is the trace page: loopback only, GET only, and it opens from the
+board into a timeline, a step drawer, and the raw record. Offer it to someone
+who would rather look at a browser than a terminal — the decision still happens
+at the terminal either way, and the page says so.
 
 ## What to do when something is wrong
 

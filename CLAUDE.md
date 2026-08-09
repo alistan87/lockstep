@@ -141,7 +141,10 @@ zero dependencies) plus `mission_view.py` — pure render functions shared by
 trace page: board → timeline → step drawer → raw record, GET routes only, every
 word and time rendered server-side). Two tests pin vocabulary across surfaces —
 `mission_view.GLOSSARY` against `cockpit.ps1`'s, and the page's `L3_GLOSSARY`
-against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. If you are the session
+against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. The page's 1 Hz tick
+is `/api/events` (cheap: only the lines past the cursor); the full render is
+fetched only when the journal moved, the run token changed, or something is
+running — and never while the reader has text selected. If you are the session
 driving it, read
 `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` — it is the operating manual, and
 `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` is what the human was told, so it binds

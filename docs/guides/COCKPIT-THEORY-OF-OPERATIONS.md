@@ -411,6 +411,22 @@ Four things about it that are decisions, not accidents:
   state by construction; a poll does not, so at a segment boundary the client
   would hold segment A's cursor against segment B forever.
 
+**The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick parses only
+the journal lines past the cursor and carries one extra bit (`live` — whether
+anything is running); the expensive render is fetched only when the journal
+moved, the token changed, or every fifth tick while something runs. A quiet
+second costs 0.4 ms and 80 bytes instead of 40–128 ms and a whole page. That is
+not only a cost question: a swap destroys the reader's text selection, open
+drawers and focus, so it is skipped while they are selecting, and their open
+drawers, focus and keyboard echo are restored across the ones that land. Three
+consecutive failed ticks reveal a server-worded sentence above the fold and stop
+the live dot pulsing — a silently stale board is worse than a blank one.
+
+The page itself uses two routes, `/` and `/api/events`. `/api/node/<id>`,
+`/api/evidence` and `/api/question` are the same projections as JSON for another
+reader or another tool; the page reaches all three server-rendered, because it
+must work with JavaScript off.
+
 Interaction, and the one thing that is not there. Every bar is focusable and
 shows the same hint on hover and on focus (a `title` would put a value behind a
 pointer); the hit area reaches ~28px and the hint flips to the right edge past

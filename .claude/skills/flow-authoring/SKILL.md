@@ -77,6 +77,27 @@ minute-scale backoff absorbs them. Setting `retry` explicitly in the flow file
 editing the flow later changes `flow_hash` and starts a new lineage,
 re-running (and re-billing) every completed node.
 
+## Write scope (`spec.writes`)
+
+`"writes": ["CHANGELOG.draft.md"]` declares the repo-root-relative paths a node
+may write. It reaches the spawn as `LOCKSTEP_WRITE_SCOPE` so an in-harness
+extension can prevent a stray write; the driver detects one by diffing a
+baseline tree, inside the node's own lock.
+
+A violation is **quarantined**, so a scope is a decision about what may be
+reverted rather than only flagged: the blocked attempt is kept as
+`phases/<node>/out-of-scope-<attempt>.patch`, each violating path is restored to
+its baseline or moved into `out-of-scope-<attempt>/` (never deleted), and the
+node fails naming every path and its outcome. On success the in-scope changed
+paths land in `touched-<attempt>.txt`.
+
+Verification: absolute or escaping entries are `bad-write-scope`; a map node
+declaring one is the hard error `write-scope-on-map` (the items share one tree
+and one diff); a `readonly` node gets the advisory `write-scope-unenforced`,
+because it holds no `tree` token and the diff would be unsound. Every other
+write-capable kind, shell included, takes the token. The matcher is `fnmatch`,
+so `*` crosses `/`.
+
 ## Budget & executors
 
 `budget.max_agent_spawns` counts every token-costing spawn INCLUDING corrective

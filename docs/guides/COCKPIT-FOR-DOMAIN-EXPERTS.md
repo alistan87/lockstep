@@ -102,11 +102,17 @@ MISSION shows, and it opens further if you want it to:
 - **show the raw record** — the machinery's own names for things, each with one
   line saying what it means. Nothing here is ever something you have to act on.
 
-Two things about the page are worth knowing. It **only reads files** — there is
-no button on it that can change anything, which is why a decision still happens
-in your terminal even while you are looking at it. And near the top it says
+Three things about the page are worth knowing. It **only reads files** — there
+is no button on it that can change anything, which is why a decision still
+happens in your terminal even while you are looking at it. Near the top it says
 whether the run's own record still adds up; if it ever says **BROKEN**, stop and
-say so.
+say so. And if the page loses touch with the run it tells you, in a line near
+the top, rather than quietly showing you old numbers — the same rule as ACTIVITY:
+nothing on screen is allowed to be ambiguous between "fine" and "broken".
+
+You can also select and copy anything on it. The page updates itself, but it
+will not do that while you are in the middle of reading something — a step you
+have opened stays open, and text you have selected stays selected.
 
 Under "show the raw record" the words stop being plain, so each one carries its
 own line. These are the only unfamiliar words anywhere on the page, and none of

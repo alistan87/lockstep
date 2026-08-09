@@ -144,6 +144,38 @@ map body · `{previous.output}` (exactly one dep). `{{` escapes `{`.
   changed. To make caching honest for file-content work, put a content
   fingerprint IN the item/prompt (see `flows/starter/file-audit.tg.json`).
 
+## Write scope (`spec.writes`)
+
+A node may declare the paths it is allowed to write. It reaches the spawn as
+`LOCKSTEP_WRITE_SCOPE` (a JSON array), so an in-harness extension can *prevent*
+a stray write; the driver itself never sees tool calls, so it **detects** — by
+diffing a baseline tree taken before the spawn, while the node still holds its
+exclusive tokens.
+
+```json
+"spec": { "task": "…", "writes": ["CHANGELOG.draft.md"] }
+```
+
+What to know before you declare one:
+
+- **A violation is quarantined, not just reported.** The blocked attempt is kept
+  as `phases/<node>/out-of-scope-<attempt>.patch`, each violating path is
+  restored to its baseline or moved into `out-of-scope-<attempt>/`, and the node
+  fails with a message naming every path and its outcome. Declaring a scope is
+  therefore a decision about what may be *reverted*, not only about what gets
+  flagged. Rollback still never deletes.
+- **Entries are repo-root-relative and match a path, a directory prefix, or a
+  glob** — `verify` rejects absolute or escaping entries (`bad-write-scope`).
+  Note that the matcher is `fnmatch`, so `*` crosses `/`.
+- **`verify` warns `write-scope-unenforced`** when the node holds no `tree`
+  token — today that means a `readonly` node. Every other write-capable kind,
+  shell included, takes the token, so its scope is enforced.
+- **Not on a map node** — `write-scope-on-map` is a hard error: the items share
+  one tree and one diff.
+- On success the in-scope changed paths are written to
+  `phases/<node>/touched-<attempt>.txt`, with a count and that path on the
+  record — useful evidence at an approval over a large change.
+
 ## Prompt craft for harness nodes
 
 - State the exact output the contract expects ("Your result MUST be ONLY a

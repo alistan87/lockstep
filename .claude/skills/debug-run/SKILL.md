@@ -28,6 +28,18 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
 - Gates: `attempt-<n>.patch` (the blocked attempt, preserved before rollback)
   and `discarded-<n>/` (files created by the blocked attempt — moved, never
   deleted). Map items: `items/<n>/` with the same shape.
+- **Write-scope violations** leave the same shape, attempt-scoped:
+  `out-of-scope-<attempt>.patch` (the whole blocked attempt, written BEFORE the
+  tree was put back) and `out-of-scope-<attempt>/` (paths the node created —
+  moved, never deleted). The node's `error` names every violating path and what
+  happened to it: `restored to its state before this step`, `moved aside into
+  out-of-scope-N/`, or `left staged as you had it` for a path the operator had
+  already staged. `THE ROLLBACK DID NOT COMPLETE` means a partial restore — the
+  message names the paths already handled and the tree is part-way back; the
+  patch is the recovery path.
+- `touched-<attempt>.txt` — on a node that declared `spec.writes` and SUCCEEDED,
+  the in-scope paths it changed. Its absence on a failed node is deliberate: a
+  failed spawn's changed paths are wreckage, not a record.
 - `events.jsonl` — one line per transition; a trailing partial line after a
   crash is normal and tolerated.
 

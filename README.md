@@ -37,6 +37,7 @@ $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
 $ lockstep verify flows/x.tg.json --lint        # + advisory anti-pattern warnings
 $ lockstep explain runs/<run>/ implement        # which hash inputs moved; why it re-billed
 $ lockstep run flows/x.tg.json --replay runs/<run>/   # recorded results; no spawns, no tokens
+$ lockstep verify-trace runs/<run>/             # recompute the journal's hash chain
 $ lockstep gc                                   # runs/ retention plan; dry-run unless --apply
 ```
 
@@ -111,9 +112,20 @@ build-one-thing runs — see its README for the table
 
 The deterministic gate bodies are tested programs in `src/lockstep/gates/`
 (`python -m lockstep.gates.<name>` — see FLOW-AUTHORING for the library and
-the `verify --lint` table). Recorded runs become zero-token regression
-fixtures: `contrib/export_fixture.py` (scrubbed allowlist) +
-`contrib/replay_suite.py`.
+the `verify --lint` table).
+
+Recorded runs become zero-token regression fixtures: `contrib/export_fixture.py`
+(a scrubbed allowlist — it also clears the two machine-local fields inside
+`state.json`) feeds `contrib/replay_suite.py`, which replays each fixture with
+**strict `input_hash` matching**, so a mismatch after an engine or flow change
+is the regression being hunted. `flows/selftest-replay.tg.json` is the one
+committed fixture's source and the one flow that must stay **shell-only**: a
+harness node's hash includes the local executor-config digest, so only an
+all-shell flow records hashes that match on another machine. It doubles as a
+zero-token check that the documents everything else cites still carry the
+sections it cites them for. With no fixtures the suite reports `0/0 — NOTHING
+WAS CHECKED` on stderr rather than a quiet pass; `--require-fixtures` makes an
+empty net a failure.
 
 ## Driving it for someone who does not code (the cockpit)
 
@@ -164,6 +176,40 @@ with `cockpit.ps1`, and a test pins their glossaries to each other. **Decisions
 never leave the terminal**: the page has no form, no POST handler, and no route
 that writes.
 
+### The trace page
+
+`contrib/mission_server.py` is one page with four levels of disclosure, aimed at
+being a surface a domain expert opens *by choice*:
+
+| level | what it shows | entry |
+|---|---|---|
+| **board** | headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, and the evidence or the question card, verbatim, when one waits | on load |
+| **timeline** | every step on a shared time axis, **in place of** the step list, with a table twin beside it | "show every step" |
+| **step** | a drawer per step: names, sizes, attempts, cost — never stdout bodies | click a row |
+| **raw** | node id, hash parts, what moved, the chain head — each with a one-line gloss, pinned by test against the domain-expert guide | "show the raw record" |
+
+Four properties that are structural rather than stylistic:
+
+- **It renders with JavaScript switched off.** Every level is server-rendered,
+  and the table twin is the accessibility path, the no-JS fallback and the
+  surface the tests read — which is what keeps "no logic that can be wrong lives
+  in the JS" a fact rather than a discipline. The client swaps server-rendered
+  fragments and advances an integer; it formats no word and no time.
+- **The heartbeat is the cheap route.** `GET /api/events?after=<n>` parses only
+  the lines past the cursor; the expensive render is fetched only when the
+  journal moved, the run changed, or a node is running. A quiet second costs
+  0.4 ms and 80 bytes.
+- **A refresh never lands on a reader.** It is skipped while text is selected,
+  and open drawers, focus and the keyboard echo are restored across it.
+- **Every response carries a run token.** A poll has no natural reset, so at a
+  segment boundary the client discards its cursor rather than asking for
+  `after=400` of a twelve-event run.
+
+Colour is validated, not chosen: the four cost-stack hexes and the reserved
+status steps are run through the data-viz validator against the page's own
+surface, and every status colour ships with its icon and its glossary word, so
+colour never carries meaning alone.
+
 Read `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` if you are the session
 driving it, and `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` — which is what the
 human was told, so it binds what you may say.
@@ -196,6 +242,30 @@ skipped when nothing did — and an auditable record. **Not reproducibility**:
 harness nodes are nondeterministic; re-running one legitimately yields
 different output and correctly invalidates its dependents. Shell nodes always
 re-run, deliberately. Map nodes resume per item.
+
+## Write scope, and what happens when an agent leaves it
+
+A node may declare `spec.writes` — the paths it is allowed to write. The driver
+never sees tool calls, so it **detects** rather than prevents, by diffing a
+baseline tree taken before the spawn. Detection runs *during* the node, inside
+the same lock that holds its exclusive tokens: outside that lock the diff
+measures whatever the next node has already written, and a node that stayed in
+scope gets accused of its peer's work. Every write-capable kind takes the `tree`
+token for the same reason, shell included.
+
+A violation is **quarantined, not abandoned**. The blocked attempt is preserved
+as `phases/<node>/out-of-scope-<attempt>.patch` before anything is touched; each
+violating path is then restored to its baseline content, or — if the node created
+it — moved into `phases/<node>/out-of-scope-<attempt>/`. Rollback still never
+deletes: the file is moved, and the failure message names every path and its
+outcome. An index entry the node itself staged is reset; one that was already
+staged before the node ran is named and left exactly as you left it. On success
+the in-scope changed-path list goes to `phases/<node>/touched-<attempt>.txt`.
+
+The run directory is excluded from all of this. Keep `runs/` gitignored — the
+engine excludes it from the scope check and from heal rollback, but not from the
+lineage fingerprint, so an un-ignored run dir makes every resume warn about
+external edits to its own `state.json`.
 
 ## Executors are config, not code
 
