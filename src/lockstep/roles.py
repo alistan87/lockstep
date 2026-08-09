@@ -795,8 +795,8 @@ class Engine:
             pass
 
         lines = [
-            f"write scope violated: declares writes={scope} but wrote "
-            f"{', '.join(violations)}",
+            f"write scope violated: this step may only write {', '.join(scope)} "
+            f"but wrote {', '.join(violations)}",
             f"the blocked attempt is preserved at phases/{node.id}/{patch_name}",
         ]
         lines += [f"  {p} — {outcome}" for p, outcome in outcomes]

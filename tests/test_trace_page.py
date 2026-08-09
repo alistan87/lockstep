@@ -382,7 +382,9 @@ def test_hover_and_keyboard_focus_show_the_same_thing(tmp_path):
         mission_server.waterfall(run, ROOT, now=PAGE_NOW))
     assert timeline.count('tabindex="0"') == 3        # one per segment
     assert 'role="img"' in timeline and "aria-label=" in timeline
-    assert '<span class="hint">' in timeline
+    # the hint is the VISUAL rendering of the accessible name, so it is hidden
+    # from assistive tech — otherwise a focused bar is announced twice
+    assert '<span class="hint" aria-hidden="true">' in timeline
     css = mission_server.CSS
     assert ".seg:hover .hint,.seg:focus-visible .hint{display:block}" in css
     assert ".seg:focus-visible{outline:" in css
@@ -565,8 +567,7 @@ def test_the_heartbeat_is_the_events_route_and_it_gates_the_refresh():
     assert "setInterval(tick" in js, "the interval drives the CHEAP route"
     # and /api/state is fetched only from refresh(), which is gated
     assert js.count("fetch('api/state'") == 1
-    gate = "if (moved || (doc.live && quiet >= IDLE_REFRESH_TICKS)) { quiet = 0; refresh(); }"
-    assert gate in js
+    assert "if (dirty || (doc.live && quiet >= IDLE_REFRESH_TICKS)) {" in js
 
 
 def test_a_quiet_tick_costs_almost_nothing(tmp_path):
@@ -592,15 +593,44 @@ def test_the_events_route_says_whether_the_clock_is_ticking(tmp_path):
     assert json.loads(get(run, "/api/events?after=0", tmp_path)[2])["live"] is True
 
 
+def test_a_skipped_refresh_is_not_forgotten():
+    """A reader who leaves text selected would otherwise consume the cursor
+    advance and never see the refresh it should have caused — the page sits
+    stale until the NEXT event, which on a finished run never comes."""
+    js = mission_server.JS
+    assert "dirty = true" in js
+    assert "if (refresh()) { dirty = false; quiet = 0; }" in js
+    assert "return false;" in js, "refresh() must report that it bailed"
+
+
+def test_the_offline_note_is_above_the_fold(tmp_path):
+    """A `you are looking at stale data` warning under 200 KB of content is a
+    warning nobody sees."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.index('id="offline-note"') < body.index('class="hero"')
+    # and the live dot stops pretending, in presentation not in words
+    assert "body.offline .live .dot{animation:none" in mission_server.CSS
+    assert "classList.toggle('offline', down)" in mission_server.JS
+
+
+def test_the_timeline_narrows_for_a_phone():
+    """`--host` is advertised for phone use; a 250px label gutter on a 375px
+    screen leaves no track to draw on."""
+    css = mission_server.CSS
+    assert "@media (max-width:700px){.wf-plot{--gutter:118px}" in css
+    assert ".seg .hint{white-space:normal;max-width:60vw}" in css
+
+
 def test_a_new_run_discards_the_old_cursor_rather_than_its_next(tmp_path):
     """`doc.next` is computed against the cursor the client sent, so across a
     segment boundary it describes the wrong run. Keeping it would leave the
     client asking for `after=400` of a twelve-event run — the exact failure the
     run token exists to prevent."""
     js = mission_server.JS
-    branch = js.split("if (doc.token !== token) {")[1].split("}")[0]
-    assert "cursor = 0" in branch and "refresh()" in branch and "return" in branch
-    assert "doc.next" not in branch
+    branch = js.split("if (doc.token !== token) {")[1].split("return;")[0]
+    assert "cursor = 0" in branch and "refresh()" in branch
+    assert "doc.next" not in branch, "the old run's next must not survive the boundary"
 
 
 # --------------------------------- the page is not taken away from its reader
@@ -611,7 +641,7 @@ def test_a_refresh_never_lands_while_the_reader_is_selecting_text():
     path out of the block you are being asked to decide from."""
     js = mission_server.JS
     assert "function selecting()" in js
-    assert "if (busy || selecting()) return;" in js
+    assert "if (busy || selecting()) return false;" in js
     assert "getSelection" in js
 
 

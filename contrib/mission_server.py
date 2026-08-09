@@ -16,6 +16,14 @@ Four levels of disclosure on ONE page, for one audience:
   L3  raw       node id, hash parts, what moved, the chain head — each with a
                 one-line gloss, pinned by test.
 
+The PAGE itself uses two routes: `/` for the document and `/api/events` as its
+heartbeat, which decides when `/api/state` is worth fetching. `/api/node/<id>`,
+`/api/evidence` and `/api/question` are the same projections as JSON, for a
+reader or another tool; the page reaches all three server-rendered, because it
+has to work with JavaScript off. That is stated here, and pinned by test,
+because a route the page is ASSUMED to call and does not is worse than one it
+never claimed — see the heartbeat note on `JS`.
+
 Every word and every formatted time comes from `mission_view`. The page's
 JavaScript swaps server-rendered fragments and advances an event cursor; it
 formats nothing, because a formatter in the browser is a rendering pytest
@@ -586,6 +594,9 @@ pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,Consolas,monospace;
 .feed{display:grid;gap:2px;font-size:13.5px;color:var(--ink-2)}
 .feed div{padding:3px 0}
 .foot{color:var(--muted);font-size:12.5px;margin-top:26px;text-align:center}
+body.offline .live .dot{animation:none;background:var(--muted)}
+@media (max-width:700px){.wf-plot{--gutter:118px}.wf-lab .w{padding-left:0}
+ .seg .hint{white-space:normal;max-width:60vw}}
 /* Under forced colours or on paper, the page falls to the TABLE VIEW. Both are
    contexts where a positioned bar says nothing; the twin carries every value a
    bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
@@ -643,7 +654,7 @@ JS = """
 
   var token = document.body.dataset.runToken || '';
   var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
-  var quiet = 0, fails = 0, busy = false;
+  var quiet = 0, fails = 0, busy = false, dirty = false;
 
   function selecting() {
     var s = window.getSelection();
@@ -660,10 +671,13 @@ JS = """
   function offline(down) {
     var note = document.getElementById('offline-note');
     if (note) note.hidden = !down;
+    // A live dot pulsing over data nobody is receiving is a lie told in
+    // presentation. The class stops the animation; the WORDS are the server's.
+    document.body.classList.toggle('offline', down);
   }
 
   function refresh() {
-    if (busy || selecting()) return;   // never take the page out from under a reader
+    if (busy || selecting()) return false;  // never take the page out from under a reader
     busy = true;
     var view = currentView(), open = openIds();
     var focused = document.activeElement && document.activeElement.id;
@@ -679,6 +693,7 @@ JS = """
       })
       .catch(function () {})
       .then(function () { wrap.classList.remove('stale'); busy = false; });
+    return true;
   }
 
   function tick() {
@@ -692,12 +707,19 @@ JS = """
         // leave the client asking for `after=400` of a twelve-event run, which
         // is the exact failure the run token exists to prevent.
         if (doc.token !== token) {
-          token = doc.token; cursor = 0; quiet = 0; refresh(); return;
+          token = doc.token; cursor = 0; quiet = 0; dirty = true;
+          if (refresh()) { dirty = false; }
+          return;
         }
-        var moved = doc.next !== cursor;
+        // `dirty` outlives the tick that saw the movement. Without it, a reader
+        // who leaves text selected consumes the cursor advance and then never
+        // sees the refresh it should have caused — the page would sit stale
+        // until the NEXT event, which on a finished run never comes.
+        if (doc.next !== cursor) { dirty = true; quiet = 0; } else { quiet += 1; }
         cursor = doc.next;
-        quiet = moved ? 0 : quiet + 1;
-        if (moved || (doc.live && quiet >= IDLE_REFRESH_TICKS)) { quiet = 0; refresh(); }
+        if (dirty || (doc.live && quiet >= IDLE_REFRESH_TICKS)) {
+          if (refresh()) { dirty = false; quiet = 0; }
+        }
       })
       .catch(function () { if (++fails >= 3) { offline(true); } });
   }
@@ -772,7 +794,7 @@ def render_timeline(wf: dict) -> str:
                     f'<div class="seg {e(seg["cls"])}{extra}" tabindex="0" role="img" '
                     f'aria-label="{e(seg["title"])}" '
                     f'style="left:{seg["left"]:.2f}%;width:{seg["width"]:.2f}%">'
-                    f'<span class="hint">{e(seg["title"])}</span>{tip}</div>'
+                    f'<span class="hint" aria-hidden="true">{e(seg["title"])}</span>{tip}</div>'
                 )
             out.append("</div></div>")
         out.append('</div><div class="wf-axis">')
@@ -1016,6 +1038,13 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         f'<span class="chip" title="{e(chain["detail"])}">'
         f'<span class="dot {e(chain["cls"])}"></span>{e(chain["text"])}</span></div>',
 
+        # ABOVE the fold, not under 200 KB of content. Server-worded, hidden,
+        # unhidden by the client after three consecutive failed polls. The page
+        # used to swallow every error and go on pulsing its live dot over frozen
+        # data — a silently stale board is worse than a blank one, and the guide
+        # promises blank never means broken.
+        f'<p class="stale-note" id="offline-note" role="status" hidden>{e(OFFLINE_SENTENCE)}</p>',
+
         f'<p class="hero">{e(mv.headline(state, flow, now=now))}</p>',
         '<p class="hero-sub">This page only reads files. Decisions are not made here — '
         'when something needs you, it happens in the terminal.</p>',
@@ -1046,11 +1075,6 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         _feed_card(run_dir, events, labels, _focus_node(state), repo_root),
         _drawers(run_dir, node_ids, repo_root, state=state, labels=labels),
 
-        # Server-worded, hidden, unhidden by the client after three consecutive
-        # failed polls. The page used to swallow every error and go on pulsing
-        # its `live` dot over frozen data — a silently stale board is worse than
-        # a blank one, and the guide promises blank never means broken.
-        f'<p class="stale-note" id="offline-note" role="status" hidden>{e(OFFLINE_SENTENCE)}</p>',
         '<p class="foot">This page only reads files. It never changes the run.</p>',
     ]
     if mv.needs_you(state):
