@@ -249,7 +249,7 @@ def test_l0_renders_server_side(tmp_path):
     assert "step 2 of 4" in head                  # the headline, from mission_view
     assert "needs you" in head                    # a glossary word
     assert "approve the brief" in head            # the label sidecar
-    assert "agent tasks used 9 of 25" in head     # the spend figure
+    assert "agent tasks used" in head and "9 of 25" in head   # the spend figure
     assert "the same thing as a table" in head    # the table twin, not behind JS
     assert "Decisions are not made here" in head
     # And the twin is not merely PRESENT but visible: the client hides one view
@@ -448,7 +448,7 @@ def test_the_table_twin_is_open_by_default(tmp_path):
     run = page_run(tmp_path)
     timeline = mission_server.render_timeline(
         mission_server.waterfall(run, ROOT, now=PAGE_NOW))
-    assert "<details open><summary>the same thing as a table" in timeline
+    assert '<details id="table-twin" open><summary>the same thing as a table' in timeline
 
 
 # ---------------------------------------------------- the stat row (§4.6.4)
@@ -550,6 +550,130 @@ def test_the_poll_holds_the_previous_render_rather_than_a_skeleton():
     visual experience of a healthy run."""
     assert "stale" in mission_server.JS
     assert ".wrap.stale{opacity:" in mission_server.CSS
+
+
+# ------------------------------------------- the heartbeat is the cheap route
+
+def test_the_heartbeat_is_the_events_route_and_it_gates_the_refresh():
+    """The first cut polled `/api/state` once a second and never called
+    `/api/events` at all: 128 ms and 227 KB per tick on a 40-node run, forever,
+    for a page that had mostly not changed, while the cursor sat in a dataset
+    attribute nothing read. A dead channel that looks wired is worse than no
+    channel (`cockpit.ps1:302-308`)."""
+    js = mission_server.JS
+    assert "fetch('api/events?after=' + cursor" in js
+    assert "setInterval(tick" in js, "the interval drives the CHEAP route"
+    # and /api/state is fetched only from refresh(), which is gated
+    assert js.count("fetch('api/state'") == 1
+    gate = "if (moved || (doc.live && quiet >= IDLE_REFRESH_TICKS)) { quiet = 0; refresh(); }"
+    assert gate in js
+
+
+def test_a_quiet_tick_costs_almost_nothing(tmp_path):
+    run = page_run(tmp_path)
+    total = json.loads(get(run, "/api/events?after=0", tmp_path)[2])["next"]
+    body = get(run, f"/api/events?after={total}", tmp_path)[2]
+    doc = json.loads(body)
+    assert doc["events"] == [] and doc["next"] == total
+    assert len(body) < 120, "a quiet second must not ship a page"
+
+
+def test_the_events_route_says_whether_the_clock_is_ticking(tmp_path):
+    """Only a running node makes the page change with no journal entry behind
+    it, so that is the one extra bit the heartbeat carries. It is `live`, not
+    `running`: a GLOSSARY word in the client would be the second glossary this
+    design forbids, and the test that catches that is a substring check with no
+    exceptions in it."""
+    run = page_run(tmp_path)
+    assert json.loads(get(run, "/api/events?after=0", tmp_path)[2])["live"] is False
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"]["status"] = "running"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    assert json.loads(get(run, "/api/events?after=0", tmp_path)[2])["live"] is True
+
+
+def test_a_new_run_discards_the_old_cursor_rather_than_its_next(tmp_path):
+    """`doc.next` is computed against the cursor the client sent, so across a
+    segment boundary it describes the wrong run. Keeping it would leave the
+    client asking for `after=400` of a twelve-event run — the exact failure the
+    run token exists to prevent."""
+    js = mission_server.JS
+    branch = js.split("if (doc.token !== token) {")[1].split("}")[0]
+    assert "cursor = 0" in branch and "refresh()" in branch and "return" in branch
+    assert "doc.next" not in branch
+
+
+# --------------------------------- the page is not taken away from its reader
+
+def test_a_refresh_never_lands_while_the_reader_is_selecting_text():
+    """`innerHTML` destroys the selection. On a page whose whole purpose is
+    reading evidence, wiping a selection once a second means you cannot copy a
+    path out of the block you are being asked to decide from."""
+    js = mission_server.JS
+    assert "function selecting()" in js
+    assert "if (busy || selecting()) return;" in js
+    assert "getSelection" in js
+
+
+def test_open_drawers_focus_and_the_key_echo_survive_a_refresh():
+    js = mission_server.JS
+    assert "details[open][id]" in js, "open drawers are re-opened after the swap"
+    assert "document.activeElement && document.activeElement.id" in js
+    assert "if (echoShown)" in js, "the a/r sentence is not wiped a second later"
+
+
+def test_every_details_the_reader_can_open_carries_an_id(tmp_path):
+    """State can only be restored across a swap for elements that can be named."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    import re
+    opens = re.findall(r"<details([^>]*)>", body)
+    assert opens
+    for attrs in opens:
+        assert "id=" in attrs, f"<details{attrs}> cannot survive a refresh"
+
+
+def test_polling_stops_while_the_tab_is_hidden():
+    assert "document.visibilityState === 'hidden'" in mission_server.JS
+
+
+def test_a_page_that_stops_hearing_from_the_run_says_so(tmp_path):
+    """The first cut swallowed every failure and went on pulsing its `live` dot
+    over frozen data. The guide promises blank never means broken; a silently
+    stale board is worse than a blank one."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert 'id="offline-note"' in body
+    assert html.escape(mission_server.OFFLINE_SENTENCE) in body
+    assert 'id="offline-note" role="status" hidden' in body, "hidden until it is true"
+    js = mission_server.JS
+    assert "if (++fails >= 3) { offline(true); }" in js, "three strikes, not one blip"
+    assert "note.hidden = !down" in js
+
+
+# --------------------------------------------------- one read, not five
+
+def test_a_refresh_collects_usage_exactly_once(tmp_path, monkeypatch):
+    """`collect_run` walks every phase dir and parses every envelope. The page
+    draws a meter, a spend block, a cost stack and two cost panels from it; the
+    first cut computed it five times per render, at 1 Hz."""
+    import cost_report
+    calls = []
+    real = cost_report.collect_run
+    monkeypatch.setattr(cost_report, "collect_run",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    run = page_run(tmp_path)
+    mission_server.render_wrap(run, ROOT, tmp_path, now=PAGE_NOW)
+    assert len(calls) == 1, f"collect_run ran {len(calls)} times in one render"
+
+
+def test_the_spend_card_does_not_repeat_the_meter(tmp_path):
+    """Two identical sentences, adjacent, read as two different numbers."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.count("agent tasks used 9 of 25") == 0
+    assert "agent tasks used" in body and "9 of 25" in body   # once, in the meter
+    assert "of node time" in body                             # the qualifiers stay
 
 
 # ----------------------------------------------------------------- the meter

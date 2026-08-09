@@ -562,21 +562,28 @@ def visible_nodes(run_dir: Path, repo_root: Path | None = None) -> list[str]:
     return [nid for nid, _ in mission_rows(run_dir, repo_root=repo_root) if nid]
 
 
-def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None) -> list[str]:
+def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
+                state: dict | None = None, labels: dict[str, str] | None = None) -> list[str]:
     """T2.3 — "what does 'stopped with a problem' mean for this step?"
 
     MISSION is a wall with no way in: a domain expert wanting the reason behind
     one line has to go through the chat, which puts a narrated answer between
     them and an artifact that already exists. This prints the artifact, and says
     where it lives so the answer is checkable rather than merely readable.
+
+    `state` and `labels` let a caller rendering EVERY node hand over the two
+    reads it has already done. `load_labels` runs a recursive `flows/**` glob,
+    and a page that drew one drawer per node was doing that once per node.
     """
     run_dir = Path(run_dir)
-    state = read_json(run_dir / "state.json") or {}
+    if state is None:
+        state = read_json(run_dir / "state.json") or {}
     rec = (state.get("nodes") or {}).get(node_id)
     if rec is None:
         return [f"no such step in this run: {node_id}"]
 
-    labels = load_labels(run_dir, repo_root)
+    if labels is None:
+        labels = load_labels(run_dir, repo_root)
     name = label_for(labels, node_id)
     out = ["=" * WIDTH, f"  {name}"]
     if name != node_id:
@@ -915,14 +922,20 @@ def cost_detail(row: dict, mode: str) -> str:
 
 
 def cost_lines(run_dir: Path, mode: str = "history",
-               now: datetime | None = None) -> list[str]:
+               now: datetime | None = None, usage: dict | None = None) -> list[str]:
     """The whole cost panel: header + DAG-ordered rows (+ per-attempt history
-    sub-lines in history mode)."""
+    sub-lines in history mode).
+
+    `usage` lets a caller that already has `cost_report.collect_run` for this
+    run pass it in. The page renders two modes of this panel plus a spend block
+    from the same reader; without it, one page render walks every phase dir and
+    parses every envelope three times over.
+    """
     run_dir = Path(run_dir)
     state = read_json(run_dir / "state.json")
     if state is None:
         return ["(reading state...)"]
-    run = _usage(run_dir)
+    run = usage if usage is not None else _usage(run_dir)
     if run is None:
         return ["(cost data unavailable - state mid-replace or cost_report missing)"]
     flow = read_json(run_dir / "flow.tg.json")

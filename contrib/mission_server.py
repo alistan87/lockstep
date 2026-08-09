@@ -117,7 +117,17 @@ TERMINAL_SENTENCE = (
     "nothing but a person at a keyboard can answer."
 )
 
+OFFLINE_SENTENCE = (
+    "This page has stopped hearing from the run. What you can see below is the "
+    "last thing it knew, and it may be out of date — ask the assistant whether "
+    "the run is still going."
+)
+
 POLL_MS = 1000
+# How many quiet ticks pass before the page re-renders anyway. Only a running
+# node makes the page change on its own (an elapsed clock, a bar drawing to
+# now); with nothing running there is nothing for a re-render to say.
+IDLE_REFRESH_TICKS = 5
 FEED_LIMIT = 12
 
 
@@ -137,6 +147,28 @@ def _events(run_dir: Path) -> list[dict]:
         return cost_report._read_events(Path(run_dir))
     except Exception:  # noqa: BLE001
         return []
+
+
+def _events_after(run_dir: Path, after: int) -> list[dict]:
+    """Only the journal lines past the cursor, JSON-parsed. The whole-file read
+    is unavoidable; parsing every line of a long journal once a second is not.
+    A torn trailing line is tolerated, as everywhere else (SPEC §10.3)."""
+    path = Path(run_dir) / "events.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out: list[dict] = []
+    for i, line in enumerate(lines):
+        if i < after or not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            if i == len(lines) - 1:
+                continue
+            return []  # a mid-file tear: the view says nothing rather than lying
+    return out
 
 
 def _intervals(run_dir: Path) -> dict[str, list[tuple[str, str | None]]]:
@@ -375,7 +407,8 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
     return f"{when}  {word}".rstrip()
 
 
-def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None) -> dict:
+def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
+                state: dict | None = None, labels: dict[str, str] | None = None) -> dict:
     """L2. `node_detail`'s body, named in L0's words — the FULL label, without
     the board's 33-character truncation and without the `(step id: …)` suffix.
     The identifier lives at L3.
@@ -384,8 +417,8 @@ def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None) -> d
     i.e. the model's whole result text, and tailing it was rejected for good
     reason.
     """
-    labels = mv.load_labels(run_dir, repo_root)
-    lines = mv.node_detail(run_dir, node_id, repo_root)
+    labels = labels if labels is not None else mv.load_labels(run_dir, repo_root)
+    lines = mv.node_detail(run_dir, node_id, repo_root, state=state, labels=labels)
     body = [ln for ln in lines
             if not ln.startswith("=") and not ln.strip().startswith("(step id:")]
     # The label line node_detail prints as its heading is now the drawer title.
@@ -565,8 +598,20 @@ pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,Consolas,monospace;
 """
 
 # The whole of the client. It toggles two fragments, swaps server-rendered HTML,
-# unhides a server-rendered sentence, and advances an integer. It renders no
+# unhides two server-rendered sentences, and advances an integer. It renders no
 # word, formats no time, and computes no geometry.
+#
+# The heartbeat is `/api/events`, not `/api/state`. The first cut polled the
+# expensive route once a second and never called the cheap one at all — 128 ms
+# and 227 KB per tick on a 40-node run, forever, for a page that mostly had not
+# changed, while the cursor sat in a dataset attribute nothing read. A dead
+# channel that looks wired is worse than no channel (`cockpit.ps1:302-308`).
+#
+# And a swap is not free to the READER either: `innerHTML` destroys their text
+# selection, their open drawers and their focus. So the page is only taken away
+# from them when the journal moved, when the run changed, or — while something
+# is running, where the clock genuinely ticks — every few seconds; and never
+# while they are selecting text.
 JS = """
 (function () {
   var wrap = document.querySelector('.wrap');
@@ -586,34 +631,86 @@ JS = """
   });
   try { show(sessionStorage.getItem('lockstep-view') || 'l0'); } catch (err) { show('l0'); }
 
+  var echoShown = false;
   // `a` and `r` are the keys the domain expert was taught. The sentence they
   // reveal is rendered by the server; this only unhides it.
   addEventListener('keydown', function (ev) {
     if (ev.key !== 'a' && ev.key !== 'r') return;
+    echoShown = true;
     var echo = document.getElementById('key-echo');
     if (echo) echo.hidden = false;
   });
 
   var token = document.body.dataset.runToken || '';
   var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+  var quiet = 0, fails = 0, busy = false;
 
-  function poll() {
-    wrap.classList.add('stale');   // hold the previous render, never a skeleton
-    fetch('api/state', { cache: 'no-store' }).then(function (r) { return r.json(); })
+  function selecting() {
+    var s = window.getSelection();
+    return !!(s && !s.isCollapsed && s.anchorNode && wrap.contains(s.anchorNode));
+  }
+  function currentView() {
+    var b = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
+    return b ? b.dataset.view : 'l0';
+  }
+  function openIds() {
+    return Array.prototype.map.call(
+      document.querySelectorAll('details[open][id]'), function (d) { return d.id; });
+  }
+  function offline(down) {
+    var note = document.getElementById('offline-note');
+    if (note) note.hidden = !down;
+  }
+
+  function refresh() {
+    if (busy || selecting()) return;   // never take the page out from under a reader
+    busy = true;
+    var view = currentView(), open = openIds();
+    var focused = document.activeElement && document.activeElement.id;
+    wrap.classList.add('stale');       // hold the previous render, never a skeleton
+    fetch('api/state', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
       .then(function (doc) {
-        if (doc.token !== token) { token = doc.token; cursor = 0; }
-        var view = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
-        var keep = view ? view.dataset.view : 'l0';
         wrap.innerHTML = doc.html;
-        show(keep);
-        cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+        show(view);
+        open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
+        if (focused) { var f = document.getElementById(focused); if (f) f.focus(); }
+        if (echoShown) { var e = document.getElementById('key-echo'); if (e) e.hidden = false; }
       })
       .catch(function () {})
-      .then(function () { wrap.classList.remove('stale'); });
+      .then(function () { wrap.classList.remove('stale'); busy = false; });
   }
-  setInterval(poll, POLL_MS);
+
+  function tick() {
+    if (document.visibilityState === 'hidden') return;
+    fetch('api/events?after=' + cursor, { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
+      .then(function (doc) {
+        fails = 0; offline(false);
+        // A new run: `doc.next` was computed against the OLD cursor and means
+        // nothing here, so it is discarded rather than kept. Taking it would
+        // leave the client asking for `after=400` of a twelve-event run, which
+        // is the exact failure the run token exists to prevent.
+        if (doc.token !== token) {
+          token = doc.token; cursor = 0; quiet = 0; refresh(); return;
+        }
+        var moved = doc.next !== cursor;
+        cursor = doc.next;
+        quiet = moved ? 0 : quiet + 1;
+        if (moved || (doc.live && quiet >= IDLE_REFRESH_TICKS)) { quiet = 0; refresh(); }
+      })
+      .catch(function () { if (++fails >= 3) { offline(true); } });
+  }
+  setInterval(tick, POLL_MS);
 })();
 """
+
+
+def client_js() -> str:
+    """`JS` with its two tuning constants substituted. They live in Python so
+    the cadence is one fact, testable, rather than a number in a string."""
+    return (JS.replace("POLL_MS", str(POLL_MS))
+              .replace("IDLE_REFRESH_TICKS", str(IDLE_REFRESH_TICKS)))
 
 
 def _icon_span(row: dict) -> str:
@@ -683,7 +780,7 @@ def render_timeline(wf: dict) -> str:
             out.append(f'<span class="tick" style="left:{tick["pct"]:.2f}%">{e(tick["label"])}</span>')
         out.append("</div></div>")
 
-    out.append("<details open><summary>the same thing as a table</summary><table>")
+    out.append('<details id="table-twin" open><summary>the same thing as a table</summary><table>')
     out.append('<tr><th>step</th><th>state</th><th class="n">started</th>'
                '<th class="n">worked for</th><th class="n">tries</th></tr>')
     for row in wf["rows"]:
@@ -722,7 +819,12 @@ def _stat_tiles(state: dict, flow: dict | None, run: dict | None, meter: dict) -
         fourth = ("steps to your decision", str(to_go))
     tiles = [
         ("step", f"{min(settled + running, total)} of {total}"),
-        ("worked for", mv.format_duration(worked) or "—"),
+        # NOT "worked for": this sums every node's time, so on a flow that fans
+        # out it is legitimately larger than the clock on the wall, and a reader
+        # comparing it with the headline's elapsed would have to work out why.
+        # "node time" is the phrase `cost_report.compact_block` already puts in
+        # front of the same person.
+        ("node time", mv.format_duration(worked) or "—"),
         ("agent tasks", str(meter["used"])),
         fourth,
     ]
@@ -751,18 +853,23 @@ def _meter_card(meter: dict) -> str:
     )
 
 
-def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path) -> list[str]:
-    """The spend block the board has always carried: `compact_block` plus this
-    session's own transcript spend. The meter above it is the same numerator
-    and denominator drawn; this keeps the qualifiers — rework rounds, node
-    time, tokens in/out, unmapped harnesses — that a bar cannot say."""
+def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path,
+                usage: dict | None = None, drop: str | None = None) -> list[str]:
+    """The qualifiers a bar cannot say: rework rounds, node time, tokens in/out,
+    unmapped harnesses, and this session's own transcript spend.
+
+    `usage` is the caller's already-computed `collect_run`. `drop` removes a
+    line the caller has already drawn — `compact_block`'s first line is exactly
+    `spend_meter`'s label, and printing the same sentence twice, adjacent, is
+    the kind of thing a reader assumes must mean two different numbers.
+    """
     try:
         import cost_report
-        maps = cost_report.load_field_maps(None)
-        run = cost_report.collect_run(Path(run_dir), maps)
+        run = usage if usage is not None else cost_report.collect_run(
+            Path(run_dir), cost_report.load_field_maps(None))
         cap = cost_report._budget_cap(Path(run_dir))
         text, _ = cost_report.compact_block([run], [cap])
-        lines = text.splitlines()
+        lines = [ln for ln in text.splitlines() if ln != drop]
     except Exception as exc:  # noqa: BLE001 - display-only, always
         return [f"(spend unavailable: {exc})"]
     try:
@@ -802,7 +909,7 @@ def _decision_card(run_dir: Path) -> str:
     return ""
 
 
-def _cost_card(run_dir: Path, stack: list[dict]) -> str:
+def _cost_card(run_dir: Path, stack: list[dict], usage: dict | None = None) -> str:
     out = ['<div class="card"><h2>what it has cost</h2>']
     if stack:
         out.append('<div class="stack">')
@@ -818,8 +925,9 @@ def _cost_card(run_dir: Path, stack: list[dict]) -> str:
         out.append('<p class="meter-foot">No usage was reported for this run.</p>')
     for mode, title in (("history", "per step, every attempt counted"),
                         ("head", "per step, kept attempts only")):
-        body = "\n".join(mv.cost_lines(run_dir, mode=mode))
-        out.append(f"<details><summary>{e(title)}</summary><pre>{e(body)}</pre></details>")
+        body = "\n".join(mv.cost_lines(run_dir, mode=mode, usage=usage))
+        out.append(f'<details id="cost-{mode}"><summary>{e(title)}</summary>'
+                   f"<pre>{e(body)}</pre></details>")
     out.append("</div>")
     return "\n".join(out)
 
@@ -844,7 +952,7 @@ def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
     if not events:
         out.append("<div>Nothing has been recorded yet.</div>")
     out.append("</div>")
-    out.append('<details><summary>show the raw record</summary><table>')
+    out.append('<details id="raw-record"><summary>show the raw record</summary><table>')
     out.append("<tr><th>term</th><th>what it means</th><th>value</th></tr>")
     for item in raw_record(run_dir, focus):
         out.append(f'<tr><td>{e(item["term"])}</td><td>{e(item["gloss"])}</td>'
@@ -853,7 +961,8 @@ def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
     return "\n".join(out)
 
 
-def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None) -> str:
+def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
+             state: dict | None = None, labels: dict[str, str] | None = None) -> str:
     """L2, one per step, reached by clicking a row in either view.
 
     The link is a fragment, not a fetch: a `<details>` a browser jumps into
@@ -862,7 +971,7 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None) -> str:
     """
     out = ['<div class="card"><h2>what happened at each step</h2>']
     for node_id in node_ids:
-        drawer = node_drawer(run_dir, node_id, repo_root)
+        drawer = node_drawer(run_dir, node_id, repo_root, state=state, labels=labels)
         body = "\n".join(drawer["lines"])
         out.append(f'<details id="step-{e(node_id)}">'
                    f'<summary>{e(drawer["label"])}</summary>'
@@ -914,7 +1023,8 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         _stat_tiles(state, flow, run, meter),
         _meter_card(meter),
         '<div class="card"><h2>spend</h2><pre>'
-        + e("\n".join(spend_lines(run_dir, repo_root, runs_root)))
+        + e("\n".join(spend_lines(run_dir, repo_root, runs_root,
+                                  usage=run, drop=meter["label"])))
         + "</pre></div>",
         _decision_card(run_dir),
 
@@ -927,15 +1037,20 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         render_timeline(waterfall(run_dir, repo_root, now=now)),
         "</div>",
 
-        _cost_card(run_dir, cost_stack(run)),
+        _cost_card(run_dir, cost_stack(run), usage=run),
 
         '<div class="card"><h2>ACTIVITY</h2><pre>'
         + e("\n".join(mv.activity_lines(run_dir, repo_root=repo_root)))
         + "</pre></div>",
 
         _feed_card(run_dir, events, labels, _focus_node(state), repo_root),
-        _drawers(run_dir, node_ids, repo_root),
+        _drawers(run_dir, node_ids, repo_root, state=state, labels=labels),
 
+        # Server-worded, hidden, unhidden by the client after three consecutive
+        # failed polls. The page used to swallow every error and go on pulsing
+        # its `live` dot over frozen data — a silently stale board is worse than
+        # a blank one, and the guide promises blank never means broken.
+        f'<p class="stale-note" id="offline-note" role="status" hidden>{e(OFFLINE_SENTENCE)}</p>',
         '<p class="foot">This page only reads files. It never changes the run.</p>',
     ]
     if mv.needs_you(state):
@@ -955,7 +1070,7 @@ def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
         f"<style>{CSS}</style>\n"
         f'<body data-run-token="{e(run_token(run_dir))}" data-event-cursor="{cursor}">\n'
         f'<div class="wrap">{body}</div>\n'
-        f"<script>{JS.replace('POLL_MS', str(POLL_MS))}</script>\n"
+        f"<script>{client_js()}</script>\n"
     )
 
 
@@ -1001,18 +1116,29 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
                       "run": run_dir.name if run_dir else None})
 
     if route == "/api/events":
+        # THE CHEAP ROUTE, and the page's heartbeat. Only the lines after the
+        # cursor are JSON-parsed, so a quiet second costs a file read and
+        # nothing else — which is what lets the client stop re-rendering a page
+        # that has not changed. `running` rides along because it is the one
+        # thing that makes the page change with no journal entry behind it. It is
+        # `live`, not `running`: a GLOSSARY word in the client is the second
+        # glossary this design forbids, and the test that catches that must
+        # stay a substring check with no exceptions in it.
         raw = (parse_qs(parsed.query).get("after") or ["0"])[0]
         if not raw.isdigit():          # rejects "abc", "-1", "1.5", ""
             return 404, HTML_CT, b"bad cursor"
         after = int(raw)
         if run_dir is None:
-            return _json({"token": token, "next": 0, "events": []})
-        events = _events(run_dir)
-        labels = mv.load_labels(run_dir, repo_root)
-        fresh = events[after:]
+            return _json({"token": token, "next": 0, "events": [], "live": False})
+        state = mv.read_json(run_dir / "state.json") or {}
+        running = any(r.get("status") == "running"
+                      for r in (state.get("nodes") or {}).values())
+        fresh = _events_after(run_dir, after)
+        labels = mv.load_labels(run_dir, repo_root) if fresh else {}
         return _json({
             "token": token,
             "next": after + len(fresh),
+            "live": running,
             "events": [{"text": event_text(ev, labels), "node": ev.get("node") or "",
                         "status": ev.get("status") or ""} for ev in fresh],
         })
