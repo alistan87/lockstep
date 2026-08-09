@@ -131,6 +131,21 @@ OFFLINE_SENTENCE = (
     "the run is still going."
 )
 
+# Defence in depth on a page whose every string came from somewhere else — a
+# label from a sidecar, a note from an agent, evidence from a render node. The
+# escaping is the guarantee (and is tested); these are what stop a miss from
+# being exploitable, and they matter more once `--host` puts the page on a
+# network. `connect-src 'self'` is the load-bearing one: it means even injected
+# script could not send a run directory anywhere.
+SECURITY_HEADERS = (
+    ("Content-Security-Policy",
+     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+     "connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; "
+     "frame-ancestors 'none'"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
+
 POLL_MS = 1000
 # How many quiet ticks pass before the page re-renders anyway. Only a running
 # node makes the page change on its own (an elapsed clock, a bar drawing to
@@ -1274,6 +1289,8 @@ def make_handler(runs_root: Path, pinned: Path | None, repo_root: Path):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for header, value in SECURITY_HEADERS:
+                self.send_header(header, value)
             self.end_headers()
             self.wfile.write(body)
 

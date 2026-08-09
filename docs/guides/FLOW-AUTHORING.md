@@ -115,6 +115,86 @@ starter flows work against any target repo where lockstep is importable.
 - `fingerprint_check <orders.json>` — every entry's file still matches the
   fingerprint it was approved against (the codemod-apply staleness gate).
 
+## Writing a gate that earns its place
+
+Everything below was learned by running `flows/demo/sudoku-local.tg.json`
+against a local model and watching the gate be wrong in a different way each
+time. A gate is a program you are asking to refuse work; these are the ways
+that goes wrong.
+
+**A property you do not check is a property you do not have.** The first
+sudoku gate checked that a generated puzzle was legal and solvable, and passed
+a generator that returned the *same puzzle's solution* every time — it built
+one canonical board and cut different holes in it. Nothing was broken; nothing
+had been asked. Write the `pass_reason` as a list of the properties actually
+established (`"a legal 25-clue puzzle with exactly one solution (3 distinct
+puzzles, 3 distinct solutions)"`), because reading it back is how you notice
+what is missing.
+
+**Check the behaviour, never the convention.** That same gate demanded
+`solve(grid)` *return* a completed grid. The model kept writing
+`solve(grid) -> bool`, mutating in place, which is what every sudoku tutorial
+writes; three attempts and two heal rounds could not talk it out of it. A gate
+that rejects a working implementation over a calling convention burns the heal
+budget on nothing. Accept either shape and check the thing you care about.
+
+**A gate that runs model-written code must not be able to hang.** Model-written
+backtracking loops forever surprisingly often. When it does, the driver kills
+the gate at `timeout_s`, retries once, gets no verdict either time, and fails
+closed with `no valid verdict emitted` — correct, and useless to whoever has to
+fix it. Run the untrusted code in a **child process with its own clock** and
+turn the timeout into a finding that names the function that hung.
+
+**Judge with your own code, not the code under test.** Asking a model's solver
+to certify its own generator's output checks nothing. The uniqueness check
+counts solutions with the gate's own backtracking; that independence is the
+whole reason the count means anything.
+
+**`fix_hint` is the next prompt.** A heal round appends the gate's findings to
+the target's prompt verbatim, so a finding is an instruction, not a diagnosis.
+`"the puzzle has two solutions"` teaches nothing; `"after removing a cell,
+count the solutions; if there is more than one, put that cell back"` is a fix.
+Put the *evidence* in `evidence` (`"r3c7 can be 4 or 5"`) and the *instruction*
+in `fix_hint`.
+
+**Normalise at the boundary; do not heal a formatting detail.** Small models
+wrap source in a ``` fence however plainly the prompt forbids it. That is a
+shell node's job (`contrib/save_result.py --strip-fence`), not three heal
+rounds of a correctness gate. Reserve the heal budget for things that are
+actually wrong.
+
+**Test the gate before you run the flow.** It is an ordinary program: run it
+against a known-bad input and a known-good one first. Every round trip through
+a model to discover that your gate has a bug is a round trip wasted.
+
+## Harnesses with no file tools, and choosing a model per node
+
+A harness that can only print — `ollama run`, or any bare model CLI — is a
+first-class executor. The node answers on the §8.3 **stdout channel** and a
+shell node writes the file:
+
+```jsonc
+{ "id": "core", "kind": "harness", "output": "text",
+  "spec": { "executor": "local-coder", "task": "…" } },
+{ "id": "save", "kind": "shell", "depends_on": ["core"],
+  "spec": { "cmd": ["python", "contrib/save_result.py",
+                    "--node", "core", "--out", "out.py", "--strip-fence"] } }
+```
+
+Two things decide whether that works:
+
+- **`output: "text"` and the stanza's `json_field` interact.** A text node on a
+  stanza that declares `json_field` is unwrapped out of the harness envelope; a
+  text node on one that omits it ("omit for raw") takes stdout verbatim. Get it
+  wrong on a raw harness and the driver used to hand you whichever JSON-looking
+  literal appeared last in the source — a correct module arriving on disk as
+  `[]` (fixed, and recorded in DEVIATIONS).
+- **The model is per NODE.** One stanza per model, chosen with `spec.executor`.
+  This is load-bearing, not decoration: on the sudoku flow a 14B failed the
+  uniqueness requirement in four attempts and three heal rounds, and a 35B
+  passed it on the first. Put the hard node on the bigger model and leave the
+  cheap ones cheap. Harnesses mix in one graph as freely as models do.
+
 ## Interpolation (§7)
 
 `{args.K}` · `{steps.ID.output}` (raw text) · `{steps.ID.json}` /

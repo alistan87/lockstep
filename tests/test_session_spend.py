@@ -172,3 +172,23 @@ def test_no_transcript_is_reported_not_invented(tmp_path):
     home.mkdir()
     lines = session_spend.session_lines(repo, repo / "runs", MAPS, home)
     assert lines == ["this session: no orchestrator transcript found for this repo"]
+
+
+def test_the_run_list_is_capped_newest_first_and_the_tail_is_summed(monkeypatch, tmp_path):
+    """A working session starts a run a minute. Unbounded, this block was
+    fifteen lines deep and pushing the decision below the fold on a page whose
+    whole job is that the decision is above it. The tail is SUMMED, never
+    dropped: a spend total that quietly excludes older runs is the one thing a
+    spend figure may not do."""
+    runs = [{"name": f"r{i:02d}", "token_spawns": 2, "input_tokens": None,
+             "output_tokens": None, "cost": None} for i in range(10)]
+    monkeypatch.setattr(session_spend, "collect_session", lambda *a, **k: {
+        "source": "claude", "started": None, "runs": runs,
+        "orchestrator": {"sums": {"input_tokens": 1, "output_tokens": 1}, "models": []},
+    })
+    lines = session_spend.session_lines(tmp_path, tmp_path)
+    listed = [ln for ln in lines if ln.strip().startswith("run ")]
+    assert len(listed) == session_spend.RUN_LINES
+    assert "r09" in listed[0] and "r06" in listed[-1], "newest first"
+    tail = [ln for ln in lines if "earlier run" in ln]
+    assert tail and "6 earlier run(s)" in tail[0] and "12 agent tasks" in tail[0]

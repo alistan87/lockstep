@@ -266,6 +266,9 @@ def collect_session(repo_root: Path, runs_root: Path,
 
 # --- rendering ------------------------------------------------------------------
 
+RUN_LINES = 4        # newest runs listed individually; the rest are summed
+
+
 def _tok(n: float | None) -> str:
     return "-" if n is None else f"{n:,.0f}"
 
@@ -302,7 +305,14 @@ def session_lines(repo_root: Path, runs_root: Path,
 
     run_cost_total = 0.0
     run_cost_known = False
-    for run in got["runs"]:
+    # One line per run, NEWEST FIRST and capped. A working session starts a run
+    # a minute; this block was fifteen lines deep and pushing the decision below
+    # the fold on a page whose whole job is that the decision is above it. The
+    # tail is summed rather than dropped, because a total that quietly excludes
+    # older runs is the one thing a spend figure may not do.
+    shown = got["runs"][-RUN_LINES:][::-1]
+    hidden = got["runs"][:-RUN_LINES] if len(got["runs"]) > RUN_LINES else []
+    for run in shown:
         parts = [f"{run['token_spawns']} agent tasks"]
         if run.get("input_tokens") is not None or run.get("output_tokens") is not None:
             parts.append(f"{_tok(run.get('input_tokens'))} in / {_tok(run.get('output_tokens'))} out")
@@ -314,6 +324,13 @@ def session_lines(repo_root: Path, runs_root: Path,
         elif run.get("input_tokens") is None:
             parts.append("no usage reported")
         lines.append(f"  run {run['name']}: " + " | ".join(parts))
+    if hidden:
+        spawns = sum(r["token_spawns"] for r in hidden)
+        for r in hidden:
+            if r.get("cost"):
+                run_cost_total += r["cost"]
+                run_cost_known = True
+        lines.append(f"  + {len(hidden)} earlier run(s) this session: {spawns} agent tasks")
     if not got["runs"]:
         lines.append("  no lockstep runs started this session yet")
 

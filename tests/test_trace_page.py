@@ -973,3 +973,76 @@ def test_a_stale_open_interval_is_not_measured_to_now(tmp_path):
     wf2 = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
     row2 = next(r for r in wf2["rows"] if r["node_id"] == "produce")
     assert row2["worked"] == "18m00s" and row2["segments"][0]["open"] is True
+
+
+# ------------------------------------------------- the page renders MODEL OUTPUT
+
+XSS = '<img src=x onerror="alert(1)"><script>alert(2)</script>"\'`'
+
+
+def test_nothing_a_model_or_a_flow_author_controls_can_inject_markup(tmp_path):
+    """Every string on this page came from somewhere else: a node label from a
+    sidecar, a note from the agent, a failure message from the engine, evidence
+    from a render node, a question from a gate. The page is served on loopback
+    by default but `--host` is documented for phone use, so an injected script
+    would run in the reader's browser against whatever else is on that origin.
+    """
+    run = page_run(tmp_path, question=True)
+    (run / "flow.labels.json").write_text(
+        json.dumps({"nodes": {"produce": XSS}}), encoding="utf-8")
+    (run / "phases" / "produce" / "mission.txt").write_text(XSS, encoding="utf-8")
+    (run / "approval-evidence.txt").write_text(XSS, encoding="utf-8")
+    (run / "question-card.txt").write_text(XSS, encoding="utf-8")
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["produce"]["error"] = XSS
+    state["flow_name"] = XSS
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "<script>alert(2)</script>" not in body
+    assert "<img src=x" not in body
+    assert 'onerror="alert(1)"' not in body
+    # it is not simply absent — it is present, escaped, and readable
+    assert html.escape(XSS) in body
+    # The JSON routes return the text RAW, which is right — JSON is a data
+    # channel, not a document. What has to be true is that nothing renders it
+    # as markup: they are served as application/json with nosniff, so a browser
+    # pointed straight at one shows text, and the client never puts an API
+    # string into the DOM (it swaps `doc.html`, which is escaped above).
+    for route in ("/api/state", "/api/node/produce", "/api/evidence", "/api/question"):
+        status, ctype, _payload = get(run, route, tmp_path)
+        assert status == 200 and ctype.startswith("application/json"), route
+    # /api/state carries the ESCAPED html (that is what the client swaps in);
+    # the data routes carry the text raw, which is correct for JSON.
+    assert html.escape(XSS) in json.loads(get(run, "/api/state", tmp_path)[2])["html"]
+    assert XSS in json.loads(get(run, "/api/question", tmp_path)[2])["question"]
+    js = mission_server.JS
+    assert js.count("innerHTML") == 1 and "wrap.innerHTML = doc.html;" in js
+
+
+def test_the_waterfall_escapes_a_label_inside_an_attribute(tmp_path):
+    """A bar's accessible name and its hint carry the step's label, and both sit
+    inside a quoted attribute — the one place an escaping miss is exploitable
+    rather than merely ugly."""
+    run = page_run(tmp_path)
+    (run / "flow.labels.json").write_text(
+        json.dumps({"nodes": {"produce": '" onmouseover="alert(1)'}}), encoding="utf-8")
+    timeline = mission_server.render_timeline(
+        mission_server.waterfall(run, ROOT, now=PAGE_NOW))
+    assert 'onmouseover="alert(1)"' not in timeline
+    assert "&quot; onmouseover=&quot;alert(1)" in timeline
+
+
+def test_the_response_carries_the_headers_that_back_the_escaping():
+    """The escaping is the guarantee; these stop a miss from being exploitable,
+    and they matter more once `--host` puts the page on a network. The
+    load-bearing one is `connect-src 'self'`: even injected script could not
+    send a run directory anywhere."""
+    headers = dict(mission_server.SECURITY_HEADERS)
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp
+    assert "connect-src 'self'" in csp
+    assert "form-action 'none'" in csp, "there is no form, and none may be added"
+    assert "frame-ancestors 'none'" in csp
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Referrer-Policy"] == "no-referrer"

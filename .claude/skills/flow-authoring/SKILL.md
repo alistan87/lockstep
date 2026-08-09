@@ -98,6 +98,41 @@ because it holds no `tree` token and the diff would be unsound. Every other
 write-capable kind, shell included, takes the token. The matcher is `fnmatch`,
 so `*` crosses `/`.
 
+## Gates: the ways one goes wrong
+
+Learned from `flows/demo/sudoku-local.tg.json` (see FLOW-AUTHORING for the
+worked version of each).
+
+- **A property you do not check is a property you do not have.** Write the
+  pass reason as the list of properties actually established; reading it back
+  is how you notice the missing one.
+- **Check the behaviour, not the convention.** A gate that rejects a working
+  implementation over a calling convention spends the heal budget on nothing.
+- **A gate that runs model-written code must not hang.** Run it in a CHILD
+  process with its own clock. A hang becomes `no valid verdict emitted` —
+  fail-closed and correct, and useless; a timeout you catch becomes a finding
+  that names the function.
+- **Judge with your own code.** A model's solver cannot certify its own
+  generator.
+- **`fix_hint` is the next prompt** — the heal round appends findings verbatim.
+  Evidence goes in `evidence`, the instruction in `fix_hint`.
+- **Normalise at the boundary.** A ``` fence is a shell node's job
+  (`save_result.py --strip-fence`), not three heal rounds.
+- **Run the gate against a known-bad and a known-good input before the flow.**
+
+## Tool-less harnesses, and one model per node
+
+A harness that can only print (`ollama run`, any bare model CLI) is a
+first-class executor: `output: "text"`, the §8.3 stdout channel, and a shell
+node writes the file. Two rules —
+
+- a text node on a stanza declaring `json_field` is unwrapped from the
+  envelope; on one that omits it, stdout is taken verbatim;
+- the model is per NODE (`spec.executor`, one stanza per model), and it
+  decides whether a flow converges: on the sudoku flow a 14B never met the
+  uniqueness requirement and a 35B met it first try. Harnesses mix in one
+  graph as freely as models do.
+
 ## Budget & executors
 
 `budget.max_agent_spawns` counts every token-costing spawn INCLUDING corrective
