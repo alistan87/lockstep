@@ -266,10 +266,22 @@ def node_word(node_id: str, rec: dict, budgets: dict[str, int]) -> str:
     maps a gate id to a git TREE SHA — reading that as a number throws on the
     first healed run.
     """
-    word = GLOSSARY.get(rec.get("status"), rec.get("status") or "?")
+    status = rec.get("status")
+    word = GLOSSARY.get(status, status or "?")
     rounds = int(rec.get("heal_round") or 0)
     if rounds > 0:
-        word = f"sent back for rework ({rounds} of {budgets.get(node_id, '?')})"
+        if status in ("pending", "running"):
+            # IN rework right now: the counter is the state, and this is the
+            # phrase the domain-expert guide documents.
+            word = f"sent back for rework ({rounds} of {budgets.get(node_id, '?')})"
+        else:
+            # SETTLED. `heal_round` never resets, so replacing the status word
+            # outright described a gate that healed and then PASSED as "sent
+            # back for rework (1 of 3)" — on a fully successful run, the only
+            # line left on the board said the work had been rejected. That is
+            # the history, wearing the state's clothes. Seen on the pi run.
+            times = {1: "once", 2: "twice"}.get(rounds, f"{rounds} times")
+            word = f"{word} (sent back {times})"
     items = rec.get("items") or {}
     if items:
         done = sum(1 for i in items.values() if i.get("status") == "done")
@@ -491,11 +503,39 @@ def stdout_liveness(phase_dir: Path) -> str | None:
             continue
         if best is None or st.st_mtime > best[1].st_mtime:
             best = (p, st)
+    now = datetime.now(timezone.utc).timestamp()
     if best is None:
-        return None
+        # NOT silence. An agent harness with file tools buffers its stdout —
+        # pi left stdout.log and stderr.log at zero bytes for fifteen minutes
+        # while writing eight scratch files into the phase directory, and
+        # ACTIVITY said "no progress reported yet" the whole time. That is the
+        # thinking-or-stuck ambiguity the heartbeat rule exists to remove, so
+        # any file it touches counts as a sign of life.
+        newest = None
+        try:
+            for p in Path(phase_dir).iterdir():
+                try:
+                    st = p.stat()
+                    # An EMPTY file is not a sign of work, and skipping them
+                    # also settles the tie when a buffered stdout.log and a
+                    # scratch file share a timestamp (Windows mtime is coarse
+                    # enough that they do).
+                    if p.is_file() and st.st_size > 0 and (
+                            newest is None or st.st_mtime > newest[1]):
+                        newest = (p.name, st.st_mtime)
+                except OSError:
+                    continue
+        except OSError:
+            return None
+        if newest is None:
+            return None
+        ago = max(0, int(now - newest[1]))
+        if ago > 120:
+            return f"no new file for {ago // 60} m - last was {newest[0]}"
+        return f"working - wrote {newest[0]} {ago}s ago"
     _, st = best
     kb = st.st_size / 1024
-    ago = max(0, int(datetime.now(timezone.utc).timestamp() - st.st_mtime))
+    ago = max(0, int(now - st.st_mtime))
     if ago > 120:
         # Say what the numbers say. "still producing output" beside "last write
         # 114271s ago" (observed) restates the thinking/stuck ambiguity this

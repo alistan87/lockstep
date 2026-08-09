@@ -15,7 +15,7 @@
       "role": "work",
       "kind": "harness",
       "spec": {
-        "executor": "local-coder-big",
+        "executor": "pi-coder-big",
         "task": "Write a single self-contained Python module implementing sudoku.\n\nIt must define exactly these module-level functions:\n  solve(grid)    -> takes a 9x9 list of lists of ints where 0 means empty and FILLS IT IN, in place, by backtracking; return True when it is solved and False if it cannot be. Every row, column and 3x3 box must end up containing 1..9 exactly once. (Returning the completed grid instead of True is also accepted.)\n  generate()     -> takes no required arguments, returns a 9x9 puzzle grid with 0 for empty cells.\n  is_valid(grid, row, col, value) -> True if placing value at (row, col) breaks no rule.\n  format_grid(grid) -> a printable string of the grid.\n\ngenerate() has three requirements beyond returning a grid, and they are checked:\n  1. START FROM A RANDOMISED SOLVED GRID. Shuffle the candidate digits inside the backtracking (`random.shuffle`) so a fresh solve does not always produce the same board. Solving an empty grid the same way every time makes every puzzle you cut from it have the same solution.\n  2. REMOVE CELLS IN RANDOM ORDER, so two calls do not return the same puzzle.\n  3. KEEP THE SOLUTION UNIQUE. After removing a cell, count the solutions of the grid so far; if there is more than one, put that cell back and move on to the next. Stop when you have tried every cell. A grid with two solutions is not a puzzle.\n\nUse only the Python standard library. Keep it under 150 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere."
       },
       "output": "text",

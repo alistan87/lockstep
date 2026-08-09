@@ -631,6 +631,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  font-size:11.5px;color:var(--ink-2);white-space:nowrap}
 .seg.end .hint{left:auto;right:0}   /* clamped: neither may overflow the plot */
 .seg.end .tip{left:auto;right:calc(100% + 8px)}
+.seg.inside .hint{left:auto;right:0}
+.seg.inside .tip{left:auto;right:7px;top:-1px;color:var(--plane);font-weight:600}
+.seg.run.inside .tip{color:var(--ink);font-weight:400}
 .seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
@@ -867,8 +870,15 @@ def render_timeline(wf: dict) -> str:
                 # `end` flips the hint to the right edge for a bar in the right
                 # half of the plot: a tip overflowing the plot was one of the
                 # four defects rendering the mockup caught.
+                # A bar spanning the plot has no OUTSIDE left to put a tip on:
+                # `end` pushed it 8px left of the plot, into the label gutter,
+                # where it sat on top of the step names (seen on the pi run,
+                # where core ran 15 minutes and filled the width). Wide enough
+                # to hold the tip -> put it inside.
+                inside = seg["width"] > 25
                 extra = ("".join([" open" if seg["open"] else "",
-                                  " end" if seg["left"] + seg["width"] > 60 else ""]))
+                                  " inside" if inside else
+                                  (" end" if seg["left"] + seg["width"] > 60 else "")]))
                 out.append(
                     f'<div class="seg {e(seg["cls"])}{extra}" tabindex="0" role="img" '
                     f'aria-label="{e(seg["title"])}" '

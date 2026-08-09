@@ -74,7 +74,8 @@ Those words on MISSION mean exactly this:
 |---|---|
 | **running** | being worked on now |
 | **waiting** | queued, nothing spending |
-| **sent back for rework (1 of 2)** | a checker rejected the work and sent it back; it can do this at most twice |
+| **sent back for rework (1 of 2)** | a checker rejected the work and sent it back *right now*; it can do this at most twice |
+| **done (sent back once)** | it finished — and it was sent back for rework along the way. The state is `done`; the note in brackets is history |
 | **needs you** | stopped for a decision or a question — your turn |
 | **done** | finished |
 | **stopped with a problem** | something went wrong; ask the assistant |

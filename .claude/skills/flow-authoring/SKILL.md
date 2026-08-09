@@ -133,6 +133,15 @@ node writes the file. Two rules —
   uniqueness requirement and a 35B met it first try. Harnesses mix in one
   graph as freely as models do.
 
+**When the harness HAS tools** (pi, Claude Code) three things change: the
+result arrives on the FILE channel (the footer's `result.txt`, not stdout); the
+phase dir becomes the agent's scratchpad and your step drawer lists what it
+left there; and stdout may stay EMPTY for the whole node because the harness
+buffers. So **ask for progress in the task text** on anything running more than
+a couple of minutes — the footer's "optionally, you MAY" invitation to write
+`progress.jsonl` is not enough — and size `timeout_s` from a measured call: a
+35B took 14m55s through pi, and the 900s default would have killed it at 15:00.
+
 ## Budget & executors
 
 `budget.max_agent_spawns` counts every token-costing spawn INCLUDING corrective

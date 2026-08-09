@@ -583,3 +583,53 @@ def test_the_glossary_matches_cockpit_ps1():
     assert block, "cockpit.ps1 no longer declares $script:Glossary"
     pairs = dict(re.findall(r"'([a-z]+)'\s*=\s*'([^']*)'", block.group(1)))
     assert pairs == mv.GLOSSARY
+
+
+def test_a_healed_step_that_passed_says_it_is_done(tmp_path):
+    """`heal_round` never resets, and the word used to replace the status
+    outright — so a gate that healed and then PASSED read as "sent back for
+    rework (1 of 3)". On the pi run's final board that was the only visible
+    line of a fully successful run: the history wearing the state's clothes.
+
+    In rework, the counter IS the state and keeps the phrase the guide
+    documents. Settled, it becomes history attached to the real state.
+    """
+    flow = {"nodes": [
+        {"id": "t", "kind": "harness"},
+        {"id": "g", "role": "gate", "kind": "shell", "depends_on": ["t"],
+         "heal": {"max_rounds": 3, "targets": ["t"]}},
+    ]}
+    run = make_run(tmp_path, {
+        "t": rec("running", heal_round=1),
+        "g": rec("done", heal_round=1),
+    }, flow=flow)
+    words = {r["node_id"]: r["word"] for r in mv.step_rows(run, collapsed=False)}
+    assert words["t"] == "sent back for rework (1 of 3)"   # in it now
+    assert words["g"] == "done (sent back once)"           # came out the other side
+
+
+def test_the_settled_rework_phrase_counts_plainly(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done", heal_round=2),
+                              "b": rec("failed", heal_round=3),
+                              "c": rec("blocked", heal_round=1)})
+    words = {r["node_id"]: r["word"] for r in mv.step_rows(run, collapsed=False)}
+    assert words["a"] == "done (sent back twice)"
+    assert words["b"] == "stopped with a problem (sent back 3 times)"
+    assert words["c"] == "needs you (sent back once)"
+
+
+def test_liveness_counts_any_file_an_agent_touches(tmp_path):
+    """pi buffers stdout: both logs sat at zero bytes for fifteen minutes while
+    the agent wrote eight scratch files, and ACTIVITY said "no progress
+    reported yet" the whole time — the thinking-or-stuck ambiguity the
+    heartbeat rule exists to remove."""
+    phase = tmp_path / "phase"
+    phase.mkdir()
+    (phase / "stdout.log").write_text("", encoding="utf-8")     # buffered: empty
+    (phase / "test_debug3.py").write_text("x = 1\n", encoding="utf-8")
+    line = mv.stdout_liveness(phase)
+    assert line and "test_debug3.py" in line and "working" in line
+
+    # a log with content still wins — it is the better signal when there is one
+    (phase / "stdout.log").write_text("some output\n", encoding="utf-8")
+    assert "producing output" in (mv.stdout_liveness(phase) or "")

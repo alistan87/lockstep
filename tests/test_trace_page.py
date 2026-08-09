@@ -548,7 +548,7 @@ def test_a_decorated_word_keeps_its_base_status_colour(tmp_path):
     run = page_run(tmp_path)
     wf = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
     row = next(r for r in wf["rows"] if r["node_id"] == "produce")
-    assert row["word"].startswith("sent back for rework (1 of ")
+    assert row["word"] == "done (sent back once)"
     assert row["cls"] == "good", "the row keeps its base status"
     assert [s["cls"] for s in row["segments"]] == ["ser", "good"]
 

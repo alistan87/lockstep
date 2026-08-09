@@ -195,6 +195,31 @@ Two things decide whether that works:
   passed it on the first. Put the hard node on the bigger model and leave the
   cheap ones cheap. Harnesses mix in one graph as freely as models do.
 
+### When the harness has tools
+
+`ollama run` cannot write; pi can, and does. Run the same flow on pi and the
+node behaves differently in three ways that matter to the author:
+
+- **The result arrives on the FILE channel.** pi obeys the footer and writes
+  `result.txt` into the phase directory, so the stdout fallback never runs.
+  That is the better channel and it needs nothing from you.
+- **The phase directory becomes the agent's scratchpad.** On the sudoku run pi
+  left `test_debug.py` … `test_debug5.py`, `test_final.py` and a `__pycache__`
+  beside its result: it wrote tests, ran them, and debugged itself. That is
+  good behaviour and it is also what your step drawer will list as artifacts.
+  Nothing is wrong; expect it, and do not treat the phase dir as yours.
+- **Its stdout may be empty for the whole node.** pi buffers. On a fifteen
+  minute node both logs sat at zero bytes, so the only liveness signal was the
+  scratch files appearing (ACTIVITY reads those now). **If a node will run more
+  than a couple of minutes, ask for progress in the task text.** The footer
+  invites `progress.jsonl` with "optionally, you MAY", and an agent takes that
+  at face value — the invitation is not enough for a node whose silence the
+  reader has to interpret.
+
+And size `timeout_s` from a measured call, not a guess. The 35B took 14m55s on
+its first attempt through pi; the 900s default would have killed it at 15:00
+and charged the run for the attempt.
+
 ## Interpolation (§7)
 
 `{args.K}` · `{steps.ID.output}` (raw text) · `{steps.ID.json}` /
