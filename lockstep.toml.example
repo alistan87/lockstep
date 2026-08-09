@@ -39,23 +39,53 @@ argv = ["pi", "-p", "--mode", "json", "--no-session", "{prompt}"]
 prompt_via = "stdin"                       # not argv: a corrective re-spawn's prompt is
                                            # several times the original and Windows caps
                                            # a command line near 32k (verify --lint says so)
-# TOOLS ARE PART OF THE STANZA. pi takes `--tools`, an argv-visible allowlist,
+# NO readonly_argv HERE, DELIBERATELY — use `pi-review` below for readonly
+# nodes. `--mode json` and the §8.3 STDOUT channel are mutually exclusive, and
+# a readonly node has only the stdout channel (FOOTER_READONLY tells it to
+# answer in its final response; the tool allowlist removes the write tool it
+# would need for a result file).
+#
+# Measured against pi 0.83.0: `--mode json` is an event STREAM, not one
+# envelope. 72 lines of JSONL for a one-word answer, the last of which is
+# `{"type":"agent_settled"}` — and that is exactly what the driver's
+# `extract_last_json` returns. A readonly `output: "json"` node would validate
+# pi's own terminal event against its contract, fail, spend its one corrective
+# re-spawn, and fail the node. Writers are unaffected: they answer in
+# `result.json` and the file channel wins before stdout is ever read.
+#
+# Omitting readonly_argv here is what turns that into a LOUD failure: a
+# readonly node pointed at this stanza fails `verify` with `readonly-unenforced`
+# — free, before anything spawns — instead of failing at runtime after paying
+# for the spawn.
+
+# THE READONLY STANZA. Same binary, same model — the ONE difference is that
+# `--mode json` is gone, which is what leaves stdout clean enough to be the
+# §8.3 result channel. Point every judgement node at this: reviewers,
+# arbiters, triage, estimation, planning.
+#
+# TOOLS ARE PART OF THE STANZA. pi's `--tools` is an argv-visible allowlist,
 # which is exactly what SPEC §6.11 requires of readonly enforcement — so
 # `spec.readonly: true` is legal on pi, which ADDENDUM-A preamble note 3 had
 # parked as an r7 candidate. Verified against pi 0.83.0 with a control:
-# unrestricted the model created the file, with the allowlist it did not, while
-# still replying "DONE" — which is why enforcement is argv-level and the driver
-# validates whatever the model claims.
+# unrestricted the model created the file; with the allowlist it did not, while
+# still replying "DONE". The allowlist covers EXTENSION tools too, so name
+# `submit_result` or the guard extension's own tool disappears; naming a tool
+# that is not installed is harmless. grep/find/ls are OFF by default in pi and
+# the allowlist turns them ON.
 #
-# readonly_argv is appended ONLY to nodes declaring `spec.readonly: true`, so
-# one stanza serves both: a writer gets full tools, a reviewer on the same
-# stanza gets the allowlist AND drops the `tree` token, which is what lets
-# reviewers fan out in parallel.
+# Two things this buys beyond safety: readonly nodes drop the `tree` token, so
+# reviewers fan out in parallel instead of queueing; and on a request-metered
+# plan a node that cannot edit cannot spend a round trip trying to.
 #
-# `--tools` is an allowlist over EXTENSION tools too, so a bare readonly list
-# would disable the guard extension's `submit_result`; naming a tool that is
-# not installed is harmless (checked against live pi), so it stays either way.
-# grep/find/ls are off by default in pi and the allowlist turns them ON.
+# The price, stated honestly: no `--mode json` means no usage envelope, so
+# these nodes report `no envelope` in the cost views. Task counts and wall time
+# still work. Removing that trade needs the driver to understand pi's event
+# stream on the RESULT path (it already does on the cost path — see
+# `contrib/cost-fields.toml.example`, `format = "pi-stream"`); until then,
+# telemetry on reviewers costs correctness, and correctness wins.
+[executors.pi-review]
+argv = ["pi", "-p", "--no-session", "{prompt}"]
+prompt_via = "stdin"
 readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 
 [executors.copilot-cli]
@@ -92,8 +122,14 @@ prompt_via = "stdin"          # not argv: a corrective re-spawn's prompt is seve
 # A node whose input is INTERPOLATED needs no tools at all. That collapses an
 # agent loop into a single request, which is the largest saving available on a
 # request-metered subscription — bigger than any model choice.
+#
+# `--no-tools` means there is no write tool, so the answer can only come back
+# on stdout — which is why `--mode json` must NOT be here. It was, and the
+# stanza could not return a result at all: the driver read pi's own
+# `{"type":"agent_settled"}` event as the answer. Same rule as `pi-review`
+# above: the stdout channel and `--mode json` cannot coexist.
 [executors.pi-reasoner]
-argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "--no-tools", "{prompt}"]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools", "{prompt}"]
 prompt_via = "stdin"
 
 # The in-harness scope guard, attached PER NODE from the argv. `--extension` is
@@ -104,8 +140,11 @@ prompt_via = "stdin"
 # guard re-bills exactly the nodes whose enforcement changed.
 # It blocks writes outside the node's declared `spec.writes`; a node that
 # declares none is unaffected.
+#
+# A WRITER stanza, like `pi` — the guard's whole subject is `spec.writes`, and
+# a readonly node has none. So no readonly_argv here either, for the same
+# reason and with the same loud `readonly-unenforced` failure if you try.
 [executors.pi-guarded]
 argv = ["pi", "-p", "--mode", "json", "--no-session",
         "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
 prompt_via = "stdin"
-readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]

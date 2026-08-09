@@ -54,7 +54,8 @@ wonder whether something is broken:
   has none, so flows using readonly nodes fail verification there. Add the
   argv rather than dropping the flag — on pi that is
   `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` (an
-  allowlist, so name the node's answer tool), on claude it is
+  allowlist, so name the node's answer tool) on a stanza with **no
+  `--mode json`**, because a readonly node answers on stdout; on claude it is
   `--disallowedTools`. Readonly nodes drop the `tree` token and run in
   parallel, so this is usually a speedup as well as a safety flag.
 

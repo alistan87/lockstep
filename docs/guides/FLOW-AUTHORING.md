@@ -13,7 +13,7 @@ Authoritative grammar: `docs/spec/SPEC.md` §4–§7 as amended by
 working subset.
 
 **The method: imitate, then compile.** Start from the closest template in
-`flows/starter/` (seven verified flows covering every construct below), adapt
+`flows/starter/` (ten verified flows covering every construct below), adapt
 it, then loop on `lockstep verify` until it prints `ok` — exit 5 reports ALL
 violations at once with named error codes. Do not run a flow that has not
 verified. Finish with `lockstep run <flow> --dry-run` to inspect the wave plan
@@ -81,6 +81,15 @@ before spending tokens.
   harmless. Use the *narrowest* list that still lets the node do its job —
   this is the single cheapest reliability lever on a metered subscription,
   because a reviewer that cannot edit cannot burn a round trip trying.
+
+  **The stanza must also leave stdout usable**, because that is where a
+  readonly node's answer comes back. On pi that means the readonly stanza must
+  NOT carry `--mode json`: measured against 0.83.0 it is an event STREAM, and
+  the last object in it is `{"type":"agent_settled"}` — which is exactly what
+  the driver hands to contract validation. Keep two stanzas (`pi` and
+  `pi-review` in `lockstep.toml.example`); writers keep `--mode json` and its
+  usage telemetry because they answer in a file, and readonly nodes trade that
+  telemetry for a working result channel.
 
   Readonly is not only for reviewers. Any node whose product is a *judgement*
   — triage, estimation, planning, a verdict — should be readonly: it fans out,
@@ -254,6 +263,58 @@ map body · `{previous.output}` (exactly one dep). `{{` escapes `{`.
 - `when` grammar is exactly `{ref} ==|!= <JSON literal>` compared as
   compact-JSON strings: `== true`, `== "foo"` (quotes required), `== null`
   (also matches a skipped upstream).
+
+## Large datasets and artifacts
+
+The default failure here is not a crash — it is a flow that quietly costs ten
+times what it should, or one that re-bills its whole corpus because a single
+byte moved. Six rules, in the order they bite.
+
+**1. Pass a PATH, not the payload.** A harness with tools can open files. If a
+node needs a 4 MB CSV, give it the path in the prompt and let it read; do not
+interpolate the contents. Interpolation puts the bytes in the prompt, in the
+input hash, and in your bill. `spec.context` and `{steps...}` are for values
+small enough that you *want* them pinned into the hash.
+
+**2. Know what `max_interp_chars` does and does not protect.** Above the cap
+(default 20000) a value in a HARNESS prompt spills to a file and the prompt
+gets a stub path — the node reads it if it needs to. **Shell argv is not
+capped and does not spill**: the raw string goes straight into the command
+line, where Windows stops it near 32k and the spawn fails with exit 127. So
+aggregate large data in a shell node by having it read a FILE, not by
+interpolating a big `{steps.X.json}` into its argv.
+
+**3. Fan out over a manifest, never over a blob.** The shape is: a shell node
+emits a `PathManifest`, a `map` node takes one item each. This is the only
+construct whose cost scales with the *changed* part of the corpus rather than
+its size, because each item caches on its own hash. `flows/starter/file-audit`
+is the worked example.
+
+**4. Fingerprint the items or the cache is a lie.** Item strings ARE the
+per-item cache keys. `docs/a.md` never invalidates when `docs/a.md` changes;
+`docs/a.md|9f2c1b…` does. Emit `path|content-fingerprint` and tell the item
+prompt to split on the last `|`. `lint-map-over-manifest` exists for this.
+
+**5. Wide fan-outs need `optional: true` and a real budget.** Without
+`optional`, one unreadable file fails the map node and discards every sibling
+that already succeeded — and you have paid for them. With it, the failed slot
+arrives as `{"status": "failed"}` in the results array, so **say so in the
+consumer's prompt** or it reads a failure as a clean file. Set
+`budget.max_agent_spawns` from the widest realistic fan-out plus heal rounds
+and corrective re-spawns; `lint-map-without-budget` fires if you forget.
+
+**6. Big outputs belong in files, and in `spec.writes`.** A node producing a
+large artifact should write it and return a short summary — the §8.3 result
+channel is not a delivery mechanism. Declare `spec.writes` so a stray write is
+quarantined instead of merged into the run, and so the approval pane can show
+`touched-<attempt>.txt` instead of a diff nobody reads.
+
+One caching consequence worth internalising: the FULL pre-spill value is
+hashed even though the prompt only carries a stub (SPEC §7, deliberate). That
+is what makes the cache honest — but it also means a one-character edit
+anywhere in a large interpolated value re-runs that node and every descendant.
+If the payload changes often and the node does not truly depend on all of it,
+interpolate a fingerprint or a summary instead of the thing.
 
 ## Retry, budget, caching
 

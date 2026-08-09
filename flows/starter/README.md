@@ -80,7 +80,9 @@ an approval node: `plan-adversarial` and `sdlc-e2e`.
   **Worth adding to your stanza rather than living with the cost.** pi's
   `--tools` is an argv-visible allowlist, so
   `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` satisfies
-  §6.11; claude uses `--disallowedTools`. Then add `"readonly": true` to the
+  §6.11; claude uses `--disallowedTools`. On pi put it on a stanza with **no
+  `--mode json`** (`pi-review`): a readonly node answers on stdout, which
+  `--mode json` fills with pi's event stream. Then add `"readonly": true` to the
   reviewer/arbiter/report nodes: they parallelize, they cannot corrupt the
   tree, and on a request-metered plan a node that cannot edit cannot spend a
   round trip trying to.

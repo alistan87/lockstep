@@ -95,9 +95,23 @@ A starting point for this machine:
 ```toml
 default = "pi"
 
+# WRITERS. `--mode json` gives the cost views their usage numbers, and costs
+# these nodes nothing: they answer in a file, which the driver reads first.
+# NO readonly_argv here -- see `pi-review`.
 [executors.pi]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "{prompt}"]
 prompt_via = "stdin"                       # not argv: see §11 on the 32k cap
+
+# JUDGEMENT NODES (reviewers, arbiters, triage, estimation, planning).
+# The one difference is that `--mode json` is GONE, which is what leaves stdout
+# usable as the result channel -- a readonly node has no write tool, so stdout
+# is the only channel it has. Measured against pi 0.83.0, `--mode json` is an
+# event stream ending in {"type":"agent_settled"}, and that is what the driver
+# would read as the answer. The trade: these nodes report `no envelope` in the
+# cost views.
+[executors.pi-review]
+argv = ["pi.cmd", "-p", "--no-session", "{prompt}"]
+prompt_via = "stdin"
 readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 
 # The work order's `bulk` class: high-volume classification.
@@ -105,20 +119,19 @@ readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 argv = ["copilot", "-p", "{prompt}"]
 prompt_via = "argv"
 
-# The `strong` class: review gates and adversarial passes.
-[executors.strong]
-argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "{prompt}"]
-prompt_via = "stdin"
-readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
-
 # Same as `pi`, plus the in-session write-scope guard. Use it for nodes that
 # declare `spec.writes`; the guard does not gate a node that declares none.
+# A writer stanza, so no readonly_argv here either.
 [executors.pi-guarded]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
         "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
 prompt_via = "stdin"
-readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 ```
+
+Pointing a `readonly` node at a `--mode json` stanza is caught at `verify`
+time (`readonly-unenforced`, free) precisely because those stanzas declare no
+`readonly_argv`. That is deliberate: the alternative is a runtime failure you
+pay for.
 
 `prompt_via = "stdin"` from the start, not `"argv"`: a corrective re-spawn's
 prompt is several times the original, and Windows caps a command line near 32k
@@ -130,14 +143,13 @@ Two facts worth knowing before you file a bug:
 - **copilot-cli has no JSON mode.** Its nodes report `no envelope` in every cost
   view, permanently. That is a property of the harness, not a fault, and you
   still get task counts and wall time.
-- **`readonly: true` needs `readonly_argv` in the stanza.** A plain pi stanza
-  has none, so flows using readonly nodes fail verification. Add
-  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` — pi's
-  `--tools` is an argv-visible allowlist, which is what SPEC §6.11 asks for.
-  Name the node's answer tool in it (the allowlist covers extension tools too);
-  naming a tool pi does not have is harmless. Worth doing rather than dropping
-  the flag: on a request-metered plan your spend is round trips, and a node
-  that cannot edit cannot spend one trying.
+- **`readonly: true` needs `readonly_argv` in the stanza** — point those nodes
+  at `pi-review` above (`spec.executor`). pi's `--tools` is an argv-visible
+  allowlist, which is what SPEC §6.11 asks for; name the node's answer tool in
+  it, since the allowlist covers extension tools too, and naming a tool pi does
+  not have is harmless. Worth doing rather than dropping the flag: on a
+  request-metered plan your spend is round trips, and a node that cannot edit
+  cannot spend one trying.
 - **A 429 on Copilot usually means quota, not a blip.** Set
   `"retry": {"max": 0}` on nodes using subscription-backed stanzas and resume
   when quota returns; the default 60s backoff just burns two more requests

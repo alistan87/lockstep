@@ -275,7 +275,6 @@ def main(argv: list[str] | None = None) -> int:
                          "Omitted ⇒ read from the flow's labels sidecar, else 'standard'")
     ap.add_argument("--approval", default=None, metavar="NODE_ID",
                     help="which approval this evidence is for; disambiguates the sidecar tier")
-    ap.add_argument("--max-verdict-lines", type=int, default=MAX_VERDICT_LINES)
     ns = ap.parse_args(argv)
 
     body: list[str] = []

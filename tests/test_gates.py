@@ -4,6 +4,8 @@ one-liner. Every gate prints exactly one Verdict JSON object and exits 0."""
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +20,8 @@ from lockstep.gates import (
     required_sections,
     version_sync,
 )
+
+ROOT_SRC = Path(__file__).resolve().parents[1] / "src"
 
 
 def run_gate(module, argv, capsys) -> dict:
@@ -414,3 +418,53 @@ def test_pi_guard_smoke_reports_a_gate_error_without_the_spawn_env(tmp_path, cap
     monkeypatch.delenv("LOCKSTEP_PHASE_DIR", raising=False)
     v = run_gate(pi_guard_smoke, [], capsys)
     assert v["verdict"] == "block" and v["findings"][0]["category"] == "gate-error"
+
+
+# ------------------------------------------------- encoding of the verdict
+
+
+def test_a_gate_emits_utf8_under_a_redirected_pipe(tmp_path):
+    """A gate's stdout is a redirected pipe, and on Windows a redirected Python
+    stdout defaults to cp1252. `emit` uses `ensure_ascii=False`, so ONE arrow,
+    curly quote or non-Latin filename in a model-written finding used to raise
+    UnicodeEncodeError: exit 1, empty stdout.log, and a node the driver could
+    only report as failed with the cause buried in stderr.
+
+    `block_on_severity` re-emits reviewer prose verbatim, so this was reachable
+    on any run whose reviewer used a character cp1252 lacks.
+
+    Spawned as a real child with stdout redirected to a FILE, because that is
+    the only arrangement that reproduces it — capsys never had the problem.
+    """
+    import subprocess
+    import sys
+
+    prog = (
+        "import sys; sys.path.insert(0, %r)\n"
+        "from lockstep.gates._common import emit, finding\n"
+        "emit([finding('major', 'c', 'f\u00e9e.py', 'a \u2192 b', '\u2265 3 cases', 'fix')],"
+        " 'clean', 'one finding')\n"
+    ) % str(ROOT_SRC)
+    out = tmp_path / "stdout.log"
+    with open(out, "wb") as fh:
+        proc = subprocess.run(
+            [sys.executable, "-c", prog], stdout=fh, stderr=subprocess.PIPE,
+            env={**os.environ, "PYTHONIOENCODING": ""},   # the hostile case
+        )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-800:]
+    data = json.loads(out.read_text(encoding="utf-8"))
+    Verdict.model_validate(data)
+    assert data["findings"][0]["claim"] == "a \u2192 b"
+    assert data["findings"][0]["evidence"] == "\u2265 3 cases"
+
+
+def test_the_spawn_env_forces_utf8_on_children():
+    """Belt to the gate library's braces: the driver sets PYTHONIOENCODING for
+    every spawned node, so a user's own `python -c` shell node gets the same
+    protection without knowing about it."""
+    from lockstep.executors.shell import node_env
+
+    class _W:
+        meta = {"repo_root": ".", "node_id": "n", "role": "work", "cwd": ".", "writes": []}
+
+    assert node_env(_W(), Path(".")).get("PYTHONIOENCODING") == "utf-8"

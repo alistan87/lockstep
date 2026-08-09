@@ -567,7 +567,16 @@ def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
         # STRINGS. Bare paths do not invalidate when file content changes;
         # fingerprint them (the file-audit `path|fingerprint` convention).
         m = _OVER_RE.match(n.over or "")
-        if m and by_contract.get(m.group(1)) == "PathManifest":
+        # The lint cannot see the manifest's runtime CONTENT, so it asks the
+        # only static question available: does this flow know about the
+        # convention at all? A map whose item text explains the
+        # `path|fingerprint` split is following it — and firing on the
+        # reference implementation (`flows/starter/file-audit`) is worse than
+        # not firing, because a warning that is wrong on the canonical example
+        # is one people learn to skip. Weak signal, deliberately chosen over a
+        # false positive on the flow the lint exists to teach.
+        knows_convention = "fingerprint" in str(n.spec.get("task", "")).lower()
+        if m and by_contract.get(m.group(1)) == "PathManifest" and not knows_convention:
             warn(
                 "lint-map-over-manifest",
                 f"map node {n.id!r} fans out over PathManifest node {m.group(1)!r}: item "

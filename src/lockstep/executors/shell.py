@@ -32,6 +32,18 @@ def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
     does. Over-blocking a CORRECT agent is the failure ADDENDUM-A A.1 forbids,
     so the guard needs the root stated rather than inferred."""
     return {
+        # Every spawn's stdout is a redirected pipe, and on Windows a redirected
+        # Python stdout defaults to the LOCALE encoding — cp1252 here. A node
+        # printing an arrow, a curly quote or a non-Latin filename then died
+        # with UnicodeEncodeError, exit 1, and an EMPTY stdout.log, which the
+        # driver can only report as a failed node. Measured: a gate emitting
+        # `"reason": "café → ok"` produced zero bytes and exit 1.
+        #
+        # Set for every child, not just Python ones: harnesses are Python,
+        # Node and Go, and the variable is simply ignored where it means
+        # nothing. It is environment, not argv, so it does not enter the input
+        # hash and does not re-bill anything.
+        "PYTHONIOENCODING": "utf-8",
         "LOCKSTEP_PHASE_DIR": str(phase_dir.resolve()),
         "LOCKSTEP_REPO_ROOT": str(work.meta.get("repo_root", "")),
         "LOCKSTEP_NODE_ID": str(work.meta.get("node_id", "")),

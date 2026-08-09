@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 SEVERITIES = ("blocker", "major", "minor", "nit")  # most to least severe
@@ -32,14 +33,25 @@ def finding(
 
 def emit(findings: list[dict], pass_reason: str, block_reason: str | None = None) -> int:
     """Print the Verdict and return the gate's exit code (always 0: a blocking
-    verdict is a result, not a failure)."""
+    verdict is a result, not a failure).
+
+    Written as UTF-8 BYTES rather than via `print`. A gate's stdout is a
+    redirected pipe, and on Windows a redirected Python stdout defaults to the
+    locale encoding (cp1252) — so `ensure_ascii=False` plus one arrow, curly
+    quote, `>=` sign or non-Latin filename in a model-written finding raised
+    UnicodeEncodeError, killed the gate with exit 1, and left stdout EMPTY.
+    The driver then reported a failed node, with the real cause visible only in
+    stderr.log. `block_on_severity` re-emits model prose verbatim, so this was
+    reachable on any run whose reviewer used a character cp1252 lacks.
+    """
     verdict = "pass" if not findings else "block"
     reason = pass_reason if verdict == "pass" else (block_reason or f"{len(findings)} finding(s)")
-    print(
-        json.dumps(
-            {"findings": findings, "verdict": verdict, "reason": reason}, ensure_ascii=False
-        )
+    line = json.dumps(
+        {"findings": findings, "verdict": verdict, "reason": reason}, ensure_ascii=False
     )
+    sys.stdout.flush()
+    sys.stdout.buffer.write(line.encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
     return 0
 
 

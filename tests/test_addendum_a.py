@@ -265,3 +265,55 @@ def test_the_allowlist_keeps_the_extensions_tool():
     example = (Path(__file__).resolve().parents[1] / "lockstep.toml.example").read_text(
         encoding="utf-8")
     assert 'readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]' in example
+
+
+def test_no_stanza_combines_mode_json_with_readonly_enforcement():
+    """`--mode json` and the §8.3 stdout channel are mutually exclusive on pi,
+    and a readonly node has ONLY the stdout channel.
+
+    Measured against pi 0.83.0: `--mode json` is an event STREAM, not a single
+    envelope -- 72 JSONL lines for a one-word answer, ending in
+    `{"type":"agent_settled"}`, which is precisely what `extract_last_json`
+    returns. A readonly `output: "json"` node on such a stanza validates pi's
+    own terminal event against its contract, fails, burns its one corrective
+    re-spawn and fails the node. Writers never notice: they answer in
+    `result.json` and the file channel is read first.
+
+    The example config shipped exactly that combination on `[executors.pi]` and
+    `[executors.pi-guarded]`, while six documents told the reader to make every
+    judgement node readonly on pi. Nothing caught it, because the driver's
+    tests use a fake harness and the live-pi flows all write files.
+    """
+    import tomllib
+
+    example = (Path(__file__).resolve().parents[1] / "lockstep.toml.example")
+    cfg = tomllib.loads(example.read_text(encoding="utf-8"))
+    offenders = [
+        name
+        for name, stanza in cfg.get("executors", {}).items()
+        if stanza.get("readonly_argv") and "--mode" in (stanza.get("argv") or [])
+    ]
+    assert offenders == [], (
+        f"{offenders} declare readonly_argv while forcing a structured stdout mode; "
+        "a readonly node there cannot return its result"
+    )
+
+
+def test_a_tool_less_stanza_leaves_stdout_usable():
+    """`--no-tools` removes the write tool, so the result can only arrive on
+    stdout -- the same constraint as readonly, reached a different way. The
+    `pi-reasoner` stanza (documented as the largest saving available on a
+    request-metered plan, because it collapses an agent loop into one request)
+    shipped with `--mode json` and therefore could not return a result at all.
+    """
+    import tomllib
+
+    example = (Path(__file__).resolve().parents[1] / "lockstep.toml.example")
+    cfg = tomllib.loads(example.read_text(encoding="utf-8"))
+    for name, stanza in cfg.get("executors", {}).items():
+        argv = stanza.get("argv") or []
+        if "--no-tools" in argv:
+            assert "--mode" not in argv, (
+                f"stanza {name!r} has no tools, so it must answer on stdout, "
+                "but forces a structured stdout mode"
+            )

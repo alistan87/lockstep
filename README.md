@@ -261,7 +261,10 @@ That is the lever behind three separate things:
   "read,grep,find,ls,submit_result"]` satisfies SPEC §6.11's argv-visible
   requirement, so readonly nodes are legal on pi — and they drop the `tree`
   token, so reviewers fan out in parallel instead of queueing. Name the node's
-  answer tool in the list: the allowlist covers extension tools too.
+  answer tool in the list: the allowlist covers extension tools too. Put them
+  on a stanza **without `--mode json`** (`pi-review`): a readonly node answers
+  on stdout, and `--mode json` fills stdout with pi's event stream, so the
+  driver would read `{"type":"agent_settled"}` as the result.
 - **Cost.** On a request-metered plan (Copilot and friends) the spend is round
   trips, not tokens. A node that cannot edit cannot spend a round trip trying,
   and a narrow tool list measurably shortens the loop. Pair it with

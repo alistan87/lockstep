@@ -47,7 +47,8 @@
       },
       "output": "json",
       "contract": "Finding[]",
-      "timeout_s": 600
+      "timeout_s": 600,
+      "optional": true
     },
     {
       "id": "arbiter",
@@ -59,7 +60,7 @@
       "spec": {
         "persona": "arbiter",
         "readonly": true,
-        "task": "Per-file auditors reviewed a set of files independently. Their raw findings follow as data (an array of Finding arrays, one per audited file; if the value spilled to a file, read that file):\n{steps.audit.json}\n\nAdjudicate: flatten and deduplicate; spot-check each blocker/major claim against the actual file before upholding it; discard unfounded or trivial findings. Emit one Verdict: verdict \"block\" if any upheld finding is a blocker, otherwise \"pass\" (majors are reported but do not block an audit). Put ONLY upheld findings in the findings array (same Finding shape) and give a one-sentence reason including how many files were audited.\n\nYour result MUST be ONLY the Verdict JSON object: findings (array), verdict (\"pass\" or \"block\"), reason (string)."
+        "task": "Per-file auditors reviewed a set of files independently. Their raw findings follow as data (an array of Finding arrays, one per audited file, IN THE SAME ORDER as the file list; if the value spilled to a file, read that file). A slot that is an OBJECT with \"status\": \"failed\" instead of an array is a file whose audit did not complete - do not treat it as clean; count it and say so in your reason:\n{steps.audit.json}\n\nAdjudicate: flatten and deduplicate; spot-check each blocker/major claim against the actual file before upholding it; discard unfounded or trivial findings. Emit one Verdict: verdict \"block\" if any upheld finding is a blocker, otherwise \"pass\" (majors are reported but do not block an audit). Put ONLY upheld findings in the findings array (same Finding shape) and give a one-sentence reason including how many files were audited and how many slots failed.\n\nYour result MUST be ONLY the Verdict JSON object: findings (array), verdict (\"pass\" or \"block\"), reason (string)."
       },
       "output": "json",
       "contract": "Verdict",

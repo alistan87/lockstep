@@ -5,6 +5,15 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 
 # Authoring a taskgraph
 
+**Start from the closest template in `flows/starter/`, not from a blank file.**
+Ten adversarially-reviewed flows cover the shapes that recur — author→review→
+approve, implement→heal→review, map fan-out, clarification gate, evidence
+approval, diagnose→fix→verify. Copy the nearest one and edit prompts, checks and
+budgets. Its README table says what each is for and carries the per-flow
+caveats. Authoring from scratch reinvents decisions those flows already
+survived a review over, and the failure it produces is not a verify error —
+it is a flow that verifies clean and gates the wrong thing.
+
 Full grammar: `docs/spec/SPEC.md` §4–§7 as amended by `docs/spec/AMENDMENTS-r4.md`,
 `-r5.md`, and `-r6.md` (the latest adopted revision wins).
 Always finish with `.venv\Scripts\lockstep.exe verify <flow>` (exit 5 = errors,
@@ -60,7 +69,9 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   enforcement visible in argv, not in the prompt. Readonly nodes answer on
   stdout — they cannot write `result.json`. claude: `--disallowedTools`.
   **pi: `--tools read,grep,find,ls,submit_result`** — an allowlist, so name
-  the node's answer tool or you remove its answer channel. Make every
+  the node's answer tool or you remove its answer channel, on a stanza with
+  **no `--mode json`** (`pi-review`): readonly answers on stdout, and
+  `--mode json` fills stdout with pi's event stream. Make every
   judgement node (review, triage, estimate, plan) readonly: it fans out, it
   cannot corrupt the tree, and on a metered subscription it is the cheapest
   reliability lever there is.
@@ -79,6 +90,36 @@ strings: `== true`, `== "foo"` (quotes required), `== null` (also matches a
 skipped upstream — `when` is exempt from transitive skip, AMENDMENTS A2).
 No numerics beyond exact serialization: `5` ≠ `5.0`.
 
+## Large datasets and artifacts
+
+The failure mode is not a crash — it is a flow that costs ten times what it
+should, or re-bills a whole corpus because one byte moved.
+
+- **Pass a PATH, not the payload.** A harness with tools opens files itself.
+  Interpolating a big value puts it in the prompt, in the hash, and in the
+  bill. Interpolate what you *want* pinned to the hash; nothing else.
+- **`max_interp_chars` (20000) protects harness prompts only.** Over the cap a
+  value spills to a file and the prompt gets a stub path. **Shell argv is
+  neither capped nor spilled** — the raw string hits Windows' ~32k command-line
+  limit and the spawn fails with exit 127. Have shell nodes read a file.
+- **Fan out over a manifest, not a blob**: shell node emits `PathManifest` →
+  `map` takes one item each. The only shape whose cost tracks the CHANGED part
+  of a corpus, because each item caches separately.
+- **Fingerprint the items.** Item strings are the cache keys, so `docs/a.md`
+  never re-runs when `docs/a.md` changes — emit `path|content-fingerprint` and
+  have the item prompt split on the last `|` (`lint-map-over-manifest`).
+- **Wide fan-out ⇒ `optional: true` + an explicit budget.** Otherwise one bad
+  item fails the node and discards every sibling you already paid for. With it,
+  failed slots arrive as `{"status": "failed"}` — say so in the consumer's
+  prompt, or it reads a failure as a clean result.
+- **Large outputs go to files under `spec.writes`**, with a short summary as
+  the result. The §8.3 channel is not a delivery mechanism.
+
+Caching consequence: the FULL pre-spill value is hashed while the prompt gets a
+stub (§7, deliberate). Honest, but it means one edit anywhere in a big
+interpolated value re-runs that node and every descendant — interpolate a
+fingerprint or a summary if the payload churns.
+
 ## Retry
 
 Harness nodes DEFAULT to `retry: { max: 2, backoff_ms: 60000 }` (AMENDMENTS-r5
@@ -88,6 +129,31 @@ minute-scale backoff absorbs them. Setting `retry` explicitly in the flow file
 `max: 0`. If you do need a custom retry, bake it in BEFORE the first run —
 editing the flow later changes `flow_hash` and starts a new lineage,
 re-running (and re-billing) every completed node.
+
+**On a REQUEST-metered plan (Copilot and friends), set `"retry": {"max": 0}`.**
+There a 429 usually means quota exhausted, not a blip: it does not clear in a
+minute, and the two retries spend two more requests against the same wall
+before the node fails anyway. The driver already names it (`provider
+limit/overload` + a resume hint, r5 B3), so the cheaper posture is to fail fast
+and `resume` when quota returns. Keep the default where billing is per token.
+
+## The result channel decides the stanza
+
+Where a node's answer comes back is not a detail — it constrains the argv:
+
+- **Tools + the standard footer ⇒ FILE channel** (`result.json`/`result.txt`).
+  A structured stdout mode is free here, because stdout is never read.
+- **`readonly: true`, or a harness with no file tools ⇒ STDOUT channel**
+  (`FOOTER_READONLY`). Then stdout must carry ONLY the answer. On pi that means
+  the stanza must not set `--mode json`: it is an event stream whose last
+  object is `{"type":"agent_settled"}`, which is exactly what the driver would
+  validate against your contract. Use a separate readonly stanza.
+- **A stanza declaring `json_field`** speaks envelopes, so even a text node is
+  unwrapped from one; a stanza omitting it takes stdout verbatim.
+
+Rule of thumb: one stanza per (model × result channel), picked per node with
+`spec.executor`. That is cheaper than it sounds — stanzas are config, and
+mixing them in one graph is the design, not a workaround.
 
 ## Write scope (`spec.writes`)
 

@@ -40,7 +40,7 @@
           "--approval",
           "approve",
           "--reversible",
-          "nothing is saved outside the run folder until you approve; rejecting leaves the project exactly as it was",
+          "rejecting copies nothing to Deliverables/ and nothing leaves the run folder; {args.deliverable} is already written in the working tree, so to undo completely also delete it (git checkout -- . restores tracked files)",
           "--title",
           "{args.task}"
         ]
