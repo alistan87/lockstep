@@ -318,6 +318,10 @@ def test_every_waterfall_value_is_in_the_table_twin(tmp_path):
             assert row["started"] in table
         if row["worked"]:
             assert row["worked"] in table
+        for seg in row["segments"]:
+            # a tip is a value the chart shows; the twin must show it too, or it
+            # is only reachable by hovering
+            assert not seg["tip"] or seg["tip"] in table, seg["tip"]
 
 
 def test_a_node_that_never_ran_sorts_last_with_an_empty_track(tmp_path):

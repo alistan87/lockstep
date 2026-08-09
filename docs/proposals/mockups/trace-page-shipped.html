@@ -1,0 +1,499 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MISSION - 2026-08-08-quarterly-brief-a41c</title>
+<style>
+/* CALM DENSITY, dark-first, after Linear's chrome: a near-black plane, cards a
+   hair lighter, separated by low-alpha hairlines rather than borders you can
+   see; small cool-grey type; a tight vertical rhythm; and NO chrome accent.
+
+   That last one is deliberate rather than austere. On this page every hue
+   already means something — four categorical slots for the cost stack, four
+   reserved status steps for state — so an accent introduced for selection
+   would be a fifth meaning competing with them. Chrome is ink and surface;
+   colour is data and state. Selection is a surface step, not a hue.
+
+   The DATA colours are unchanged and still validated. Re-run after ANY surface
+   change (this one was):
+     node scripts/validate_palette.js "#3987e5,#d95926,#199e70,#c98500"           --mode dark --surface "#141517"          -> ALL CHECKS PASS
+   Every status step and every ink token gained contrast on the darker surface:
+   status critical 3.62 -> 3.80, muted 4.85 -> 5.62, secondary ink 9.72 -> 10.20. */
+:root{
+ --plane:#0b0c0d;      /* page */
+ --surface:#141517;    /* cards, and the chart surface the palette validates against */
+ --inset:#0e0f11;      /* evidence, pre blocks, the meter track */
+ --line:rgba(255,255,255,.07);
+ --line-2:rgba(255,255,255,.045);
+ --ink:#fff; --ink-2:#c3c2b7; --muted:#8a8f98;
+ --grid:#232529; --axis:#2e3136;
+ --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+ --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500;   /* generated from COST_HEX: one source, or the stylesheet and the
+                stack drift apart and only one of them is pinned by test */
+}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
+ font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+ -webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;transition:opacity .12s}
+.wrap.stale{opacity:.62}
+.top{display:flex;align-items:center;gap:9px;margin-bottom:16px;flex-wrap:wrap}
+.brand{font-weight:600;letter-spacing:.02em;font-size:12.5px}
+.runid{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px}
+.spacer{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;
+ border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font-size:12px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
+.dot.good{background:var(--good)}.dot.warn{background:var(--warning)}
+.dot.crit{background:var(--critical)}.dot.run{background:var(--ink)}
+.live .dot{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
+.hero{font-size:21px;font-weight:600;line-height:1.32;letter-spacing:-.011em;margin:0 0 3px}
+.hero-sub{color:var(--muted);margin:0 0 16px;font-size:12.5px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;
+ margin-bottom:10px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:10px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.tile .k{color:var(--muted);font-size:11.5px;margin-bottom:3px}
+.tile .v{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.card>h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
+ letter-spacing:.02em}
+.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.meter-head .lab{color:var(--ink-2);font-size:13px}
+.meter-head .num{font-size:14px;font-variant-numeric:tabular-nums}
+.track{position:relative;height:6px;border-radius:3px;background:var(--inset);
+ border:1px solid var(--line-2)}
+.fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--c1)}
+.fill.over{background:var(--critical)}
+.ceil{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink-2);right:0}
+.meter-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
+.decide{border-left:2px solid var(--warning)}
+.decide h2{color:var(--warning);font-size:12.5px}
+/* A question is not a decision, and it is not a severity either, so it takes
+   INK rather than a hue. Slot-1 blue here — which is what the first cut used —
+   would be the cost stack's "input" colour doing duty as chrome, and a
+   categorical hue meaning two things on one page is the collision the palette
+   rules exist to prevent. The words already say which kind of attention it is. */
+.ask{border-left:2px solid var(--line)}
+.ask h2{color:var(--ink-2);font-size:12.5px}
+.evidence{background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
+ padding:12px 14px;margin:2px 0 10px;
+ font:12.5px/1.6 ui-monospace,Consolas,monospace;color:var(--ink-2);white-space:pre-wrap}
+.stale-note{color:var(--warning);font-size:12.5px;margin:0 0 10px}
+.terminal-note{color:var(--muted);font-size:12.5px}
+.key-echo{color:var(--warning);font-size:12.5px;margin-top:7px}
+.cardhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.cardhead h2{margin:0}
+.viewswitch{display:flex;gap:4px;margin-left:auto}
+.btn{background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:6px;
+ padding:4px 9px;font:inherit;font-size:12px;cursor:pointer}
+.btn:hover{color:var(--ink-2);background:rgba(255,255,255,.03)}
+.btn[aria-pressed="true"]{background:rgba(255,255,255,.06);color:var(--ink);
+ border-color:rgba(255,255,255,.14)}
+.steps{display:grid;gap:1px}
+.step{display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:9px;
+ padding:5px 7px;border-radius:6px}
+.step:hover{background:rgba(255,255,255,.03)}
+.step .ico{text-align:center;font-size:12.5px}
+.step .word{color:var(--muted);font-size:12.5px}
+.step .name,.wf-lab a{color:var(--ink);text-decoration:none}
+.step .name:hover,.wf-lab a:hover{text-decoration:underline}
+.ico.good{color:var(--good)}.ico.warn{color:var(--warning)}.ico.crit{color:var(--critical)}
+.ico.ser{color:var(--serious)}.ico.mut{color:var(--muted)}.ico.run{color:var(--ink)}
+.note{grid-column:2/-1;color:var(--ink-2);font-size:12.5px;border-left:1px solid var(--axis);
+ padding-left:9px;margin:1px 0 3px}
+/* A STABLE SLOT, present from the first render even when it is empty. Every
+   completion removes a row and increments `N finished`, at 1 Hz; if the
+   counter line appeared only once there was something to count, the chrome
+   below it would jump the first time a step finished. The prohibition is on
+   CHROME jumping, not on the data changing — a row leaving is data. */
+.tail{color:var(--muted);font-size:12.5px;padding:8px 7px 0;min-height:29px}
+@media (prefers-reduced-motion:no-preference){
+ .step{animation:rowin .18s ease-out}
+ @keyframes rowin{from{opacity:0}to{opacity:1}}
+}
+.wf-plot{position:relative;--gutter:236px}
+.wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
+.wf-row{display:contents}
+.wf-lab{display:flex;flex-direction:column;justify-content:center;height:34px;font-size:12.5px;
+ min-width:0}
+.wf-lab .n{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap}
+.wf-lab .w{color:var(--muted);font-size:11.5px;padding-left:19px;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+.wf-track{position:relative;height:34px}
+.wf-track::before{content:"";position:absolute;left:0;right:0;top:15px;height:4px;
+ background:var(--inset);border-radius:2px}
+.seg{position:absolute;top:12px;height:10px;min-width:3px;border-radius:4px}
+.seg.good{background:var(--good)}.seg.ser{background:var(--serious)}
+.seg.crit{background:var(--critical)}.seg.warn{background:var(--warning)}
+.seg.mut{background:var(--muted)}
+.seg.run{background:transparent;border:2px solid var(--ink)}
+.seg.open::after{content:"";position:absolute;right:-1px;top:-2px;bottom:-2px;width:30px;
+ background:linear-gradient(90deg,transparent,var(--surface));border-radius:4px}
+/* The hit area takes in the 2px gaps above and below and reaches ~26px, so a
+   one-minute step is not a 10px target. A pseudo-element, so it costs no layout. */
+.seg::before{content:"";position:absolute;inset:-8px -2px;border-radius:6px}
+.seg:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.seg .tip{position:absolute;left:calc(100% + 8px);top:-3px;font-size:11.5px;color:var(--ink-2);
+ white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Hover and keyboard focus show the SAME thing. `title` would show on hover
+   only, which would put a value behind a pointer. */
+.seg .hint{display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:3;
+ background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 9px;
+ font-size:11.5px;color:var(--ink-2);white-space:nowrap}
+.seg.end .hint{left:auto;right:0}   /* clamped: a tip must not overflow the plot */
+.seg:hover .hint,.seg:focus-visible .hint{display:block}
+/* the axis and the gridlines share the TRACK column's coordinate space, not
+   the card's, so a tick and a bar edge mean the same x */
+.wf-scale{position:absolute;left:calc(var(--gutter) + 14px);right:0;top:0;bottom:28px;
+ pointer-events:none}
+.gridline{position:absolute;top:0;bottom:0;width:1px;background:var(--grid)}
+.wf-axis{position:relative;height:24px;margin-top:4px;border-top:1px solid var(--axis);
+ margin-left:calc(var(--gutter) + 14px)}
+.tick{position:absolute;top:0;font-size:11px;color:var(--muted);transform:translateX(-50%);
+ padding-top:5px;font-variant-numeric:tabular-nums}
+.stack{display:flex;gap:2px;height:10px;margin:2px 0 10px}
+.stack>i{display:block;border-radius:3px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:5px 10px 5px 0;border-bottom:1px solid var(--line-2);
+ color:var(--ink-2)}
+th{color:var(--muted);font-weight:500;font-size:11.5px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+details>summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px;
+ padding:3px 0;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"A ";display:inline-block;transition:transform .12s}
+details[open]>summary::before{transform:rotate(90deg)}
+pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospace;
+ color:var(--ink-2);background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
+ padding:10px 12px}
+.feed{display:grid;gap:1px;font-size:12.5px;color:var(--ink-2)}
+.feed div{padding:2px 0}
+.foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
+body.offline .live .dot{animation:none;background:var(--muted)}
+@media (max-width:700px){.wf-plot{--gutter:118px}.wf-lab .w{padding-left:0}
+ .seg .hint{white-space:normal;max-width:60vw}}
+/* Under forced colours or on paper, the page falls to the TABLE VIEW. Both are
+   contexts where a positioned bar says nothing; the twin carries every value a
+   bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
+@media print,(forced-colors:active){
+ .wf-plot,.stack,.track,.ceil{display:none}
+ #l0,#l1{display:block!important}
+ .viewswitch{display:none}
+}
+@media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
+</style>
+<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-09T04:21:24Z" data-event-cursor="17">
+<div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip live"><span class="dot run"></span>running</span><span class="chip" title="unchained: 17 events carry no chain digest"><span class="dot warn"></span>unchained — 17 events carry no fingerprint</span></div>
+<p class="stale-note" id="offline-note" role="status" hidden>This page has stopped hearing from the run. What you can see below is the last thing it knew, and it may be out of date — ask the assistant whether the run is still going.</p>
+<p class="hero">step 7 of 9  -  needs you  -  18 m  -  1 rework round  -  a decision is 2 steps away</p>
+<p class="hero-sub" style="color:var(--warning)">NEEDS YOU &mdash; read the terminal pane.</p>
+<p class="hero-sub">This page only reads files. Decisions are not made here — when something needs you, it happens in the terminal.</p>
+<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">18m00s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">steps to your decision</div><div class="v">2</div></div></div>
+<div class="card"><div class="meter-head"><span class="lab">agent tasks used</span><span class="num">9 of 25</span></div><div class="track"><div class="fill" style="width:36.0%"></div><div class="ceil"></div></div><div class="meter-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div></div>
+<div class="card"><h2>spend</h2><pre>1 rework round | 18m of node time | tokens: 169,550 in / 21,100 out | $1.58 notional
+running: render
+this session: no orchestrator transcript found for this repo</pre></div>
+<div class="card"><div class="cardhead"><h2>the steps</h2><div class="viewswitch"><button class="btn" data-view="l0" aria-pressed="true">board</button><button class="btn" data-view="l1" aria-pressed="false">show every step</button></div></div>
+<div id="l0" class="steps">
+<div class="step"><span class="ico good">✓</span><a class="name" href="#step-draft">draft the sections</a><span class="word">sent back for rework (1 of 2)</span></div>
+<div class="note">two figures disagreed with the source; sent back once</div>
+<div class="step"><span class="ico run">◐</span><a class="name" href="#step-render">render the appendix</a><span class="word">running</span></div>
+<div class="step"><span class="ico warn">⊗</span><a class="name" href="#step-approve">approve the brief</a><span class="word">needs you</span></div>
+<div class="step"><span class="ico mut">○</span><a class="name" href="#step-publish">publish to the drive</a><span class="word">waiting</span></div>
+<div class="tail">4 finished, 1 not needed</div>
+</div>
+<div id="l1">
+<div class="wf-plot"><div class="wf-scale">
+<div class="gridline" style="left:20.00%"></div>
+<div class="gridline" style="left:47.78%"></div>
+<div class="gridline" style="left:75.56%"></div>
+</div><div class="wf">
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-plan">plan the brief</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 21:21–21:23 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 21:21–21:23 · 2m30s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-draft">draft the sections</a> <span class="ico mut" title="this step left a note">•</span></span><span class="w">sent back for rework (1 of 2)</span></div><div class="wf-track">
+<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 21:23–21:27 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 21:23–21:27 · 3m42s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 21:29–21:30 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 21:29–21:30 · 1m12s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-numbers">check the numbers</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 21:27–21:29 · 1m30s" style="left:34.44%;width:8.33%"><span class="hint" aria-hidden="true">check the numbers — done · 21:27–21:29 · 1m30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 21:30–21:30 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 21:30–21:30 · 30s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-figures">fix the figures</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 21:30–21:31 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 21:30–21:31 · 12s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-evidence">write the evidence</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 21:31–21:31 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 21:31–21:31 · 30s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico run">◐</span><a href="#step-render">render the appendix</a></span><span class="w">running</span></div><div class="wf-track">
+<div class="seg run open end" tabindex="0" role="img" aria-label="render the appendix — running · 21:31–now · 7m54s" style="left:56.11%;width:43.89%"><span class="hint" aria-hidden="true">render the appendix — running · 21:31–now · 7m54s</span><span class="tip">7m54s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico warn">⊗</span><a href="#step-approve">approve the brief</a></span><span class="w">needs you</span></div><div class="wf-track">
+<div class="seg warn open end" tabindex="0" role="img" aria-label="approve the brief — needs you · 21:31–now · 7m48s" style="left:56.67%;width:43.33%"><span class="hint" aria-hidden="true">approve the brief — needs you · 21:31–now · 7m48s</span><span class="tip">7m48s</span></div>
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">○</span><a href="#step-publish">publish to the drive</a></span><span class="w">waiting</span></div><div class="wf-track">
+</div></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">⊘</span><a href="#step-notify">notify the team</a></span><span class="w">not needed</span></div><div class="wf-track">
+</div></div>
+</div><div class="wf-axis">
+<span class="tick" style="left:20.00%">21:25</span>
+<span class="tick" style="left:47.78%">21:30</span>
+<span class="tick" style="left:75.56%">21:35</span>
+</div></div>
+<details id="table-twin" open><summary>the same thing as a table</summary><table>
+<tr><th>step</th><th>state</th><th class="n">started</th><th class="n">worked for</th><th class="n">tries</th></tr>
+<tr><td>plan the brief</td><td>done</td><td class="n">21:21</td><td class="n">2m30s</td><td class="n">1</td></tr>
+<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>sent back for rework (1 of 2)</td><td class="n">21:23</td><td class="n">4m54s</td><td class="n">2</td></tr>
+<tr><td>check the numbers</td><td>done</td><td class="n">21:27</td><td class="n">2m00s</td><td class="n">2</td></tr>
+<tr><td>fix the figures</td><td>done</td><td class="n">21:30</td><td class="n">12s</td><td class="n">1</td></tr>
+<tr><td>write the evidence</td><td>done</td><td class="n">21:31</td><td class="n">30s</td><td class="n">1</td></tr>
+<tr><td>render the appendix</td><td>running</td><td class="n">21:31</td><td class="n">7m54s</td><td class="n">1</td></tr>
+<tr><td>approve the brief</td><td>needs you</td><td class="n">21:31</td><td class="n">7m48s</td><td class="n">1</td></tr>
+<tr><td>publish to the drive</td><td>waiting</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr><td>notify the team</td><td>not needed</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
+</table></details></div>
+</div>
+<div class="card"><h2>what it has cost</h2>
+<div class="stack">
+<i style="background:var(--c1);width:63.68%" title="input 169,550"></i>
+<i style="background:var(--c2);width:7.92%" title="output 21,100"></i>
+<i style="background:var(--c3);width:24.79%" title="cache read 66,000"></i>
+<i style="background:var(--c4);width:3.61%" title="cache write 9,600"></i>
+</div><div class="legend">
+<span><i class="sw" style="background:var(--c1)"></i>input 169,550</span>
+<span><i class="sw" style="background:var(--c2)"></i>output 21,100</span>
+<span><i class="sw" style="background:var(--c3)"></i>cache read 66,000</span>
+<span><i class="sw" style="background:var(--c4)"></i>cache write 9,600</span>
+</div>
+<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  6/9 · 1▸ · 1✗ · $1.58 · 18m00s
+  (history: every attempt is counted)
+
+    ✓ plan      harness  claude-opus-5  $0.31  2m30s
+    ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
+    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
+    ✓ figures   harness  claude-opus-5  $0.11  12s
+    ✓ evidence  shell    30s
+    ◐ render    harness  7m54s  (in progress)
+    ⊗ approve   ?        needs you
+    ○ publish   shell    -
+    ⊘ notify    shell    not needed</pre></details>
+<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  6/9 · 1▸ · 1✗ · $1.58 · 18m00s
+  (head: kept attempts only)
+
+    ✓ plan      harness  claude-opus-5  $0.31  2m30s
+    ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
+    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
+    ✓ figures   harness  claude-opus-5  $0.11  12s
+    ✓ evidence  shell    30s
+    ◐ render    harness  7m54s  (in progress)
+    ⊗ approve   ?        needs you
+    ○ publish   shell    -
+    ⊘ notify    shell    not needed</pre></details>
+</div>
+<div class="card"><h2>ACTIVITY</h2><pre>render the appendix
+  started - no progress reported yet</pre></div>
+<div class="card"><h2>what just happened</h2><div class="feed" id="feed">
+<div>21:27  check the numbers  heal-round</div>
+<div>21:29  draft the sections  running</div>
+<div>21:29  check the numbers  done</div>
+<div>21:30  draft the sections  done</div>
+<div>21:30  check the numbers  running</div>
+<div>21:30  check the numbers  done</div>
+<div>21:30  fix the figures  running</div>
+<div>21:31  fix the figures  done</div>
+<div>21:31  write the evidence  running</div>
+<div>21:31  write the evidence  done</div>
+<div>21:31  render the appendix  running</div>
+<div>21:31  approve the brief  running</div>
+</div>
+<details id="raw-record"><summary>show the raw record</summary><table>
+<tr><th>term</th><th>what it means</th><th>value</th></tr>
+<tr><td>step id</td><td>the name the system uses for this step</td><td>render</td></tr>
+<tr><td>input-hash parts</td><td>the things this step was given — if any of them changes, the step is done again rather than reused</td><td>config, prompt.task</td></tr>
+<tr><td>what moved</td><td>which of those things changed last time, and so why this step could not be reused</td><td>nothing — it was reused</td></tr>
+<tr><td>record head</td><td>a fingerprint of this run&#x27;s whole history; it changes if anything in that history is altered</td><td>—</td></tr>
+<tr><td>record check</td><td>whether that history still adds up when it is recomputed, just now</td><td>unchained: 17 events carry no chain digest</td></tr>
+</table></details></div>
+<div class="card"><h2>what happened at each step</h2>
+<details id="step-plan"><summary>plan the brief</summary><pre>  state      : done
+  attempts   : 1
+  started_at : 2026-08-09T04:21:24Z
+  ended_at   : 2026-08-09T04:23:54Z
+
+  artifacts
+    argv.json                          50 bytes
+    result.txt                          4 bytes
+    stdout.log                        233 bytes</pre></details>
+<details id="step-draft"><summary>draft the sections</summary><pre>  state      : done
+  attempts   : 2
+  rework     : round 1
+  started_at : 2026-08-09T04:23:54Z
+  ended_at   : 2026-08-09T04:30:18Z
+
+  artifacts
+    argv.json                          50 bytes
+    mission.txt                        55 bytes
+    result.txt                          4 bytes
+    stdout.log                        234 bytes</pre></details>
+<details id="step-numbers"><summary>check the numbers</summary><pre>  state      : done
+  attempts   : 2
+  started_at : 2026-08-09T04:27:36Z
+  ended_at   : 2026-08-09T04:30:48Z
+
+  latest verdict (lossy - per-round truth is in the rotated files)
+    pass
+
+  artifacts
+    argv.json                          50 bytes
+    result.txt                          4 bytes
+    stdout.log                        232 bytes</pre></details>
+<details id="step-figures"><summary>fix the figures</summary><pre>  state      : done
+  attempts   : 1
+  started_at : 2026-08-09T04:30:48Z
+  ended_at   : 2026-08-09T04:31:00Z
+
+  artifacts
+    argv.json                          50 bytes
+    result.txt                          4 bytes
+    stdout.log                        231 bytes</pre></details>
+<details id="step-evidence"><summary>write the evidence</summary><pre>  state      : done
+  attempts   : 1
+  started_at : 2026-08-09T04:31:00Z
+  ended_at   : 2026-08-09T04:31:30Z
+
+  artifacts
+    result.txt                          4 bytes</pre></details>
+<details id="step-render"><summary>render the appendix</summary><pre>  state      : running
+  attempts   : 1
+  started_at : 2026-08-09T04:31:30Z
+
+  artifacts
+    result.txt                          4 bytes</pre></details>
+<details id="step-approve"><summary>approve the brief</summary><pre>  state      : needs you
+  attempts   : 1
+  started_at : 2026-08-09T04:31:36Z
+
+  artifacts
+    result.txt                          4 bytes</pre></details>
+<details id="step-publish"><summary>publish to the drive</summary><pre>  state      : waiting
+  attempts   : 0
+
+  artifacts
+    result.txt                          4 bytes</pre></details>
+<details id="step-notify"><summary>notify the team</summary><pre>  state      : not needed
+  attempts   : 0
+
+  artifacts
+    result.txt                          4 bytes</pre></details>
+</div>
+<p class="foot">This page only reads files. It never changes the run.</p></div>
+<script>
+(function () {
+  var wrap = document.querySelector('.wrap');
+  function show(which) {
+    var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
+    if (!l0 || !l1) return;
+    l0.hidden = which !== 'l0'; l1.hidden = which !== 'l1';
+    document.querySelectorAll('.viewswitch .btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.view === which));
+    });
+    try { sessionStorage.setItem('lockstep-view', which); } catch (err) {}
+  }
+  window.lockstepShow = show;
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('.viewswitch .btn');
+    if (b) show(b.dataset.view);
+  });
+  try { show(sessionStorage.getItem('lockstep-view') || 'l0'); } catch (err) { show('l0'); }
+
+  var echoShown = false;
+  // `a` and `r` are the keys the domain expert was taught. The sentence they
+  // reveal is rendered by the server; this only unhides it.
+  addEventListener('keydown', function (ev) {
+    if (ev.key !== 'a' && ev.key !== 'r') return;
+    echoShown = true;
+    var echo = document.getElementById('key-echo');
+    if (echo) echo.hidden = false;
+  });
+
+  var token = document.body.dataset.runToken || '';
+  var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+  var quiet = 0, fails = 0, busy = false, dirty = false;
+
+  function selecting() {
+    var s = window.getSelection();
+    return !!(s && !s.isCollapsed && s.anchorNode && wrap.contains(s.anchorNode));
+  }
+  function currentView() {
+    var b = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
+    return b ? b.dataset.view : 'l0';
+  }
+  function openIds() {
+    return Array.prototype.map.call(
+      document.querySelectorAll('details[open][id]'), function (d) { return d.id; });
+  }
+  function offline(down) {
+    var note = document.getElementById('offline-note');
+    if (note) note.hidden = !down;
+    // A live dot pulsing over data nobody is receiving is a lie told in
+    // presentation. The class stops the animation; the WORDS are the server's.
+    document.body.classList.toggle('offline', down);
+  }
+
+  function refresh() {
+    if (busy || selecting()) return false;  // never take the page out from under a reader
+    busy = true;
+    var view = currentView(), open = openIds();
+    var focused = document.activeElement && document.activeElement.id;
+    wrap.classList.add('stale');       // hold the previous render, never a skeleton
+    fetch('api/state', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (doc) {
+        wrap.innerHTML = doc.html;
+        show(view);
+        open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
+        if (focused) { var f = document.getElementById(focused); if (f) f.focus(); }
+        if (echoShown) { var e = document.getElementById('key-echo'); if (e) e.hidden = false; }
+      })
+      .catch(function () {})
+      .then(function () { wrap.classList.remove('stale'); busy = false; });
+    return true;
+  }
+
+  function tick() {
+    if (document.visibilityState === 'hidden') return;
+    fetch('api/events?after=' + cursor, { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
+      .then(function (doc) {
+        fails = 0; offline(false);
+        // A new run: `doc.next` was computed against the OLD cursor and means
+        // nothing here, so it is discarded rather than kept. Taking it would
+        // leave the client asking for `after=400` of a twelve-event run, which
+        // is the exact failure the run token exists to prevent.
+        if (doc.token !== token) {
+          token = doc.token; cursor = 0; quiet = 0; dirty = true;
+          if (refresh()) { dirty = false; }
+          return;
+        }
+        // `dirty` outlives the tick that saw the movement. Without it, a reader
+        // who leaves text selected consumes the cursor advance and then never
+        // sees the refresh it should have caused — the page would sit stale
+        // until the NEXT event, which on a finished run never comes.
+        if (doc.next !== cursor) { dirty = true; quiet = 0; } else { quiet += 1; }
+        cursor = doc.next;
+        if (dirty || (doc.live && quiet >= 5)) {
+          if (refresh()) { dirty = false; quiet = 0; }
+        }
+      })
+      .catch(function () { if (++fails >= 3) { offline(true); } });
+  }
+  setInterval(tick, 1000);
+})();
+</script>

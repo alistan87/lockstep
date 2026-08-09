@@ -363,10 +363,14 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
             tb = mv._parse_ts(b) if b else None
             end = tb or now
             seconds = max(0.0, (end - ta).total_seconds())
-            if tb is not None:
-                worked += seconds
-            # A healed node's earlier segments are the attempts that were sent
-            # back: a modifier on the base status, not a status of their own.
+            # OPEN intervals count too. The bar tip shows a running step's
+            # elapsed-so-far, and a value the chart has and the table twin does
+            # not is a value only reachable by hovering.
+            worked += seconds
+            # A done node's SUPERSEDED intervals — the attempt a heal round or
+            # a re-run replaced — draw `serious`: a modifier on the base status,
+            # not a status of their own. Same fact the cost panel labels
+            # "(superseded)".
             cls = "ser" if (i < len(node_spans) - 1 and step["status"] == "done") else base
             if plotted:
                 left, right = pct(ta), pct(end)
