@@ -244,3 +244,36 @@ def test_build_smoke_blocks_fast_when_there_is_nothing_to_build(tmp_path, capsys
     Verdict.model_validate(v)
     assert v["verdict"] == "block"
     assert v["findings"][0]["category"] == "build"
+
+
+def test_save_result_strips_a_fence_around_the_whole_result(tmp_path, capsys, monkeypatch):
+    """Small local models wrap source in a ``` fence however plainly the prompt
+    forbids it, and the alternative is a correctness gate that blocks forever on
+    a formatting detail instead of on correctness."""
+    phase = tmp_path / "phases" / "gate"
+    (tmp_path / "phases" / "core").mkdir(parents=True)
+    phase.mkdir(parents=True)
+    (tmp_path / "phases" / "core" / "result.txt").write_text(
+        "```python\ndef solve(grid):\n    return []\n```\n", encoding="utf-8")
+    monkeypatch.setenv("LOCKSTEP_PHASE_DIR", str(phase))
+    monkeypatch.chdir(tmp_path)
+
+    assert save_result.main(["--node", "core", "--out", "core.py", "--strip-fence"]) == 0
+    assert (tmp_path / "core.py").read_text(encoding="utf-8") == "def solve(grid):\n    return []\n"
+    assert "unwrapped a ``` fence" in capsys.readouterr().out
+
+
+def test_save_result_leaves_a_partial_fence_alone(tmp_path, capsys, monkeypatch):
+    """A partial unwrap is a corruption a later gate reports as a syntax error
+    with no clue where it came from."""
+    phase = tmp_path / "phases" / "gate"
+    (tmp_path / "phases" / "core").mkdir(parents=True)
+    phase.mkdir(parents=True)
+    body = "here is the code\n```python\nx = 1\n```\nhope that helps\n"
+    (tmp_path / "phases" / "core" / "result.txt").write_text(body, encoding="utf-8")
+    monkeypatch.setenv("LOCKSTEP_PHASE_DIR", str(phase))
+    monkeypatch.chdir(tmp_path)
+
+    assert save_result.main(["--node", "core", "--out", "core.py", "--strip-fence"]) == 0
+    assert (tmp_path / "core.py").read_text(encoding="utf-8") == body
+    assert "unwrapped" not in capsys.readouterr().out

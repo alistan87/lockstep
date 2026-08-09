@@ -94,6 +94,20 @@ file records implementation-level departures below that bar.
   never an input to scheduling, hashing, gating, budgets, or retries. GenAI
   attributes are attached only to `harness`/`fake` nodes — labelling a shell
   subprocess a model call would corrupt any downstream cost view.
+- **2026-08-09 — the §8.3 stdout fallback is JSON extraction only where JSON
+  is expected.** §8.3 states the fallback as "the last balanced top-level JSON
+  value in stdout, after `json_field` unwrapping". Applied literally to a node
+  whose `output` is `"text"`, that is destructive: source code is full of
+  balanced brackets, so a model asked for a Python module had its answer
+  replaced by whichever list literal came last. Found by running
+  `flows/demo/sudoku-local.tg.json` against a local model — the model wrote a
+  correct module and the file on disk was `[]`. The rule now: a text node on a
+  stanza that declares **no** `json_field` (documented in
+  `lockstep.toml.example` as "omit for raw") takes stdout verbatim; a text node
+  on a stanza that DOES declare one still gets unwrapped out of the envelope,
+  because that stanza's harness speaks envelopes. JSON nodes are unchanged.
+  The implementation already carried a text branch — it was ordered after the
+  extraction, so it only fired when stdout contained no JSON anywhere.
 - **2026-08-02, rewritten 2026-08-08 — nodes may declare `spec.writes`**, a
   repo-root-relative write scope, as an optional key inside the per-kind spec
   model rather than a new first-class node field. Why: this is the r7

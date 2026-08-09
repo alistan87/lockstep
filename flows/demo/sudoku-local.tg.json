@@ -1,0 +1,132 @@
+{
+  "format_version": "1.0",
+  "name": "sudoku-local",
+  "description": "DEMO: build a playable sudoku with a LOCAL model and no network. Two things it exists to show. First, that a harness with no file tools is a first-class executor here \u2014 `ollama run` cannot write anything, so the model answers on the stdout result channel (SPEC \u00a78.3) and a shell node writes the file; nothing about caching, gating, healing or resume changes. Second, what a machine check is for: `sudoku-check` imports what the model produced and puts it through rules a sudoku implementation either satisfies or does not, and a BLOCK hands its findings back to the generator as the next prompt. A small local model usually needs that round. Spends no tokens and makes no network request.",
+  "budget": {
+    "max_agent_spawns": 8,
+    "max_run_minutes": 40
+  },
+  "args": {
+    "out_dir": "Deliverables/sudoku"
+  },
+  "nodes": [
+    {
+      "id": "core",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "executor": "local-coder",
+        "task": "Write a single self-contained Python module implementing sudoku.\n\nIt must define exactly these module-level functions:\n  solve(grid)    -> takes a 9x9 list of lists of ints where 0 means empty and FILLS IT IN, in place, by backtracking; return True when it is solved and False if it cannot be. Every row, column and 3x3 box must end up containing 1..9 exactly once. (Returning the completed grid instead of True is also accepted.)\n  generate()     -> takes no required arguments, returns a 9x9 puzzle grid with 0 for empty cells. Build it by solving an empty grid and then REMOVING cells, so the puzzle is always solvable. Leave at least 25 clues.\n  is_valid(grid, row, col, value) -> True if placing value at (row, col) breaks no rule.\n  format_grid(grid) -> a printable string of the grid.\n\nUse only the Python standard library. Backtracking is fine. Keep it under 120 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere."
+      },
+      "output": "text",
+      "timeout_s": 900
+    },
+    {
+      "id": "save-core",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "core"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "core",
+          "--out",
+          "{args.out_dir}/sudoku_core.py",
+          "--strip-fence"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60
+    },
+    {
+      "id": "sudoku-check",
+      "role": "gate",
+      "kind": "shell",
+      "depends_on": [
+        "save-core"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/demo/sudoku_check.py",
+          "{args.out_dir}/sudoku_core.py"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "heal": {
+        "max_rounds": 2,
+        "targets": [
+          "core"
+        ],
+        "rollback": false
+      },
+      "timeout_s": 120
+    },
+    {
+      "id": "cli",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "sudoku-check"
+      ],
+      "spec": {
+        "executor": "local-coder",
+        "task": "Write a small command-line front end for a sudoku module that already exists and is importable as `sudoku_core`, sitting in the same directory.\n\n`sudoku_core` provides: solve(grid) which fills the grid IN PLACE and returns True, generate(), is_valid(grid, row, col, value), and format_grid(grid).\n\nThe front end must:\n  - print a freshly generated puzzle;\n  - loop reading lines of the form `row col value` (1-9 each), rejecting a move that is_valid() refuses, and reprinting the grid after each accepted move;\n  - accept `solve` to fill the grid in and `quit` to exit;\n  - say so and exit when the grid is complete;\n  - do all of that under `if __name__ == \"__main__\":` so importing it runs nothing.\n\nUse only the standard library. Keep it under 80 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere."
+      },
+      "output": "text",
+      "timeout_s": 900
+    },
+    {
+      "id": "save-cli",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "cli"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "cli",
+          "--out",
+          "{args.out_dir}/play.py",
+          "--strip-fence"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 60
+    },
+    {
+      "id": "play-check",
+      "role": "gate",
+      "kind": "shell",
+      "final": true,
+      "depends_on": [
+        "save-cli"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/demo/play_check.py",
+          "{args.out_dir}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "heal": {
+        "max_rounds": 2,
+        "targets": [
+          "cli"
+        ],
+        "rollback": false
+      },
+      "timeout_s": 180
+    }
+  ]
+}

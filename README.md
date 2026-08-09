@@ -127,6 +127,25 @@ sections it cites them for. With no fixtures the suite reports `0/0 — NOTHING
 WAS CHECKED` on stderr rather than a quiet pass; `--require-fixtures` makes an
 empty net a failure.
 
+## Local models
+
+A harness with **no file tools at all** is a first-class executor. `ollama run`
+can only print, so a node on it answers on the §8.3 stdout channel and a shell
+node writes the file — nothing about caching, gating, healing or resume changes:
+
+```toml
+[executors.local-coder]
+argv = ["ollama", "run", "qwen2.5-coder:14b", "--nowordwrap", "{prompt}"]
+prompt_via = "stdin"          # omit json_field: this harness speaks raw stdout
+```
+
+`flows/demo/sudoku-local.tg.json` is the worked example — it writes a playable
+sudoku with no network, no credential and no token cost. It is also the honest
+demonstration of what the machine checks are for: `contrib/demo/sudoku_check.py`
+imports what the model produced and runs it (in a child process with a clock on
+it, because model-written backtracking loops forever surprisingly often), and a
+BLOCK hands its findings back to the generator as the next prompt.
+
 ## Driving it for someone who does not code (the cockpit)
 
 `contrib/` is a layer for running lockstep **on behalf of a domain expert** — a

@@ -358,17 +358,27 @@ class HarnessExecutor:
         # fenced JSON block still yields its JSON (found by the audit-spec run:
         # extracting before unwrapping returned the prose and failed validation).
         result_text: str | None = None
-        candidate = extract_last_json(stdout)
-        if candidate is not None:
-            value = json.loads(candidate)
-            field = work.meta.get("json_field")
-            if field and isinstance(value, dict) and field in value:
-                inner = value[field]
-                result_text = inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)
-            else:
-                result_text = candidate
-        elif work.meta["output"] == "text" and stdout.strip():
-            result_text = stdout
+        field = work.meta.get("json_field")
+        if work.meta["output"] == "text" and not field:
+            # A TEXT node on a harness that answers in raw stdout: the text IS
+            # the answer, and JSON extraction would destroy it. Source code is
+            # full of balanced brackets — a model asked for a Python module had
+            # its answer replaced by whichever list literal came last (found by
+            # running flows/demo/sudoku-local.tg.json; the file on disk was
+            # `[]`). A stanza that DECLARES json_field speaks envelopes, so a
+            # text node there still has to be unwrapped out of one.
+            result_text = stdout if stdout.strip() else None
+        else:
+            candidate = extract_last_json(stdout)
+            if candidate is not None:
+                value = json.loads(candidate)
+                if field and isinstance(value, dict) and field in value:
+                    inner = value[field]
+                    result_text = inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)
+                else:
+                    result_text = candidate
+            elif work.meta["output"] == "text" and stdout.strip():
+                result_text = stdout
         if (
             work.meta["output"] == "json"
             and result_text is not None

@@ -39,3 +39,14 @@ prompt_via = "argv"
 [executors.copilot-cli]
 argv = ["copilot", "-p", "{prompt}"]
 prompt_via = "argv"
+
+# A LOCAL model — no network, no credential, no token cost. `ollama run` has no
+# file tools at all, so nodes on this stanza answer on the §8.3 stdout channel
+# and a shell node writes the file (`contrib/save_result.py`). Omitting
+# `json_field` is what tells the driver this harness speaks RAW stdout, which
+# is what keeps an `output: "text"` node's source code intact. Prompts go via
+# stdin: Windows caps a command line near 32k and a source file in a prompt
+# reaches that quickly. Worked example: flows/demo/sudoku-local.tg.json.
+[executors.local-coder]
+argv = ["ollama", "run", "qwen2.5-coder:14b", "--nowordwrap", "{prompt}"]
+prompt_via = "stdin"

@@ -168,3 +168,51 @@ def test_empty_result_gets_one_automatic_retry(tmp_path, git_repo):
     assert h.engine.run() == 3
     # M4: one automatic retry on empty result, additive, even with retry.max == 0.
     assert len(h.fake.calls) == 2
+
+
+# ------------------------------------------- a text node is not a JSON node
+
+CODE_WITH_JSON_LOOKING_LITERALS = (
+    r"print('def solve(grid):'); print('    seen = []'); "
+    r"print('    board = [[0] * 9 for _ in range(9)]'); print('    return board')"
+)
+
+
+def text_flow() -> dict:
+    return {
+        "name": "tf",
+        "nodes": [{"id": "n", "kind": "harness", "spec": {"task": "write the module"},
+                   "output": "text", "final": True}],
+    }
+
+
+def test_a_text_node_on_a_raw_harness_gets_its_whole_text(tmp_path, git_repo):
+    """The §8.3 fallback extracts the last balanced JSON value from stdout —
+    which is right for a JSON node and destroys a TEXT one. Source code is full
+    of `[]` and `[[0] * 9 ...]`, so a model asked for a Python module had its
+    answer replaced by whichever list literal happened to come last.
+
+    Found by running flows/demo/sudoku-local.tg.json: the model wrote a correct
+    module and the file on disk was `[]`.
+    """
+    config = make_config(x=ExecutorStanza(argv=[PY, "-c", CODE_WITH_JSON_LOOKING_LITERALS]))
+    h = build(tmp_path, text_flow(), git_repo, config=config)
+    assert h.engine.run() == 0
+    result = (h.run_dir / "phases" / "n" / "result.txt").read_text(encoding="utf-8")
+    assert "def solve(grid):" in result
+    assert result.strip() != "[]"
+
+
+def test_a_text_node_on_an_envelope_harness_still_unwraps(tmp_path, git_repo):
+    """The other half of the rule: a stanza that declares `json_field` speaks
+    JSON envelopes, so a text node must still be unwrapped out of one. Only a
+    stanza with NO json_field ("omit for raw") takes stdout verbatim."""
+    envelope = (
+        "import json; print('preamble'); "
+        "print(json.dumps({'result': 'the answer text, with a [] in it'}))"
+    )
+    config = make_config(x=ExecutorStanza(argv=[PY, "-c", envelope], json_field="result"))
+    h = build(tmp_path, text_flow(), git_repo, config=config)
+    assert h.engine.run() == 0
+    result = (h.run_dir / "phases" / "n" / "result.txt").read_text(encoding="utf-8")
+    assert result == "the answer text, with a [] in it"
