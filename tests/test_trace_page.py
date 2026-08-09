@@ -411,7 +411,50 @@ def test_a_hint_on_a_late_bar_cannot_overflow_the_plot(tmp_path):
     assert late, "the fixture needs a bar in the right half for this to mean anything"
     timeline = mission_server.render_timeline(wf)
     assert "seg good end" in timeline
-    assert ".seg.end .hint{left:auto;right:0}" in mission_server.CSS
+    css = mission_server.CSS
+    assert ".seg.end .hint{left:auto;right:0}" in css
+    # The TIP is the other element that hangs off a bar end, and it overflowed
+    # the card for a bar reaching the right edge — caught by screenshotting the
+    # page, not by any assertion here.
+    assert ".seg.end .tip{left:auto;right:calc(100% + 8px)}" in css
+
+
+def test_a_skipped_step_reads_as_deliberately_absent(tmp_path):
+    """An empty track looks like `not yet` unless a skipped one is visibly
+    dimmer than a waiting one; the icon and the word carry it, this helps."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"]["status"] = "skipped"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    timeline = mission_server.render_timeline(
+        mission_server.waterfall(run, ROOT, now=PAGE_NOW))
+    assert '<div class="wf-track skip">' in timeline
+    assert ".wf-track.skip::before{opacity:" in mission_server.CSS
+
+
+def test_the_stylesheet_has_no_stray_control_characters():
+    """`\\203A` inside a PYTHON string is an OCTAL escape, so a CSS escape
+    written that way reached the browser as U+0083 plus a literal `A` and every
+    disclosure triangle rendered as tofu. Nothing in the sheet says it is
+    wrong; only looking at it did."""
+    import re
+    for name, text in (("CSS", mission_server.stylesheet()), ("JS", mission_server.JS)):
+        stray = re.findall(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", text)
+        assert not stray, f"{name} carries control characters: {stray!r}"
+
+
+def test_a_card_heading_is_a_card_heading_wherever_it_sits(tmp_path):
+    """`.card>h2` did not match the one h2 that lives inside `.cardhead`, so
+    "the steps" rendered at the browser's default size while every other card
+    heading was 11.5px muted."""
+    assert ".card>h2,.card .cardhead h2{font-size:11.5px" in mission_server.CSS
+
+
+def test_no_row_animation_fires_on_every_refresh():
+    """A fade-in on each step row re-fires on every swap, because the swap
+    recreates the elements — the whole list flashed once a second. The stable
+    tail slot is what actually prevents the chrome jump."""
+    assert "rowin" not in mission_server.CSS
 
 
 def test_the_tail_counters_occupy_a_stable_slot(tmp_path):

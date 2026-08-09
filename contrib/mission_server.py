@@ -525,7 +525,7 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .tile .v{font-size:20px;font-weight:600;letter-spacing:-.01em}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;
  padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-.card>h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
+.card>h2,.card .cardhead h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
  letter-spacing:.02em}
 .meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
 .meter-head .lab{color:var(--ink-2);font-size:13px}
@@ -577,10 +577,6 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
    below it would jump the first time a step finished. The prohibition is on
    CHROME jumping, not on the data changing — a row leaving is data. */
 .tail{color:var(--muted);font-size:12.5px;padding:8px 7px 0;min-height:29px}
-@media (prefers-reduced-motion:no-preference){
- .step{animation:rowin .18s ease-out}
- @keyframes rowin{from{opacity:0}to{opacity:1}}
-}
 .wf-plot{position:relative;--gutter:236px}
 .wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
 .wf-row{display:contents}
@@ -591,6 +587,7 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .wf-lab .w{color:var(--muted);font-size:11.5px;padding-left:19px;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
 .wf-track{position:relative;height:34px}
+.wf-track.skip::before{opacity:.45}
 .wf-track::before{content:"";position:absolute;left:0;right:0;top:15px;height:4px;
  background:var(--inset);border-radius:2px}
 .seg{position:absolute;top:12px;height:10px;min-width:3px;border-radius:4px}
@@ -611,7 +608,8 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .seg .hint{display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:3;
  background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 9px;
  font-size:11.5px;color:var(--ink-2);white-space:nowrap}
-.seg.end .hint{left:auto;right:0}   /* clamped: a tip must not overflow the plot */
+.seg.end .hint{left:auto;right:0}   /* clamped: neither may overflow the plot */
+.seg.end .tip{left:auto;right:calc(100% + 8px)}
 .seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
@@ -635,7 +633,10 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 details>summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px;
  padding:3px 0;list-style:none}
 details>summary::-webkit-details-marker{display:none}
-details>summary::before{content:"\203A ";display:inline-block;transition:transform .12s}
+/* The character itself, not a CSS escape: `\\203A` inside a PYTHON string is an
+   OCTAL escape (\\203 -> U+0083), so the browser was handed a control character
+   followed by a literal "A" and every disclosure triangle rendered as tofu. */
+details>summary::before{content:"› ";display:inline-block;transition:transform .12s}
 details[open]>summary::before{transform:rotate(90deg)}
 pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospace;
  color:var(--ink-2);background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
@@ -838,7 +839,7 @@ def render_timeline(wf: dict) -> str:
                 f'<div class="wf-lab"><span class="n">{_icon_span(row)}'
                 f'<a href="#step-{e(row["node_id"])}">{e(row["label"])}</a>{marker}</span>'
                 f'<span class="w">{e(row["word"])}</span></div>'
-                '<div class="wf-track">'
+                f'<div class="wf-track{" skip" if row["status"] == "skipped" else ""}">'
             )
             for seg in row["segments"]:
                 tip = f'<span class="tip">{e(seg["tip"])}</span>' if seg["tip"] else ""

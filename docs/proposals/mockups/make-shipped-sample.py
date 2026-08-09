@@ -46,8 +46,8 @@ NODES = [
     ("numbers",  "check the numbers",     "harness", "done",    0, [(6.2, 7.7), (8.9, 9.4)], (27900, 3300, 9000, 1200, 0.22)),
     ("figures",  "fix the figures",       "harness", "done",    0, [(9.4, 9.6)],          (12050, 1900, 4000, 800, 0.11)),
     ("evidence", "write the evidence",    "shell",   "done",    0, [(9.6, 10.1)],         None),
-    ("render",   "render the appendix",   "harness", "running", 0, [(10.1, None)],        None),
-    ("approve",  "approve the brief",     "",        "blocked", 0, [(10.2, None)],        None),
+    ("render",   "render the appendix",   "harness", "done",    0, [(10.1, 11.4)],        (8600, 1400, 3000, 600, 0.08)),
+    ("approve",  "approve the brief",     "",        "blocked", 0, [(11.4, None)],        None),
     ("publish",  "publish to the drive",  "shell",   "pending", 0, [],                    None),
     ("notify",   "notify the team",       "shell",   "skipped", 0, [],                    None),
 ]
@@ -82,7 +82,8 @@ def build(run: Path) -> None:
         if prev:
             node["depends_on"] = [prev]
         if kind == "shell":
-            node["spec"] = {"cmd": ["python", f"contrib/{nid}.py"]}
+            cmd = "render_evidence" if nid == "evidence" else nid
+            node["spec"] = {"cmd": ["python", f"contrib/{cmd}.py"]}
         flow_nodes.append(node)
         prev = nid
         for a, b in spans:

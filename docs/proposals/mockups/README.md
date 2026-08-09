@@ -8,10 +8,32 @@ resource: docs/proposals/mockups/README.md
 
 | file | what it is |
 |---|---|
-| `trace-page-shipped.html` | **Open this one.** A snapshot of what `contrib/mission_server.py` actually emits, over a synthetic run built to exercise every state the page can draw: a healed step with two intervals, a running step, a waiting approval with its evidence, a skipped step, a note, and real cost figures. |
+| `trace-page-shipped.html` | **Open this one.** A snapshot of what `contrib/mission_server.py` actually emits, over a synthetic run built to exercise every state the page can draw: a healed step with two intervals and a superseded segment, a waiting approval with its evidence quoted, a skipped step, a note, and real cost figures. |
+| `trace-page-shipped.png` | The board, as a browser renders it. |
+| `trace-page-shipped-timeline.png` | The same page with its script stripped, which is how both views render at once — the timeline and its table twin are visible together. Doubles as proof the no-JS fallback is real. |
 | `trace-page.html` + `.png` | The pre-build **design target** for `PROPOSAL-sssf-adoptions.md` §4.6. Superseded, kept on purpose: rendering it is what caught four layout defects that reading the spec did not, and that is part of the record of how the design was arrived at. Not updated as the page moves. |
 
-Where the two differ, the shipped one is right.
+Where these differ, the shipped ones are right.
+
+## Screenshotting it is a check, not a courtesy
+
+The first render of the shipped page found five defects nothing in
+`tests/test_trace_page.py` could see: a CSS escape written as `\203A` inside a
+Python string (an **octal** escape — the browser got U+0083 and a literal `A`,
+so every disclosure triangle was tofu), `.card>h2` failing to match the one
+heading that sits inside `.cardhead`, a row fade-in that re-fired on every
+refresh and flashed the whole list, a bar tip overflowing the card, and a sample
+whose approval was not actually waiting so the evidence block never appeared.
+Each is now pinned by a test — but a test was written *because* someone looked.
+
+```powershell
+$c = "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+& $c --headless=new --disable-gpu --hide-scrollbars --user-data-dir="$env:TEMP\ls-shot" `
+     --window-size=1400,1750 --screenshot="shot.png" `
+     "file:///$($PWD -replace '\\','/')/docs/proposals/mockups/trace-page-shipped.html"
+```
+
+Use a throwaway `--user-data-dir` so it does not touch a real browser profile.
 
 ## The snapshot is a snapshot
 

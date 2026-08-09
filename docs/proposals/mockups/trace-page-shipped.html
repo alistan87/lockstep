@@ -58,7 +58,7 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .tile .v{font-size:20px;font-weight:600;letter-spacing:-.01em}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;
  padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-.card>h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
+.card>h2,.card .cardhead h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
  letter-spacing:.02em}
 .meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
 .meter-head .lab{color:var(--ink-2);font-size:13px}
@@ -110,10 +110,6 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
    below it would jump the first time a step finished. The prohibition is on
    CHROME jumping, not on the data changing — a row leaving is data. */
 .tail{color:var(--muted);font-size:12.5px;padding:8px 7px 0;min-height:29px}
-@media (prefers-reduced-motion:no-preference){
- .step{animation:rowin .18s ease-out}
- @keyframes rowin{from{opacity:0}to{opacity:1}}
-}
 .wf-plot{position:relative;--gutter:236px}
 .wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
 .wf-row{display:contents}
@@ -124,6 +120,7 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .wf-lab .w{color:var(--muted);font-size:11.5px;padding-left:19px;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
 .wf-track{position:relative;height:34px}
+.wf-track.skip::before{opacity:.45}
 .wf-track::before{content:"";position:absolute;left:0;right:0;top:15px;height:4px;
  background:var(--inset);border-radius:2px}
 .seg{position:absolute;top:12px;height:10px;min-width:3px;border-radius:4px}
@@ -144,7 +141,8 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .seg .hint{display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:3;
  background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 9px;
  font-size:11.5px;color:var(--ink-2);white-space:nowrap}
-.seg.end .hint{left:auto;right:0}   /* clamped: a tip must not overflow the plot */
+.seg.end .hint{left:auto;right:0}   /* clamped: neither may overflow the plot */
+.seg.end .tip{left:auto;right:calc(100% + 8px)}
 .seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
@@ -168,7 +166,10 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 details>summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px;
  padding:3px 0;list-style:none}
 details>summary::-webkit-details-marker{display:none}
-details>summary::before{content:"A ";display:inline-block;transition:transform .12s}
+/* The character itself, not a CSS escape: `\203A` inside a PYTHON string is an
+   OCTAL escape (\203 -> U+0083), so the browser was handed a control character
+   followed by a literal "A" and every disclosure triangle rendered as tofu. */
+details>summary::before{content:"› ";display:inline-block;transition:transform .12s}
 details[open]>summary::before{transform:rotate(90deg)}
 pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospace;
  color:var(--ink-2);background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
@@ -189,90 +190,101 @@ body.offline .live .dot{animation:none;background:var(--muted)}
 }
 @media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
 </style>
-<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-09T04:21:24Z" data-event-cursor="17">
-<div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip live"><span class="dot run"></span>running</span><span class="chip" title="unchained: 17 events carry no chain digest"><span class="dot warn"></span>unchained — 17 events carry no fingerprint</span></div>
+<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-09T05:04:48Z" data-event-cursor="18">
+<div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip"><span class="dot mut"></span>not running</span><span class="chip" title="unchained: 18 events carry no chain digest"><span class="dot warn"></span>unchained — 18 events carry no fingerprint</span></div>
 <p class="stale-note" id="offline-note" role="status" hidden>This page has stopped hearing from the run. What you can see below is the last thing it knew, and it may be out of date — ask the assistant whether the run is still going.</p>
-<p class="hero">step 7 of 9  -  needs you  -  18 m  -  1 rework round  -  a decision is 2 steps away</p>
+<p class="hero">step 7 of 9  -  needs you  -  18 m  -  1 rework round  -  your decision is next</p>
 <p class="hero-sub" style="color:var(--warning)">NEEDS YOU &mdash; read the terminal pane.</p>
 <p class="hero-sub">This page only reads files. Decisions are not made here — when something needs you, it happens in the terminal.</p>
-<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">18m00s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">steps to your decision</div><div class="v">2</div></div></div>
+<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">11m24s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">your decision</div><div class="v">next</div></div></div>
 <div class="card"><div class="meter-head"><span class="lab">agent tasks used</span><span class="num">9 of 25</span></div><div class="track"><div class="fill" style="width:36.0%"></div><div class="ceil"></div></div><div class="meter-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div></div>
-<div class="card"><h2>spend</h2><pre>1 rework round | 18m of node time | tokens: 169,550 in / 21,100 out | $1.58 notional
-running: render
+<div class="card"><h2>spend</h2><pre>1 rework round | 11m of node time | tokens: 178,150 in / 22,500 out | $1.66 notional
+running: nothing - waiting or done
 this session: no orchestrator transcript found for this repo</pre></div>
+<div class="card decide"><h2>⊗ needs you — a decision</h2><div class="evidence">Approve: publish the quarterly brief
+
+What this changes if you approve
+  3 files written under Deliverables/2026-Q2/
+  1 file replaced: Deliverables/2026-Q2/brief.md (was 4.1 KB, now 7.8 KB)
+  Nothing outside Deliverables/ is touched.
+
+--impact      3 files, +214 / -38 lines, one directory
+--reversible  yes - the previous brief is kept in the run folder
+</div><p class="terminal-note" id="terminal-note">This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p><p class="key-echo" id="key-echo" role="status" hidden>This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p></div>
 <div class="card"><div class="cardhead"><h2>the steps</h2><div class="viewswitch"><button class="btn" data-view="l0" aria-pressed="true">board</button><button class="btn" data-view="l1" aria-pressed="false">show every step</button></div></div>
 <div id="l0" class="steps">
 <div class="step"><span class="ico good">✓</span><a class="name" href="#step-draft">draft the sections</a><span class="word">sent back for rework (1 of 2)</span></div>
 <div class="note">two figures disagreed with the source; sent back once</div>
-<div class="step"><span class="ico run">◐</span><a class="name" href="#step-render">render the appendix</a><span class="word">running</span></div>
 <div class="step"><span class="ico warn">⊗</span><a class="name" href="#step-approve">approve the brief</a><span class="word">needs you</span></div>
 <div class="step"><span class="ico mut">○</span><a class="name" href="#step-publish">publish to the drive</a><span class="word">waiting</span></div>
-<div class="tail">4 finished, 1 not needed</div>
+<div class="tail">5 finished, 1 not needed</div>
 </div>
 <div id="l1">
 <div class="wf-plot"><div class="wf-scale">
-<div class="gridline" style="left:20.00%"></div>
-<div class="gridline" style="left:47.78%"></div>
-<div class="gridline" style="left:75.56%"></div>
+<div class="gridline" style="left:1.11%"></div>
+<div class="gridline" style="left:28.89%"></div>
+<div class="gridline" style="left:56.67%"></div>
+<div class="gridline" style="left:84.44%"></div>
 </div><div class="wf">
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-plan">plan the brief</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 21:21–21:23 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 21:21–21:23 · 2m30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 22:04–22:07 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 22:04–22:07 · 2m30s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-draft">draft the sections</a> <span class="ico mut" title="this step left a note">•</span></span><span class="w">sent back for rework (1 of 2)</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 21:23–21:27 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 21:23–21:27 · 3m42s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 21:29–21:30 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 21:29–21:30 · 1m12s</span></div>
+<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 22:07–22:11 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 22:07–22:11 · 3m42s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 22:12–22:13 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 22:12–22:13 · 1m12s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-numbers">check the numbers</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 21:27–21:29 · 1m30s" style="left:34.44%;width:8.33%"><span class="hint" aria-hidden="true">check the numbers — done · 21:27–21:29 · 1m30s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 21:30–21:30 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 21:30–21:30 · 30s</span></div>
+<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 22:11–22:12 · 1m30s" style="left:34.44%;width:8.33%"><span class="hint" aria-hidden="true">check the numbers — done · 22:11–22:12 · 1m30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 22:13–22:14 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 22:13–22:14 · 30s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-figures">fix the figures</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 21:30–21:31 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 21:30–21:31 · 12s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 22:14–22:14 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 22:14–22:14 · 12s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-evidence">write the evidence</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 21:31–21:31 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 21:31–21:31 · 30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 22:14–22:14 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 22:14–22:14 · 30s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico run">◐</span><a href="#step-render">render the appendix</a></span><span class="w">running</span></div><div class="wf-track">
-<div class="seg run open end" tabindex="0" role="img" aria-label="render the appendix — running · 21:31–now · 7m54s" style="left:56.11%;width:43.89%"><span class="hint" aria-hidden="true">render the appendix — running · 21:31–now · 7m54s</span><span class="tip">7m54s</span></div>
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-render">render the appendix</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good end" tabindex="0" role="img" aria-label="render the appendix — done · 22:14–22:16 · 1m18s" style="left:56.11%;width:7.22%"><span class="hint" aria-hidden="true">render the appendix — done · 22:14–22:16 · 1m18s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico warn">⊗</span><a href="#step-approve">approve the brief</a></span><span class="w">needs you</span></div><div class="wf-track">
-<div class="seg warn open end" tabindex="0" role="img" aria-label="approve the brief — needs you · 21:31–now · 7m48s" style="left:56.67%;width:43.33%"><span class="hint" aria-hidden="true">approve the brief — needs you · 21:31–now · 7m48s</span><span class="tip">7m48s</span></div>
+<div class="seg warn open end" tabindex="0" role="img" aria-label="approve the brief — needs you · 22:16–now · 6m36s" style="left:63.33%;width:36.67%"><span class="hint" aria-hidden="true">approve the brief — needs you · 22:16–now · 6m36s</span><span class="tip">6m36s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">○</span><a href="#step-publish">publish to the drive</a></span><span class="w">waiting</span></div><div class="wf-track">
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">⊘</span><a href="#step-notify">notify the team</a></span><span class="w">not needed</span></div><div class="wf-track">
+<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">⊘</span><a href="#step-notify">notify the team</a></span><span class="w">not needed</span></div><div class="wf-track skip">
 </div></div>
 </div><div class="wf-axis">
-<span class="tick" style="left:20.00%">21:25</span>
-<span class="tick" style="left:47.78%">21:30</span>
-<span class="tick" style="left:75.56%">21:35</span>
+<span class="tick" style="left:1.11%">22:05</span>
+<span class="tick" style="left:28.89%">22:10</span>
+<span class="tick" style="left:56.67%">22:15</span>
+<span class="tick" style="left:84.44%">22:20</span>
 </div></div>
 <details id="table-twin" open><summary>the same thing as a table</summary><table>
 <tr><th>step</th><th>state</th><th class="n">started</th><th class="n">worked for</th><th class="n">tries</th></tr>
-<tr><td>plan the brief</td><td>done</td><td class="n">21:21</td><td class="n">2m30s</td><td class="n">1</td></tr>
-<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>sent back for rework (1 of 2)</td><td class="n">21:23</td><td class="n">4m54s</td><td class="n">2</td></tr>
-<tr><td>check the numbers</td><td>done</td><td class="n">21:27</td><td class="n">2m00s</td><td class="n">2</td></tr>
-<tr><td>fix the figures</td><td>done</td><td class="n">21:30</td><td class="n">12s</td><td class="n">1</td></tr>
-<tr><td>write the evidence</td><td>done</td><td class="n">21:31</td><td class="n">30s</td><td class="n">1</td></tr>
-<tr><td>render the appendix</td><td>running</td><td class="n">21:31</td><td class="n">7m54s</td><td class="n">1</td></tr>
-<tr><td>approve the brief</td><td>needs you</td><td class="n">21:31</td><td class="n">7m48s</td><td class="n">1</td></tr>
+<tr><td>plan the brief</td><td>done</td><td class="n">22:04</td><td class="n">2m30s</td><td class="n">1</td></tr>
+<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>sent back for rework (1 of 2)</td><td class="n">22:07</td><td class="n">4m54s</td><td class="n">2</td></tr>
+<tr><td>check the numbers</td><td>done</td><td class="n">22:11</td><td class="n">2m00s</td><td class="n">2</td></tr>
+<tr><td>fix the figures</td><td>done</td><td class="n">22:14</td><td class="n">12s</td><td class="n">1</td></tr>
+<tr><td>write the evidence</td><td>done</td><td class="n">22:14</td><td class="n">30s</td><td class="n">1</td></tr>
+<tr><td>render the appendix</td><td>done</td><td class="n">22:14</td><td class="n">1m18s</td><td class="n">1</td></tr>
+<tr><td>approve the brief</td><td>needs you</td><td class="n">22:16</td><td class="n">6m36s</td><td class="n">1</td></tr>
 <tr><td>publish to the drive</td><td>waiting</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 <tr><td>notify the team</td><td>not needed</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 </table></details></div>
 </div>
 <div class="card"><h2>what it has cost</h2>
 <div class="stack">
-<i style="background:var(--c1);width:63.68%" title="input 169,550"></i>
-<i style="background:var(--c2);width:7.92%" title="output 21,100"></i>
-<i style="background:var(--c3);width:24.79%" title="cache read 66,000"></i>
-<i style="background:var(--c4);width:3.61%" title="cache write 9,600"></i>
+<i style="background:var(--c1);width:63.66%" title="input 178,150"></i>
+<i style="background:var(--c2);width:8.04%" title="output 22,500"></i>
+<i style="background:var(--c3);width:24.66%" title="cache read 69,000"></i>
+<i style="background:var(--c4);width:3.64%" title="cache write 10,200"></i>
 </div><div class="legend">
-<span><i class="sw" style="background:var(--c1)"></i>input 169,550</span>
-<span><i class="sw" style="background:var(--c2)"></i>output 21,100</span>
-<span><i class="sw" style="background:var(--c3)"></i>cache read 66,000</span>
-<span><i class="sw" style="background:var(--c4)"></i>cache write 9,600</span>
+<span><i class="sw" style="background:var(--c1)"></i>input 178,150</span>
+<span><i class="sw" style="background:var(--c2)"></i>output 22,500</span>
+<span><i class="sw" style="background:var(--c3)"></i>cache read 69,000</span>
+<span><i class="sw" style="background:var(--c4)"></i>cache write 10,200</span>
 </div>
-<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  6/9 · 1▸ · 1✗ · $1.58 · 18m00s
+<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
   (history: every attempt is counted)
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
@@ -280,11 +292,11 @@ this session: no orchestrator transcript found for this repo</pre></div>
     ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
     ✓ figures   harness  claude-opus-5  $0.11  12s
     ✓ evidence  shell    30s
-    ◐ render    harness  7m54s  (in progress)
+    ✓ render    harness  claude-opus-5  $0.08  1m18s
     ⊗ approve   ?        needs you
     ○ publish   shell    -
     ⊘ notify    shell    not needed</pre></details>
-<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  6/9 · 1▸ · 1✗ · $1.58 · 18m00s
+<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
   (head: kept attempts only)
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
@@ -292,40 +304,39 @@ this session: no orchestrator transcript found for this repo</pre></div>
     ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
     ✓ figures   harness  claude-opus-5  $0.11  12s
     ✓ evidence  shell    30s
-    ◐ render    harness  7m54s  (in progress)
+    ✓ render    harness  claude-opus-5  $0.08  1m18s
     ⊗ approve   ?        needs you
     ○ publish   shell    -
     ⊘ notify    shell    not needed</pre></details>
 </div>
-<div class="card"><h2>ACTIVITY</h2><pre>render the appendix
-  started - no progress reported yet</pre></div>
+<div class="card"><h2>ACTIVITY</h2><pre>needs you - nothing is spending</pre></div>
 <div class="card"><h2>what just happened</h2><div class="feed" id="feed">
-<div>21:27  check the numbers  heal-round</div>
-<div>21:29  draft the sections  running</div>
-<div>21:29  check the numbers  done</div>
-<div>21:30  draft the sections  done</div>
-<div>21:30  check the numbers  running</div>
-<div>21:30  check the numbers  done</div>
-<div>21:30  fix the figures  running</div>
-<div>21:31  fix the figures  done</div>
-<div>21:31  write the evidence  running</div>
-<div>21:31  write the evidence  done</div>
-<div>21:31  render the appendix  running</div>
-<div>21:31  approve the brief  running</div>
+<div>22:12  draft the sections  running</div>
+<div>22:12  check the numbers  done</div>
+<div>22:13  draft the sections  done</div>
+<div>22:13  check the numbers  running</div>
+<div>22:14  check the numbers  done</div>
+<div>22:14  fix the figures  running</div>
+<div>22:14  fix the figures  done</div>
+<div>22:14  write the evidence  running</div>
+<div>22:14  write the evidence  done</div>
+<div>22:14  render the appendix  running</div>
+<div>22:16  render the appendix  done</div>
+<div>22:16  approve the brief  running</div>
 </div>
 <details id="raw-record"><summary>show the raw record</summary><table>
 <tr><th>term</th><th>what it means</th><th>value</th></tr>
-<tr><td>step id</td><td>the name the system uses for this step</td><td>render</td></tr>
+<tr><td>step id</td><td>the name the system uses for this step</td><td>approve</td></tr>
 <tr><td>input-hash parts</td><td>the things this step was given — if any of them changes, the step is done again rather than reused</td><td>config, prompt.task</td></tr>
 <tr><td>what moved</td><td>which of those things changed last time, and so why this step could not be reused</td><td>nothing — it was reused</td></tr>
 <tr><td>record head</td><td>a fingerprint of this run&#x27;s whole history; it changes if anything in that history is altered</td><td>—</td></tr>
-<tr><td>record check</td><td>whether that history still adds up when it is recomputed, just now</td><td>unchained: 17 events carry no chain digest</td></tr>
+<tr><td>record check</td><td>whether that history still adds up when it is recomputed, just now</td><td>unchained: 18 events carry no chain digest</td></tr>
 </table></details></div>
 <div class="card"><h2>what happened at each step</h2>
 <details id="step-plan"><summary>plan the brief</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T04:21:24Z
-  ended_at   : 2026-08-09T04:23:54Z
+  started_at : 2026-08-09T05:04:48Z
+  ended_at   : 2026-08-09T05:07:18Z
 
   artifacts
     argv.json                          50 bytes
@@ -334,8 +345,8 @@ this session: no orchestrator transcript found for this repo</pre></div>
 <details id="step-draft"><summary>draft the sections</summary><pre>  state      : done
   attempts   : 2
   rework     : round 1
-  started_at : 2026-08-09T04:23:54Z
-  ended_at   : 2026-08-09T04:30:18Z
+  started_at : 2026-08-09T05:07:18Z
+  ended_at   : 2026-08-09T05:13:42Z
 
   artifacts
     argv.json                          50 bytes
@@ -344,8 +355,8 @@ this session: no orchestrator transcript found for this repo</pre></div>
     stdout.log                        234 bytes</pre></details>
 <details id="step-numbers"><summary>check the numbers</summary><pre>  state      : done
   attempts   : 2
-  started_at : 2026-08-09T04:27:36Z
-  ended_at   : 2026-08-09T04:30:48Z
+  started_at : 2026-08-09T05:11:00Z
+  ended_at   : 2026-08-09T05:14:12Z
 
   latest verdict (lossy - per-round truth is in the rotated files)
     pass
@@ -356,8 +367,8 @@ this session: no orchestrator transcript found for this repo</pre></div>
     stdout.log                        232 bytes</pre></details>
 <details id="step-figures"><summary>fix the figures</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T04:30:48Z
-  ended_at   : 2026-08-09T04:31:00Z
+  started_at : 2026-08-09T05:14:12Z
+  ended_at   : 2026-08-09T05:14:24Z
 
   artifacts
     argv.json                          50 bytes
@@ -365,20 +376,23 @@ this session: no orchestrator transcript found for this repo</pre></div>
     stdout.log                        231 bytes</pre></details>
 <details id="step-evidence"><summary>write the evidence</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T04:31:00Z
-  ended_at   : 2026-08-09T04:31:30Z
+  started_at : 2026-08-09T05:14:24Z
+  ended_at   : 2026-08-09T05:14:54Z
 
   artifacts
     result.txt                          4 bytes</pre></details>
-<details id="step-render"><summary>render the appendix</summary><pre>  state      : running
+<details id="step-render"><summary>render the appendix</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T04:31:30Z
+  started_at : 2026-08-09T05:14:54Z
+  ended_at   : 2026-08-09T05:16:12Z
 
   artifacts
-    result.txt                          4 bytes</pre></details>
+    argv.json                          50 bytes
+    result.txt                          4 bytes
+    stdout.log                        230 bytes</pre></details>
 <details id="step-approve"><summary>approve the brief</summary><pre>  state      : needs you
   attempts   : 1
-  started_at : 2026-08-09T04:31:36Z
+  started_at : 2026-08-09T05:16:12Z
 
   artifacts
     result.txt                          4 bytes</pre></details>
