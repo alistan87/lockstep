@@ -361,9 +361,15 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
                 continue
             first_start = first_start or ta
             tb = mv._parse_ts(b) if b else None
-            end = tb or now
+            # An interval is only still running if the STEP is. An interval
+            # left open by a crash belongs to a step that is not running now,
+            # and measuring it to `now` would grow forever — the bar would
+            # stretch across the plot and the twin would report the age of the
+            # run dir as work.
+            live = tb is None and step["status"] in ("running", "blocked")
+            end = tb or (now if live else ta)
             seconds = max(0.0, (end - ta).total_seconds())
-            # OPEN intervals count too. The bar tip shows a running step's
+            # Open-but-live intervals count: the bar tip shows a running step's
             # elapsed-so-far, and a value the chart has and the table twin does
             # not is a value only reachable by hovering.
             worked += seconds
@@ -376,7 +382,7 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
                 left, right = pct(ta), pct(end)
                 segs.append({
                     "left": left, "width": max(0.0, right - left), "cls": cls,
-                    "open": tb is None,
+                    "open": live,
                     "title": (f"{step['label']} — {step['word']} · "
                               f"{mv.format_clock(a)}–{mv.format_clock(b) if b else 'now'} · "
                               f"{mv.format_duration(seconds)}"),

@@ -78,11 +78,15 @@ def make_run(root: Path, name: str = "flow-a") -> Path:
     events = [
         {"ts": "2026-08-01T10:00:00+00:00", "kind": "transition", "node": "impl", "status": "running"},
         {"ts": "2026-08-01T10:01:30+00:00", "kind": "transition", "node": "impl", "status": "done"},
+        # The engine re-marks a healing gate RUNNING for its second attempt, so
+        # each attempt has its own running->outcome pair; the first ends in
+        # heal-round, not in a terminal status. 30s + 60s = the 90s asserted.
         {"ts": "2026-08-01T10:01:31+00:00", "kind": "transition", "node": "gate", "status": "running"},
-        {"ts": "2026-08-01T10:01:31+00:00", "node": "gate", "status": "heal-round", "round": 1},
+        {"ts": "2026-08-01T10:02:01+00:00", "node": "gate", "status": "heal-round", "round": 1},
         {"ts": "2026-08-01T10:02:00+00:00", "kind": "transition", "node": "impl", "status": "running"},
         {"ts": "2026-08-01T10:02:40+00:00", "kind": "transition", "node": "impl", "status": "done"},
-        {"ts": "2026-08-01T10:03:01+00:00", "kind": "transition", "node": "gate", "status": "blocked"},
+        {"ts": "2026-08-01T10:02:41+00:00", "kind": "transition", "node": "gate", "status": "running"},
+        {"ts": "2026-08-01T10:03:41+00:00", "kind": "transition", "node": "gate", "status": "blocked"},
     ]
     lines = "\n".join(json.dumps(e) for e in events)
     # trailing partial line after a crash must be tolerated
@@ -349,3 +353,23 @@ def test_wall_and_heals_sums_the_same_intervals_a_timeline_draws():
         for a, b in spans if b
     )
     assert summed == wall["a"]
+
+
+def test_a_heal_round_closes_the_interval_it_ends():
+    """A blocking gate emits `running` then `heal-round`, never a terminal
+    status. Skipping heal-round left that attempt's interval open forever, so a
+    healed gate drew a bar to `now` and its table twin reported the age of the
+    run dir as work — 30m25s on a four-minute run, seen in a screenshot."""
+    events = [
+        _ev("g", "running", "2026-08-01T10:00:00Z"),
+        _ev("g", "heal-round", "2026-08-01T10:00:30Z"),
+        _ev("g", "running", "2026-08-01T10:02:00Z"),
+        _ev("g", "done", "2026-08-01T10:02:10Z"),
+    ]
+    assert cost_report.node_intervals(events) == {
+        "g": [("2026-08-01T10:00:00Z", "2026-08-01T10:00:30Z"),
+              ("2026-08-01T10:02:00Z", "2026-08-01T10:02:10Z")],
+    }
+    wall, heals = cost_report.wall_and_heals(events)
+    assert wall == {"g": 40.0}          # 30s + 10s, both attempts counted
+    assert heals == {"g": 1}            # and the heal is still tallied once

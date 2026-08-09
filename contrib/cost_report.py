@@ -329,15 +329,30 @@ def node_intervals(events: list[dict]) -> dict[str, list[tuple[str, str | None]]
     of which minutes were work. A timeline draws one segment per interval and
     `wall_and_heals` sums the same intervals, so the picture and the number
     cannot disagree.
+
+    An interval closes on a terminal status OR on `heal-round`, which is how a
+    blocking gate's attempt ends. It stays open only when the run really did
+    stop mid-node — a crash, or a node running right now.
     """
     out: dict[str, list[tuple[str, str | None]]] = {}
     open_idx: dict[str, int] = {}
     for e in events:
         node, status = e.get("node"), e.get("status")
-        if not node or status == "heal-round":
+        if not node:
             continue
         ts = e.get("ts", "")
         if _ts(ts) is None:
+            continue
+        if status == "heal-round":
+            # A heal round is how THAT attempt ended: the gate emitted a
+            # blocking verdict and the engine sent its targets back. Skipping
+            # it left the attempt's interval open forever, so a healed gate
+            # drew a bar to `now` and reported a duration of half an hour on a
+            # four-minute run. (The heal COUNT is tallied separately, in
+            # `wall_and_heals`, so closing here changes no counter.)
+            i = open_idx.pop(node, None)
+            if i is not None:
+                out[node][i] = (out[node][i][0], ts)
             continue
         if status == "running":
             # A second `running` without a terminal between (a crash, then a

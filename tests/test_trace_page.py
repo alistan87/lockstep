@@ -950,3 +950,26 @@ def test_the_raw_record_is_reachable_from_the_page(tmp_path):
     assert "show the raw record" in body
     for gloss in mission_server.L3_GLOSSARY.values():
         assert html.escape(gloss) in body, gloss
+
+
+def test_a_stale_open_interval_is_not_measured_to_now(tmp_path):
+    """An interval left open by a crash belongs to a step that is NOT running.
+    Measuring it to `now` grows forever: the bar stretches across the plot and
+    the twin reports the age of the run dir as work."""
+    run = page_run(tmp_path)
+    # produce is `done`, but its last interval never got a terminal event
+    (run / "events.jsonl").write_text(
+        json.dumps({"ts": _iso(0), "node": "produce", "status": "running"}) + "\n",
+        encoding="utf-8")
+    wf = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
+    row = next(r for r in wf["rows"] if r["node_id"] == "produce")
+    assert row["worked"] == "", "a stale interval contributes no duration"
+    assert row["segments"][0]["open"] is False, "and is not drawn as still running"
+
+    # ...while a step that really is running still draws to now
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["produce"]["status"] = "running"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    wf2 = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
+    row2 = next(r for r in wf2["rows"] if r["node_id"] == "produce")
+    assert row2["worked"] == "18m00s" and row2["segments"][0]["open"] is True
