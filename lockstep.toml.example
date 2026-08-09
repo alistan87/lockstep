@@ -50,3 +50,18 @@ prompt_via = "argv"
 [executors.local-coder]
 argv = ["ollama", "run", "qwen2.5-coder:14b", "--nowordwrap", "{prompt}"]
 prompt_via = "stdin"
+
+# THE MODEL IS PER NODE, NOT PER FLOW. One stanza per model; a node picks with
+# `spec.executor`, and nothing else in the flow changes. Here the same local
+# models reached through pi, which lists ollama as a provider — so this costs
+# nothing either, and a flow can mix harnesses as freely as it mixes models.
+# flows/demo/sudoku-local.tg.json runs its solver on the 35B (the job that
+# needs it) and its CLI on a 14B through pi (the job that does not).
+[executors.local-coder-big]
+argv = ["ollama", "run", "qwen3.6:35b", "--nowordwrap", "--hidethinking", "{prompt}"]
+prompt_via = "stdin"
+
+[executors.pi-coder]
+argv = ["pi.cmd", "-p", "--no-session", "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
+prompt_via = "stdin"          # not argv: a corrective re-spawn's prompt is several times
+                              # the original and Windows caps a command line near 32k

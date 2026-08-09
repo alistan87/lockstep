@@ -13,7 +13,16 @@ passes or does not:
     every row, column and box a permutation of 1..9;
   - `generate` returns a 9x9 grid with at least 17 clues (below that no puzzle
     has a unique solution) and no clue that breaks a rule;
-  - a generated puzzle is solvable by `solve`.
+  - a generated puzzle is solvable by `solve`;
+  - a generated puzzle has EXACTLY ONE solution. A grid with two is not a
+    puzzle. Counted with the gate's OWN solver, not the module's: asking a
+    model's solver to certify its own generator would check nothing;
+  - successive puzzles VARY. Three calls must give at least two distinct grids
+    and, separately, at least two distinct SOLUTIONS. The second half is the
+    one that bites: a generator that solves an empty grid deterministically and
+    then removes cells produces different-looking puzzles that all complete to
+    the same canonical 1-2-3/4-5-6/7-8-9 board, and only comparing solutions
+    catches that.
 
 EVERY ONE OF THOSE RUNS IN A CHILD PROCESS WITH A CLOCK ON IT. Model-written
 backtracking loops forever surprisingly often, and a gate that hangs is worse
@@ -41,7 +50,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from lockstep.gates._common import emit, finding  # noqa: E402
 
-PROBE_TIMEOUT_S = 25
+PROBE_TIMEOUT_S = 90
+SAMPLES = 3          # generate() calls compared for variety
 ROWS = range(9)
 SOLVABLE = [
     [5, 3, 0, 0, 7, 0, 0, 0, 0], [6, 0, 0, 1, 9, 5, 0, 0, 0],
@@ -89,6 +99,53 @@ def illegal_clues(g) -> str | None:
         if len(filled) != len(set(filled)):
             return f"{name} repeats a clue: {vals}"
     return None
+
+
+def solutions(grid, cap: int = 2) -> list:
+    """Up to `cap` distinct completions, by the GATE's own backtracking.
+
+    Picks the most-constrained empty cell at each step, so counting to two is
+    fast even on a sparse grid. Deliberately independent of the module under
+    test — a second opinion is the entire point of counting here.
+    """
+    g = [row[:] for row in grid]
+    found: list = []
+
+    def candidates(r: int, c: int) -> list:
+        used = set(g[r]) | {g[i][c] for i in ROWS}
+        br, bc = 3 * (r // 3), 3 * (c // 3)
+        used |= {g[br + i][bc + j] for i in range(3) for j in range(3)}
+        return [v for v in range(1, 10) if v not in used]
+
+    def step() -> None:
+        if len(found) >= cap:
+            return
+        best = None
+        for r in ROWS:
+            for c in ROWS:
+                if g[r][c] == 0:
+                    cs = candidates(r, c)
+                    if not cs:
+                        return                       # dead end
+                    if best is None or len(cs) < len(best[2]):
+                        best = (r, c, cs)
+                    if len(cs) == 1:
+                        break
+            if best is not None and len(best[2]) == 1:
+                break
+        if best is None:
+            found.append([row[:] for row in g])      # a full grid
+            return
+        r, c, cs = best
+        for v in cs:
+            g[r][c] = v
+            step()
+            g[r][c] = 0
+            if len(found) >= cap:
+                return
+
+    step()
+    return found
 
 
 def _completion(returned, grid):
@@ -161,7 +218,45 @@ def probe(path: str) -> dict:
     if again is None or illegal_completion(again):
         return {"stage": "round-trip", "ok": False,
                 "detail": f"solve() did not legally complete the {clues}-clue puzzle it was given"}
-    return {"stage": "done", "ok": True, "detail": "", "clues": clues}
+
+    # --- exactly one solution, counted by this gate ----------------------
+    found = solutions(puzzle, cap=2)
+    if not found:
+        return {"stage": "uniqueness", "ok": False,
+                "detail": f"the {clues}-clue puzzle has NO solution"}
+    if len(found) > 1:
+        where = next((f"r{r + 1}c{c + 1} can be {found[0][r][c]} or {found[1][r][c]}"
+                      for r in ROWS for c in ROWS if found[0][r][c] != found[1][r][c]), "")
+        return {"stage": "uniqueness", "ok": False,
+                "detail": f"the {clues}-clue puzzle has at least two solutions ({where})"}
+
+    # --- and successive puzzles vary -------------------------------------
+    grids = {tuple(map(tuple, puzzle))}
+    solved = {tuple(map(tuple, found[0]))}
+    for _ in range(SAMPLES - 1):
+        try:
+            nxt = mod.generate()
+        except Exception:
+            return {"stage": "generate", "ok": False,
+                    "detail": traceback.format_exc(limit=3).strip().splitlines()[-1]}
+        if not is_grid(nxt):
+            return {"stage": "generate-shape", "ok": False,
+                    "detail": f"a later call returned {type(nxt).__name__}"}
+        got = solutions(nxt, cap=1)
+        if not got:
+            return {"stage": "uniqueness", "ok": False,
+                    "detail": "a later generate() produced a grid with no solution"}
+        grids.add(tuple(map(tuple, nxt)))
+        solved.add(tuple(map(tuple, got[0])))
+    if len(grids) < 2:
+        return {"stage": "variety-puzzle", "ok": False,
+                "detail": f"{SAMPLES} calls to generate() returned the same grid every time"}
+    if len(solved) < 2:
+        return {"stage": "variety-solution", "ok": False,
+                "detail": f"{SAMPLES} calls gave {len(grids)} different puzzles, and every one "
+                          f"of them completes to the SAME solution"}
+    return {"stage": "done", "ok": True, "detail": "", "clues": clues,
+            "variety": f"{len(grids)} distinct puzzles, {len(solved)} distinct solutions"}
 
 
 # ---------------------------------------------------------------- the gate
@@ -178,6 +273,16 @@ FIX = {
     "generate-legal": "Remove cells from a SOLVED grid; never place clues at random.",
     "generate-clues": "Keep at least 25 clues.",
     "round-trip": "generate() must remove cells from a grid solve() can complete.",
+    "uniqueness": "A sudoku has exactly ONE solution. Remove cells one at a time in random "
+                  "order and, after each removal, count the solutions of the grid so far; if "
+                  "there is more than one, put that cell back and carry on with the next.",
+    "variety-puzzle": "Choose the cells to remove at random on every call (use the `random` "
+                      "module) so two calls cannot return the same grid.",
+    "variety-solution": "Randomise the SOLVED grid before you remove anything: shuffle the "
+                        "candidate digits inside the backtracking, or shuffle the rows, columns "
+                        "and bands of a base grid. Solving an empty grid the same way every "
+                        "time always yields the same board, so every puzzle cut from it has "
+                        "the same solution.",
     "timeout": "Use plain backtracking that returns as soon as the grid is full, and build "
                "the puzzle by removing a FIXED number of cells from one solved grid. Do not "
                "search for a minimal puzzle and do not re-check uniqueness in a loop.",
@@ -194,6 +299,9 @@ CLAIM = {
     "generate-legal": "generate() produced a puzzle that breaks the rules",
     "generate-clues": "generate() left too few clues",
     "round-trip": "a generated puzzle is not solvable by solve()",
+    "uniqueness": "the generated puzzle does not have exactly one solution",
+    "variety-puzzle": "generate() returns the same puzzle every time",
+    "variety-solution": "every generated puzzle has the same solution",
     "timeout": "the module does not finish",
 }
 
@@ -229,7 +337,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.get("ok"):
         return emit([], f"imports, solves a known grid, and generates a legal "
-                        f"{report.get('clues')}-clue puzzle that solve() completes")
+                        f"{report.get('clues')}-clue puzzle with exactly one solution "
+                        f"({report.get('variety')})")
     stage = report.get("stage", "import")
     return emit([bad(CLAIM.get(stage, stage), report.get("detail", ""),
                      FIX.get(stage, FIX["import"]), rel)], "")

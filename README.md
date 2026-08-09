@@ -139,11 +139,26 @@ argv = ["ollama", "run", "qwen2.5-coder:14b", "--nowordwrap", "{prompt}"]
 prompt_via = "stdin"          # omit json_field: this harness speaks raw stdout
 ```
 
-`flows/demo/sudoku-local.tg.json` is the worked example — it writes a playable
-sudoku with no network, no credential and no token cost. It is also the honest
-demonstration of what the machine checks are for: `contrib/demo/sudoku_check.py`
-imports what the model produced and runs it (in a child process with a clock on
-it, because model-written backtracking loops forever surprisingly often), and a
+**The model is per NODE, not per flow.** One stanza per model, chosen with
+`spec.executor`. pi lists ollama as a provider, so a flow can mix models *and*
+harnesses at zero cost:
+
+```toml
+[executors.pi-coder]
+argv = ["pi.cmd", "-p", "--no-session", "--provider", "ollama",
+        "--model", "qwen2.5-coder:14b", "{prompt}"]
+prompt_via = "stdin"
+```
+
+`flows/demo/sudoku-local.tg.json` is the worked example — a playable sudoku with
+no network, no credential and no token cost, whose solver runs on a 35B through
+ollama and whose CLI runs on a 14B through pi, because the second job is
+smaller. It is also the honest demonstration of what a machine check is for:
+`contrib/demo/sudoku_check.py` runs what the model produced (in a child process
+with a clock on it, because model-written backtracking loops forever
+surprisingly often) and holds it to properties a sudoku either has or does not —
+including that a puzzle has **exactly one solution** and that successive puzzles
+**vary**, both judged by the gate's own solver rather than the module's. A
 BLOCK hands its findings back to the generator as the next prompt.
 
 ## Driving it for someone who does not code (the cockpit)
