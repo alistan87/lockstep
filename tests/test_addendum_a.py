@@ -5,6 +5,7 @@ offline without a model (A.7.3 + A.7.5)."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from lockstep.registry import ExecutorStanza
 from lockstep.state import load_state
@@ -200,3 +201,59 @@ def test_verdict_file_gate_passes_when_clean(tmp_path, git_repo):
     h = build(tmp_path, verdict_flow({}), git_repo)
     assert h.engine.run() == 0
     assert load_state(h.run_dir).verdicts["gate"] == "pass"
+
+
+# ---------------------------------------- note 3: readonly on pi, resolved
+
+PI_READONLY_ARGV = ["--tools", "read,grep,find,ls,submit_result"]
+
+
+def _readonly_flow() -> dict:
+    return {
+        "name": "pi-readonly",
+        "nodes": [{"id": "review", "kind": "harness", "final": True,
+                   "spec": {"task": "review it", "readonly": True}}],
+    }
+
+
+def _codes_for(stanza) -> list[str]:
+    from lockstep.executors.harness import HarnessExecutor
+    from lockstep.registry import Registry
+    from lockstep.taskgraph import TaskGraph, verify_flow
+
+    cfg = make_config(pi=stanza)
+    reg = Registry()
+    reg.register(HarnessExecutor(config=cfg, repo_root="."))
+    return [i.code for i in verify_flow(TaskGraph.model_validate(_readonly_flow()),
+                                        registry=reg, config=cfg)]
+
+
+def test_a_readonly_pi_node_used_to_be_a_verification_error():
+    """ADDENDUM-A note 3 parked this: an extension `tool_call` gate could be
+    pi's readonly enforcement, but §6.11 requires ARGV-VISIBLE enforcement, and
+    pi had none — so readonly nodes on pi were a verification error and
+    reviewers could not fan out in parallel there."""
+    assert "readonly-unenforced" in _codes_for(ExecutorStanza(argv=[PY, "-c", "pass"]))
+
+
+def test_pi_tools_allowlist_is_argv_visible_readonly_enforcement():
+    """pi 0.83.0 takes `--tools`, an allowlist applied to built-in, extension
+    and custom tools. That IS argv-visible enforcement, so §6.11 is satisfied
+    and `spec.readonly: true` is legal on pi. Verified against live pi with a
+    control: unrestricted the model created the file, with the allowlist it did
+    not — while still replying "DONE", which is why the driver validates
+    independently of what the model claims."""
+    codes = _codes_for(ExecutorStanza(argv=[PY, "-c", "pass"],
+                                      readonly_argv=PI_READONLY_ARGV))
+    assert "readonly-unenforced" not in codes
+
+
+def test_the_allowlist_keeps_the_extensions_tool():
+    """`--tools` is an allowlist across EXTENSION tools too, so a bare readonly
+    list would silently disable the guard extension's `submit_result` — the one
+    thing A.3.2 exists to provide. Naming a tool that is not installed is
+    harmless (checked against live pi), so it belongs in the list either way."""
+    assert "submit_result" in PI_READONLY_ARGV[1]
+    example = (Path(__file__).resolve().parents[1] / "lockstep.toml.example").read_text(
+        encoding="utf-8")
+    assert 'readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]' in example

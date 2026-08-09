@@ -269,6 +269,7 @@ class HarnessExecutor:
                 "node_id": node.id,
                 "role": node.role,
                 "contract": node.contract or "",
+                "repo_root": str(Path(self.repo_root).resolve()),
             },
         )
 

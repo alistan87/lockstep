@@ -25,9 +25,15 @@ def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
     and write deterministic verdicts — enforce, never enable. WORKSPACE_SCOPE
     carries the resolved cwd until a dedicated scope field exists (r7).
     CONTRACT names the node's output contract (A.3.2) so an extension can
-    offer the matching submit_result schema; empty when the node has none."""
+    offer the matching submit_result schema; empty when the node has none.
+    REPO_ROOT is what WRITE_SCOPE's entries are relative to — without it a
+    guard has to resolve them against the process cwd, which is only the same
+    thing while no node sets `spec.cwd`, and silently over-blocks when one
+    does. Over-blocking a CORRECT agent is the failure ADDENDUM-A A.1 forbids,
+    so the guard needs the root stated rather than inferred."""
     return {
         "LOCKSTEP_PHASE_DIR": str(phase_dir.resolve()),
+        "LOCKSTEP_REPO_ROOT": str(work.meta.get("repo_root", "")),
         "LOCKSTEP_NODE_ID": str(work.meta.get("node_id", "")),
         "LOCKSTEP_ROLE": str(work.meta.get("role", "")),
         "LOCKSTEP_WORKSPACE_SCOPE": str(work.meta.get("cwd", "")),
@@ -108,7 +114,8 @@ class ShellExecutor:
             # at --max-workers 3).
             exclusive=["tree"],
             meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role,
-                  "contract": node.contract or "", "writes": list(spec.writes)},
+                  "contract": node.contract or "", "writes": list(spec.writes),
+                  "repo_root": str(Path(self.repo_root).resolve())},
         )
 
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:

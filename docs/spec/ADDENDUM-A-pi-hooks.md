@@ -63,6 +63,43 @@ resource: docs/spec/ADDENDUM-A-pi-hooks.md
 > driver code: a deterministic shell gate reads the verdict file — the spec's
 > preferred gate form.
 
+> **Resolved 2026-08-09, against live pi 0.83.0.** Three of the notes above
+> were parked on missing pi capability or unverified code. Each was checked
+> with a CONTROL run, because two of the defects found were silent:
+>
+> - **Note 3 (readonly on pi) is closed.** pi takes `--tools`, an argv-visible
+>   allowlist over built-in, extension and custom tools — which is exactly the
+>   enforcement SPEC §6.11 requires, so `spec.readonly: true` is now legal on
+>   pi via `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]`.
+>   Verified: unrestricted, the model created the file; with the allowlist it
+>   did not, while still replying "DONE". `submit_result` is named in the list
+>   because the allowlist covers EXTENSION tools too and would otherwise
+>   remove A.3.2's own tool; naming an absent tool is harmless. Consequence
+>   worth having: readonly nodes drop the `tree` token, so reviewers fan out
+>   in parallel on pi for the first time.
+> - **Note 2's granularity complaint is answered.** The opt-in was "presence of
+>   the project-local extension", which is per-REPO. pi 0.83.0 loads an
+>   extension from `--extension <path>` (a `.pi/extensions/` drop-in was not
+>   discovered at all here), so the guard attaches PER STANZA from the argv:
+>   visible in the recorded spawn, and folded into the stanza digest, so
+>   attaching or removing it re-bills exactly the nodes whose enforcement
+>   changed. And note 2's substantive objection — that `cwd` is not a write
+>   boundary, so hard-blocking against it over-blocks a correct agent — is
+>   gone: the guard now blocks against the node's DECLARED `spec.writes`
+>   (`LOCKSTEP_WRITE_SCOPE`), resolved against a new `LOCKSTEP_REPO_ROOT`,
+>   which is the same boundary the driver enforces post-hoc.
+> - **A.7.2's "UNTESTED" is discharged for the scope gate only.** It did not
+>   work. Three corrections: `pi` is a parameter of a default-exported function,
+>   not a global (loud failure); a `tool_call` handler must RETURN
+>   `{block: true}` rather than mutate the event (silent); and the event names
+>   the tool in `toolName`, not `tool` (silent). The scope gate is now verified
+>   with a control — in-scope write lands, out-of-scope write blocked and
+>   recorded to `verdicts.jsonl`. **`submit_result` remains unverified.**
+>
+> The lesson generalises past pi: two of those three defects produced a guard
+> that loaded, ran, and enforced nothing. Only a control run — proving the
+> write would otherwise have landed — could tell that apart from success.
+
 # Lockstep Addendum A — Pi Extension Hooks Integration
 
 **Status:** Informative addendum: it does not amend the frozen Lockstep v1 spec (`docs/spec/SPEC.md`, revision 3, as amended by AMENDMENTS r4–r6), and `lockstep verify` enforces none of it. Nothing here changes the taskgraph format, CLI contract, exit codes, or phase lifecycle; the driver-side support it motivated (the `{phase_dir}` argv placeholder, node-identity env vars) is additive executor-config and spawn-environment surface, logged in the preamble. Within its scope this document is a binding working agreement for ALL Lockstep-driven nodes on the `pi` executor — not only Mimir flows — and for Mimir's interactive sessions: it records how Pi coding-agent extension hooks relate to Lockstep and constrains how extensions may be used so that harness replaceability is preserved.

@@ -281,6 +281,18 @@ What to know before you declare one:
   `phases/<node>/touched-<attempt>.txt`, with a count and that path on the
   record — useful evidence at an approval over a large change.
 
+
+**Retry on a request-metered subscription.** The harness default —
+`retry: {max: 2, backoff_ms: 60000}` — is sized for *transient* provider errors
+(429/529), where a minute of backoff outlives the incident. On a Copilot or
+similar subscription a 429 is often the opposite: quota exhausted, which does
+not clear in a minute, and two retries spend two more requests against a wall
+before the node fails anyway. The driver already names it — `provider
+limit/overload` plus a resume hint (AMENDMENTS-r5 B3) — so the cheaper posture
+on subscription-backed stanzas is `"retry": {"max": 0}` per node and a resume
+once quota returns. Keep the default where the harness is billed per token and
+a 429 really is a blip.
+
 ## Prompt craft for harness nodes
 
 - State the exact output the contract expects ("Your result MUST be ONLY a

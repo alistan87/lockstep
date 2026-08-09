@@ -34,7 +34,27 @@ readonly_argv = ["--disallowed-tools", "Edit,Write"]   # appended for spec.reado
 # _CONTRACT for in-harness enforcement extensions
 # (contrib/pi-extension/lockstep-guard.ts).
 argv = ["pi", "-p", "--mode", "json", "--no-session", "{prompt}"]
-prompt_via = "argv"
+prompt_via = "stdin"                       # not argv: a corrective re-spawn's prompt is
+                                           # several times the original and Windows caps
+                                           # a command line near 32k (verify --lint says so)
+# TOOLS ARE PART OF THE STANZA. pi takes `--tools`, an argv-visible allowlist,
+# which is exactly what SPEC §6.11 requires of readonly enforcement — so
+# `spec.readonly: true` is legal on pi, which ADDENDUM-A preamble note 3 had
+# parked as an r7 candidate. Verified against pi 0.83.0 with a control:
+# unrestricted the model created the file, with the allowlist it did not, while
+# still replying "DONE" — which is why enforcement is argv-level and the driver
+# validates whatever the model claims.
+#
+# readonly_argv is appended ONLY to nodes declaring `spec.readonly: true`, so
+# one stanza serves both: a writer gets full tools, a reviewer on the same
+# stanza gets the allowlist AND drops the `tree` token, which is what lets
+# reviewers fan out in parallel.
+#
+# `--tools` is an allowlist over EXTENSION tools too, so a bare readonly list
+# would disable the guard extension's `submit_result`; naming a tool that is
+# not installed is harmless (checked against live pi), so it stays either way.
+# grep/find/ls are off by default in pi and the allowlist turns them ON.
+readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 
 [executors.copilot-cli]
 argv = ["copilot", "-p", "{prompt}"]
@@ -65,3 +85,25 @@ prompt_via = "stdin"
 argv = ["pi.cmd", "-p", "--no-session", "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
 prompt_via = "stdin"          # not argv: a corrective re-spawn's prompt is several times
                               # the original and Windows caps a command line near 32k
+
+
+# A node whose input is INTERPOLATED needs no tools at all. That collapses an
+# agent loop into a single request, which is the largest saving available on a
+# request-metered subscription — bigger than any model choice.
+[executors.pi-reasoner]
+argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "--no-tools", "{prompt}"]
+prompt_via = "stdin"
+
+# The in-harness scope guard, attached PER NODE from the argv. `--extension` is
+# how pi 0.83.0 loads one (a `.pi/extensions/` drop-in was not discovered), and
+# argv is the better place for it anyway: it shows up in the recorded spawn, it
+# is per stanza rather than per repo — ADDENDUM-A preamble note 2's granularity
+# complaint — and it folds into the stanza digest, so attaching or removing the
+# guard re-bills exactly the nodes whose enforcement changed.
+# It blocks writes outside the node's declared `spec.writes`; a node that
+# declares none is unaffected.
+[executors.pi-guarded]
+argv = ["pi", "-p", "--mode", "json", "--no-session",
+        "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
