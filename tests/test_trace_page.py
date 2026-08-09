@@ -528,6 +528,41 @@ def test_the_cost_stack_hexes_are_the_validated_ones():
     assert len(mission_server.COST_HEX) == len(mission_server.COST_FIELDS)
 
 
+def test_the_palette_has_exactly_one_home():
+    """The stylesheet's cost slots are generated from COST_HEX, and the stack
+    and legend reference the slots — so the tuple the validator output is
+    pinned against is the only place a hex is written."""
+    sheet = mission_server.stylesheet()
+    for i, hexv in enumerate(mission_server.COST_HEX):
+        assert f"--c{i + 1}:{hexv};" in sheet
+    assert "COST_VARS" not in sheet
+    # no raw cost hex written out in the RULES (the recorded validator
+    # invocation in the comment is documentation, and is meant to be there)
+    import re
+    rules = re.sub(r"/\*.*?\*/", "", mission_server.CSS, flags=re.S)
+    assert "#d95926" not in rules
+
+
+def test_the_surface_the_palette_was_validated_against_is_the_one_it_renders_on():
+    """A surface change silently invalidates every contrast figure. This pins
+    the surface to the value in the comment recording the validator run."""
+    sheet = mission_server.stylesheet()
+    assert "--surface:#141517;" in sheet
+    assert '--surface "#141517"' in sheet, "the recorded validator invocation"
+    assert "ALL CHECKS PASS" in sheet
+
+
+def test_no_categorical_hue_is_used_as_chrome():
+    """Slot 1 is the sequential default and carries the spend meter's single
+    magnitude; slots 2-4 mean input/output/cache in the stack. A categorical
+    hue doing duty as chrome would give one colour two meanings on one page."""
+    import re
+    sheet = mission_server.stylesheet()
+    body = re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
+    users = [ln.strip() for ln in body.splitlines() if re.search(r"var\(--c[1-4]\)", ln)]
+    assert len(users) == 1 and users[0].startswith(".fill{"), users
+
+
 # ---------------------------------------------- the client renders nothing
 
 def test_no_step_word_and_no_time_string_is_rendered_by_client_code():

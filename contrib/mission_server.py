@@ -285,8 +285,9 @@ def cost_stack(run: dict | None) -> list[dict]:
     if not grand:
         return []
     return [
-        {"name": name, "hex": hexv, "value": value, "pct": 100.0 * value / grand}
-        for name, hexv, value in zip(COST_SERIES, COST_HEX, totals)
+        {"name": name, "hex": hexv, "slot": i + 1, "value": value,
+         "pct": 100.0 * value / grand}
+        for i, (name, hexv, value) in enumerate(zip(COST_SERIES, COST_HEX, totals))
     ]
 
 
@@ -464,136 +465,180 @@ def e(text) -> str:
 
 
 CSS = """
-:root{--plane:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink-2:#c3c2b7;--muted:#898781;
- --grid:#2c2c2a;--axis:#383835;--hairline:rgba(255,255,255,.10);
- --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--c1:#3987e5}
+/* CALM DENSITY, dark-first, after Linear's chrome: a near-black plane, cards a
+   hair lighter, separated by low-alpha hairlines rather than borders you can
+   see; small cool-grey type; a tight vertical rhythm; and NO chrome accent.
+
+   That last one is deliberate rather than austere. On this page every hue
+   already means something — four categorical slots for the cost stack, four
+   reserved status steps for state — so an accent introduced for selection
+   would be a fifth meaning competing with them. Chrome is ink and surface;
+   colour is data and state. Selection is a surface step, not a hue.
+
+   The DATA colours are unchanged and still validated. Re-run after ANY surface
+   change (this one was):
+     node scripts/validate_palette.js "#3987e5,#d95926,#199e70,#c98500" \
+          --mode dark --surface "#141517"          -> ALL CHECKS PASS
+   Every status step and every ink token gained contrast on the darker surface:
+   status critical 3.62 -> 3.80, muted 4.85 -> 5.62, secondary ink 9.72 -> 10.20. */
+:root{
+ --plane:#0b0c0d;      /* page */
+ --surface:#141517;    /* cards, and the chart surface the palette validates against */
+ --inset:#0e0f11;      /* evidence, pre blocks, the meter track */
+ --line:rgba(255,255,255,.07);
+ --line-2:rgba(255,255,255,.045);
+ --ink:#fff; --ink-2:#c3c2b7; --muted:#8a8f98;
+ --grid:#232529; --axis:#2e3136;
+ --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+ COST_VARS   /* generated from COST_HEX: one source, or the stylesheet and the
+                stack drift apart and only one of them is pinned by test */
+}
 *{box-sizing:border-box}[hidden]{display:none!important}
-body{margin:0;padding:28px 24px 64px;background:var(--plane);color:var(--ink);
- font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
+ font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+ -webkit-font-smoothing:antialiased}
 .wrap{max-width:1080px;margin:0 auto;transition:opacity .12s}
 .wrap.stale{opacity:.62}
-.top{display:flex;align-items:center;gap:12px;margin-bottom:22px;flex-wrap:wrap}
-.brand{font-weight:600;letter-spacing:.04em}
-.runid{color:var(--muted);font-variant-numeric:tabular-nums}
+.top{display:flex;align-items:center;gap:9px;margin-bottom:16px;flex-wrap:wrap}
+.brand{font-weight:600;letter-spacing:.02em;font-size:12.5px}
+.runid{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px}
 .spacer{flex:1}
-.chip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:999px;
- border:1px solid var(--hairline);background:var(--surface);color:var(--ink-2);font-size:13px}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;
+ border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font-size:12px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
 .dot.good{background:var(--good)}.dot.warn{background:var(--warning)}
 .dot.crit{background:var(--critical)}.dot.run{background:var(--ink)}
 .live .dot{animation:pulse 1.8s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
-.hero{font-size:27px;font-weight:600;line-height:1.3;margin:0 0 4px}
-.hero-sub{color:var(--muted);margin:0 0 22px;font-size:14px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
-.tile{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:13px 15px}
-.tile .k{color:var(--muted);font-size:12.5px;margin-bottom:5px}
-.tile .v{font-size:23px;font-weight:600}
-.card{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;
- padding:16px 18px;margin-bottom:14px}
-.card>h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 12px;letter-spacing:.02em}
-.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
-.meter-head .lab{color:var(--ink-2);font-size:14px}
-.meter-head .num{font-size:15px;font-variant-numeric:tabular-nums}
-.track{position:relative;height:10px;border-radius:5px;background:#123055}
-.fill{position:absolute;inset:0 auto 0 0;border-radius:5px;background:var(--c1)}
+.hero{font-size:21px;font-weight:600;line-height:1.32;letter-spacing:-.011em;margin:0 0 3px}
+.hero-sub{color:var(--muted);margin:0 0 16px;font-size:12.5px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;
+ margin-bottom:10px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:10px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.tile .k{color:var(--muted);font-size:11.5px;margin-bottom:3px}
+.tile .v{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.card>h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
+ letter-spacing:.02em}
+.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.meter-head .lab{color:var(--ink-2);font-size:13px}
+.meter-head .num{font-size:14px;font-variant-numeric:tabular-nums}
+.track{position:relative;height:6px;border-radius:3px;background:var(--inset);
+ border:1px solid var(--line-2)}
+.fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--c1)}
 .fill.over{background:var(--critical)}
-.ceil{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink-2);right:0}
-.meter-foot{color:var(--muted);font-size:12.5px;margin-top:8px}
-.decide{border-left:3px solid var(--warning)}
-.decide h2{color:var(--warning);font-size:14px}
-.ask{border-left:3px solid var(--c1)}
-.ask h2{color:var(--c1);font-size:14px}
-.evidence{background:var(--plane);border:1px solid var(--hairline);border-radius:8px;
- padding:14px 16px;margin:4px 0 12px;font:13.5px/1.6 ui-monospace,Consolas,monospace;
- color:var(--ink-2);white-space:pre-wrap}
-.stale-note{color:var(--warning);font-size:13px;margin:0 0 10px}
-.terminal-note{color:var(--muted);font-size:13px}
-.key-echo{color:var(--warning);font-size:13px;margin-top:8px}
-.cardhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.ceil{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink-2);right:0}
+.meter-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
+.decide{border-left:2px solid var(--warning)}
+.decide h2{color:var(--warning);font-size:12.5px}
+/* A question is not a decision, and it is not a severity either, so it takes
+   INK rather than a hue. Slot-1 blue here — which is what the first cut used —
+   would be the cost stack's "input" colour doing duty as chrome, and a
+   categorical hue meaning two things on one page is the collision the palette
+   rules exist to prevent. The words already say which kind of attention it is. */
+.ask{border-left:2px solid var(--line)}
+.ask h2{color:var(--ink-2);font-size:12.5px}
+.evidence{background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
+ padding:12px 14px;margin:2px 0 10px;
+ font:12.5px/1.6 ui-monospace,Consolas,monospace;color:var(--ink-2);white-space:pre-wrap}
+.stale-note{color:var(--warning);font-size:12.5px;margin:0 0 10px}
+.terminal-note{color:var(--muted);font-size:12.5px}
+.key-echo{color:var(--warning);font-size:12.5px;margin-top:7px}
+.cardhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .cardhead h2{margin:0}
-.viewswitch{display:flex;gap:6px;margin-left:auto}
-.btn{background:var(--plane);color:var(--ink-2);border:1px solid var(--axis);border-radius:7px;
- padding:5px 11px;font:inherit;font-size:13px;cursor:pointer}
-.btn[aria-pressed="true"]{background:#202020;color:var(--ink);border-color:var(--muted)}
-.steps{display:grid;gap:2px}
-.step{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:10px;
- padding:7px 8px;border-radius:7px}
-.step:hover{background:#212120}
-.step .ico{text-align:center;font-size:14px}
-.step .word{color:var(--ink-2);font-size:13.5px}
+.viewswitch{display:flex;gap:4px;margin-left:auto}
+.btn{background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:6px;
+ padding:4px 9px;font:inherit;font-size:12px;cursor:pointer}
+.btn:hover{color:var(--ink-2);background:rgba(255,255,255,.03)}
+.btn[aria-pressed="true"]{background:rgba(255,255,255,.06);color:var(--ink);
+ border-color:rgba(255,255,255,.14)}
+.steps{display:grid;gap:1px}
+.step{display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:9px;
+ padding:5px 7px;border-radius:6px}
+.step:hover{background:rgba(255,255,255,.03)}
+.step .ico{text-align:center;font-size:12.5px}
+.step .word{color:var(--muted);font-size:12.5px}
 .step .name,.wf-lab a{color:var(--ink);text-decoration:none}
 .step .name:hover,.wf-lab a:hover{text-decoration:underline}
 .ico.good{color:var(--good)}.ico.warn{color:var(--warning)}.ico.crit{color:var(--critical)}
 .ico.ser{color:var(--serious)}.ico.mut{color:var(--muted)}.ico.run{color:var(--ink)}
-.note{grid-column:2/-1;color:var(--ink-2);font-size:13px;border-left:2px solid var(--axis);
- padding-left:10px;margin:2px 0 4px}
+.note{grid-column:2/-1;color:var(--ink-2);font-size:12.5px;border-left:1px solid var(--axis);
+ padding-left:9px;margin:1px 0 3px}
 /* A STABLE SLOT, present from the first render even when it is empty. Every
    completion removes a row and increments `N finished`, at 1 Hz; if the
    counter line appeared only once there was something to count, the chrome
    below it would jump the first time a step finished. The prohibition is on
    CHROME jumping, not on the data changing — a row leaving is data. */
-.tail{color:var(--muted);font-size:13.5px;padding:8px 8px 0;min-height:29px}
+.tail{color:var(--muted);font-size:12.5px;padding:8px 7px 0;min-height:29px}
 @media (prefers-reduced-motion:no-preference){
  .step{animation:rowin .18s ease-out}
  @keyframes rowin{from{opacity:0}to{opacity:1}}
 }
-.wf-plot{position:relative;--gutter:250px}
+.wf-plot{position:relative;--gutter:236px}
 .wf{display:grid;grid-template-columns:var(--gutter) 1fr;gap:0 14px}
 .wf-row{display:contents}
-.wf-lab{display:flex;flex-direction:column;justify-content:center;height:38px;font-size:13.5px;
+.wf-lab{display:flex;flex-direction:column;justify-content:center;height:34px;font-size:12.5px;
  min-width:0}
-.wf-lab .n{display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;
+.wf-lab .n{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;
  white-space:nowrap}
-.wf-lab .w{color:var(--muted);font-size:12px;padding-left:22px;overflow:hidden;
+.wf-lab .w{color:var(--muted);font-size:11.5px;padding-left:19px;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
-.wf-track{position:relative;height:38px}
-.wf-track::before{content:"";position:absolute;left:0;right:0;top:13px;height:4px;
- background:#232322;border-radius:2px}
-.seg{position:absolute;top:13px;height:12px;min-width:3px;border-radius:4px}
+.wf-track{position:relative;height:34px}
+.wf-track::before{content:"";position:absolute;left:0;right:0;top:15px;height:4px;
+ background:var(--inset);border-radius:2px}
+.seg{position:absolute;top:12px;height:10px;min-width:3px;border-radius:4px}
 .seg.good{background:var(--good)}.seg.ser{background:var(--serious)}
 .seg.crit{background:var(--critical)}.seg.warn{background:var(--warning)}
 .seg.mut{background:var(--muted)}
 .seg.run{background:transparent;border:2px solid var(--ink)}
-.seg.open::after{content:"";position:absolute;right:-1px;top:-2px;bottom:-2px;width:34px;
+.seg.open::after{content:"";position:absolute;right:-1px;top:-2px;bottom:-2px;width:30px;
  background:linear-gradient(90deg,transparent,var(--surface));border-radius:4px}
-/* The hit area takes in the 2px gaps above and below and reaches ~28px, so a
-   1m step is not a 12px target. It is a pseudo-element, so it costs no layout. */
+/* The hit area takes in the 2px gaps above and below and reaches ~26px, so a
+   one-minute step is not a 10px target. A pseudo-element, so it costs no layout. */
 .seg::before{content:"";position:absolute;inset:-8px -2px;border-radius:6px}
 .seg:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
-.seg .tip{position:absolute;left:calc(100% + 8px);top:-3px;font-size:12px;color:var(--ink-2);
+.seg .tip{position:absolute;left:calc(100% + 8px);top:-3px;font-size:11.5px;color:var(--ink-2);
  white-space:nowrap;font-variant-numeric:tabular-nums}
 /* Hover and keyboard focus show the SAME thing. `title` would show on hover
    only, which would put a value behind a pointer. */
 .seg .hint{display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:3;
- background:var(--plane);border:1px solid var(--axis);border-radius:6px;padding:5px 9px;
- font-size:12px;color:var(--ink-2);white-space:nowrap}
+ background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 9px;
+ font-size:11.5px;color:var(--ink-2);white-space:nowrap}
 .seg.end .hint{left:auto;right:0}   /* clamped: a tip must not overflow the plot */
 .seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
-.wf-scale{position:absolute;left:calc(var(--gutter) + 14px);right:0;top:0;bottom:30px;
+.wf-scale{position:absolute;left:calc(var(--gutter) + 14px);right:0;top:0;bottom:28px;
  pointer-events:none}
 .gridline{position:absolute;top:0;bottom:0;width:1px;background:var(--grid)}
-.wf-axis{position:relative;height:26px;margin-top:4px;border-top:1px solid var(--axis);
+.wf-axis{position:relative;height:24px;margin-top:4px;border-top:1px solid var(--axis);
  margin-left:calc(var(--gutter) + 14px)}
-.tick{position:absolute;top:0;font-size:11.5px;color:var(--muted);transform:translateX(-50%);
+.tick{position:absolute;top:0;font-size:11px;color:var(--muted);transform:translateX(-50%);
  padding-top:5px;font-variant-numeric:tabular-nums}
-.stack{display:flex;gap:2px;height:14px;margin:4px 0 12px}
+.stack{display:flex;gap:2px;height:10px;margin:2px 0 10px}
 .stack>i{display:block;border-radius:3px}
-.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink-2)}
-.legend span{display:inline-flex;align-items:center;gap:7px}
-.sw{width:10px;height:10px;border-radius:3px;display:inline-block}
-table{border-collapse:collapse;width:100%;font-size:13.5px}
-th,td{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--grid);color:var(--ink-2)}
-th{color:var(--muted);font-weight:500}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:5px 10px 5px 0;border-bottom:1px solid var(--line-2);
+ color:var(--ink-2)}
+th{color:var(--muted);font-weight:500;font-size:11.5px}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
-details>summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px}
-pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,Consolas,monospace;color:var(--ink-2)}
-.feed{display:grid;gap:2px;font-size:13.5px;color:var(--ink-2)}
-.feed div{padding:3px 0}
-.foot{color:var(--muted);font-size:12.5px;margin-top:26px;text-align:center}
+details>summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px;
+ padding:3px 0;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"\203A ";display:inline-block;transition:transform .12s}
+details[open]>summary::before{transform:rotate(90deg)}
+pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospace;
+ color:var(--ink-2);background:var(--inset);border:1px solid var(--line-2);border-radius:6px;
+ padding:10px 12px}
+.feed{display:grid;gap:1px;font-size:12.5px;color:var(--ink-2)}
+.feed div{padding:2px 0}
+.foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
 body.offline .live .dot{animation:none;background:var(--muted)}
 @media (max-width:700px){.wf-plot{--gutter:118px}.wf-lab .w{padding-left:0}
  .seg .hint{white-space:normal;max-width:60vw}}
@@ -726,6 +771,14 @@ JS = """
   setInterval(tick, POLL_MS);
 })();
 """
+
+
+def stylesheet() -> str:
+    """`CSS` with the cost slots substituted from `COST_HEX`, so the validated
+    palette has exactly one home. It is `COST_HEX` because that is the tuple
+    the validator output is pinned against."""
+    slots = " ".join(f"--c{i + 1}:{hexv};" for i, hexv in enumerate(COST_HEX))
+    return CSS.replace("COST_VARS", slots)
 
 
 def client_js() -> str:
@@ -936,11 +989,11 @@ def _cost_card(run_dir: Path, stack: list[dict], usage: dict | None = None) -> s
     if stack:
         out.append('<div class="stack">')
         for s in stack:
-            out.append(f'<i style="background:{e(s["hex"])};width:{s["pct"]:.2f}%" '
+            out.append(f'<i style="background:var(--c{s["slot"]});width:{s["pct"]:.2f}%" '
                        f'title="{e(s["name"])} {s["value"]:,}"></i>')
         out.append('</div><div class="legend">')
         for s in stack:
-            out.append(f'<span><i class="sw" style="background:{e(s["hex"])}"></i>'
+            out.append(f'<span><i class="sw" style="background:var(--c{s["slot"]})"></i>'
                        f'{e(s["name"])} {s["value"]:,}</span>')
         out.append("</div>")
     else:
@@ -1091,7 +1144,7 @@ def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
         "<!doctype html>\n<meta charset=\"utf-8\">\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>MISSION - {e(name)}</title>\n"
-        f"<style>{CSS}</style>\n"
+        f"<style>{stylesheet()}</style>\n"
         f'<body data-run-token="{e(run_token(run_dir))}" data-event-cursor="{cursor}">\n'
         f'<div class="wrap">{body}</div>\n'
         f"<script>{client_js()}</script>\n"

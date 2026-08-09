@@ -9,3 +9,4 @@ dist/
 contrib/cost-fields.toml
 Deliverables/
 docs-manifest.json
+.cockpit-preview.html
