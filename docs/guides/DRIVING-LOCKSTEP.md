@@ -177,10 +177,11 @@ nodes, do not resume, and report what was spent.
   authoring guidance: `docs/guides/FLOW-AUTHORING.md`; worked examples + per-flow
   caveats: `flows/starter/README.md`.
 - Every spawned node carries `LOCKSTEP_NODE_ID/_ROLE/_WORKSPACE_SCOPE/
-  _WRITE_SCOPE/_VERDICT_FILE/_PHASE_DIR/_CONTRACT` in its environment
-  (`_WRITE_SCOPE` is the node's declared `spec.writes` as a JSON array, empty
-  when it declares none); on pi with the
-  project-local extension, out-of-scope writes are blocked in-session and
-  recorded to `verdicts.jsonl` (read by verdict-file gates). Extensions only
-  enforce — never route control flow through them
-  (`docs/spec/ADDENDUM-A-pi-hooks.md`).
+  _WRITE_SCOPE/_VERDICT_FILE/_PHASE_DIR/_CONTRACT/_REPO_ROOT` in its
+  environment (`_WRITE_SCOPE` is the node's declared `spec.writes` as a JSON
+  array, empty when it declares none; `_REPO_ROOT` is the absolute path those
+  relative globs resolve against). On pi with
+  `--extension contrib/pi-extension/lockstep-guard.ts` in the stanza's argv,
+  out-of-scope writes are blocked in-session and recorded to `verdicts.jsonl`
+  (read by verdict-file gates). Extensions only enforce — never route control
+  flow through them (`docs/spec/ADDENDUM-A-pi-hooks.md`).

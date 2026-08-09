@@ -196,7 +196,7 @@ $ contrib\start-cockpit.cmd                        # the only entry point, ever
 $ python contrib\plan_card.py <flow>               # consent, backed by prior runs
 $ pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the status board
 $ pwsh -File contrib\cockpit.ps1 -Tui               # or one process, keyboard-driven
-$ python contrib\mission_server.py                  # or the trace page on loopback, GET only
+$ python contrib\mission_server.py                  # or the MISSION page on loopback, GET only
 $ python contrib\quiescent.py <run_dir>             # is this safe to hand over?
 $ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Approve   # spawn the decision pane
 $ python contrib\cost_report.py --compact <run_dir> # spend, in honest units
@@ -210,7 +210,7 @@ with `cockpit.ps1`, and a test pins their glossaries to each other. **Decisions
 never leave the terminal**: the page has no form, no POST handler, and no route
 that writes.
 
-### The trace page
+### The MISSION page
 
 `contrib/mission_server.py` is one page with four levels of disclosure, aimed at
 being a surface a domain expert opens *by choice*:
@@ -248,6 +248,32 @@ Read `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` if you are the session
 driving it, and `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` — which is what the
 human was told, so it binds what you may say.
 
+## Tools are part of the stanza (pi, and cost on a metered plan)
+
+A harness's tool set is **argv**, which means it is configuration the driver
+records, hashes and can differ per node — not something you ask the model for
+in a prompt. pi takes `--tools` (allowlist), `--exclude-tools`,
+`--no-builtin-tools` and `--no-tools`; claude takes `--disallowedTools`.
+
+That is the lever behind three separate things:
+
+- **`spec.readonly` is real enforcement on pi.** `readonly_argv = ["--tools",
+  "read,grep,find,ls,submit_result"]` satisfies SPEC §6.11's argv-visible
+  requirement, so readonly nodes are legal on pi — and they drop the `tree`
+  token, so reviewers fan out in parallel instead of queueing. Name the node's
+  answer tool in the list: the allowlist covers extension tools too.
+- **Cost.** On a request-metered plan (Copilot and friends) the spend is round
+  trips, not tokens. A node that cannot edit cannot spend a round trip trying,
+  and a narrow tool list measurably shortens the loop. Pair it with
+  `"retry": {"max": 0}` on subscription-backed stanzas — a 429 there usually
+  means quota, which does not clear in a minute's backoff (FLOW-AUTHORING has
+  the full argument).
+- **Blast radius.** Tools the node does not need are damage it cannot do,
+  enforced before the model is asked to behave.
+
+Use the narrowest list a node can still do its job with; make every
+judgement-producing node (review, triage, estimate, plan) readonly.
+
 ## Pi extension hooks (optional, pi executor only)
 
 `contrib/pi-extension/lockstep-guard.ts` is an in-session enforcement layer
@@ -255,10 +281,18 @@ for pi: a `tool_call` scope guard that blocks-and-records deterministic
 verdicts (`verdicts.jsonl`, read by a shell gate), and a contract-keyed
 `submit_result` tool. Governing rule (`docs/spec/ADDENDUM-A-pi-hooks.md`):
 extensions may only *enforce*, never *enable* — deleting the extension must
-not change what a correct agent can accomplish on any executor. Install
-project-locally (`.pi/extensions/`), then live-verify with
-`lockstep run flows/starter/pi-guard-smoke.tg.json` (re-verify with `--fresh`
-after any change; it is UNTESTED against live pi until you do).
+not change what a correct agent can accomplish on any executor.
+
+Attach it **per stanza**, from argv — `--extension contrib/pi-extension/lockstep-guard.ts`
+(see the `pi-guarded` stanza in `lockstep.toml.example`). Loading it that way
+puts it in the recorded spawn and in the stanza digest, so attaching or
+removing the guard re-bills exactly the nodes whose enforcement changed. It
+blocks writes outside the node's declared `spec.writes`, resolved against
+`LOCKSTEP_REPO_ROOT`; a node that declares no `writes` is not gated.
+
+The scope block is verified against live pi 0.83.0 with a control run.
+Re-verify after any pi upgrade or any edit to the extension:
+`lockstep run flows/starter/pi-guard-smoke.tg.json --fresh`.
 
 ## Exit codes (frozen)
 

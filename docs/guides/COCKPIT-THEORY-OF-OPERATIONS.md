@@ -369,7 +369,7 @@ Views, all read-only and none of them a second source of truth:
 ```powershell
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow    # the shipped default
 pwsh -File contrib\cockpit.ps1 -Tui                     # one process, keyboard
-python contrib\mission_server.py                        # the trace page (§7.1), loopback
+python contrib\mission_server.py                        # the MISSION page (§7.1), loopback
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>
 ```
 
@@ -378,7 +378,7 @@ pinned against `cockpit.ps1`'s by `tests/test_mission_render.py` — the DE was
 told that when two surfaces disagree MISSION is right, and that stops being a
 usable instruction the moment there are two MISSIONs that can drift.
 
-### 7.1 The trace page
+### 7.1 The MISSION page
 
 `mission_server.py` is one page with four disclosure levels, aimed at being a
 surface the domain expert opens *by choice*. There is no tier split and no

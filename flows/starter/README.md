@@ -15,7 +15,7 @@ codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
 
 | Flow | Spends tokens | What it does |
 |---|---|---|
-| `pi-guard-smoke.tg.json` | ~2 spawns | Live-verifies the pi extension (ADDENDUM-A): env identity reaches the session, the `tool_call` scope guard blocks an out-of-scope write and records a verdict, `LOCKSTEP_CONTRACT` drives structured output. PASS = guard live. BLOCK = extension missing/drifted (lockstep still safe — you only lose the fast-fail layer). |
+| `pi-guard-smoke.tg.json` | ~2 spawns | Live-verifies the pi scope guard (ADDENDUM-A): env identity reaches the session, the `tool_call` guard blocks a write outside the node's declared `spec.writes` and records a verdict, `LOCKSTEP_CONTRACT` drives structured output. Run it with `--executor-default pi-guarded`. PASS = guard live. BLOCK = extension not loaded or the hook API drifted (lockstep still safe — you only lose the fast-fail layer). |
 | `plan-adversarial.tg.json` | up to ~12 | Author writes `PLAN.md` → two adversarial reviewers (feasibility/risk, completeness/scope) → arbiter gate **heals** the plan (≤2 rounds, findings folded into the author's re-prompt) → **human approval**. |
 | `implement-heal.tg.json` | up to ~15 | Implementer works the task (follows `PLAN.md` if present) → deterministic **lint+pytest shell gate heals** the implementer (≤2 rounds, failure output in the re-prompt) → adversarial diff review → deterministic gate blocks on blocker/major findings (no auto-heal: a human fixes/decides, then `resume`). |
 | `sdlc-e2e.tg.json` | up to ~30 | The full chain: plan → adversarial plan review → healing plan gate → **approval** → implement → healing lint+pytest gate → adversarial diff review → block-on-major gate → closing report. |
@@ -32,7 +32,7 @@ codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
 lockstep verify flows\starter\sdlc-e2e.tg.json          # exit 5 on schema errors
 lockstep run    flows\starter\sdlc-e2e.tg.json --dry-run --arg "task=..."   # show waves, spawn nothing
 
-lockstep run flows\starter\pi-guard-smoke.tg.json
+lockstep run flows\starter\pi-guard-smoke.tg.json --executor-default pi-guarded
 lockstep run flows\starter\plan-adversarial.tg.json --arg "task=Add CSV export to the report module"
 lockstep run flows\starter\implement-heal.tg.json  --arg "task=Add CSV export to the report module"
 lockstep run flows\starter\sdlc-e2e.tg.json        --arg "task=Add CSV export to the report module"
@@ -75,18 +75,33 @@ an approval node: `plan-adversarial` and `sdlc-e2e`.
   typical `pi` stanza has none — flows using it would fail `verify` there.
   Cost: the two reviewers in `plan-adversarial` (and likewise in
   `proposal-gate`) share the `tree` exclusion and serialize (the
-  `exclusive-collision` warning is expected). If your stanza declares
-  `readonly_argv`, add `"readonly": true` to reviewer/arbiter/report nodes to
-  parallelize them and enforce read-only at the argv level.
-- **`pi-guard-smoke` assumptions**: the extension is installed project-locally
-  at `.pi/extensions/lockstep-guard.ts`; the flow lives under `flows/` of the
-  target repo (`scope-probe` narrows `spec.cwd` to `flows` and tries to write
-  `../pi-guard-escape.tmp` — adjust `cwd` if your layout differs). The
-  `guard-gate` itself removes the escape file after checking, so a failed
-  smoke never poisons later runs. **Re-probe with `run --fresh`** after
-  installing or fixing the extension: extension presence is invisible to
-  `input_hash`, so a plain re-run attaches to the old lineage and skips the
-  probe. Session-capture (`--session-dir {phase_dir}`) is a separate,
+  `exclusive-collision` warning is expected).
+
+  **Worth adding to your stanza rather than living with the cost.** pi's
+  `--tools` is an argv-visible allowlist, so
+  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` satisfies
+  §6.11; claude uses `--disallowedTools`. Then add `"readonly": true` to the
+  reviewer/arbiter/report nodes: they parallelize, they cannot corrupt the
+  tree, and on a request-metered plan a node that cannot edit cannot spend a
+  round trip trying to.
+- **`pi-guard-smoke` assumptions**: **run it with the guarded stanza** —
+  `--executor-default pi-guarded`. The flow deliberately pins no executor, so
+  that it verifies on a machine that has no such stanza; the cost is that a
+  plain run probes whatever your default is and reports the guard missing.
+  `scope-probe` declares `spec.writes: ["flows/pi-guard-*.tmp"]` and tries to
+  write `../pi-guard-escape.tmp` from `cwd: flows`. **The declared scope is
+  what makes the probe meaningful** — the guard does not gate a node that
+  declares no `writes`, so dropping that field silently turns the whole smoke
+  test into a no-op that reports failure. The `guard-gate`
+  (`python -m lockstep.gates.pi_guard_smoke`) removes the escape file after
+  checking, so a failed smoke never poisons later runs.
+
+  If the extension is absent entirely the write lands, and the **driver's** own
+  scope check quarantines it and fails `scope-probe` before the gate runs: the
+  message reads `write scope violated`, which is the same diagnosis from the
+  engine instead of the gate. **Re-probe with `run --fresh`** after *editing*
+  the extension: its path is in argv and so in the stanza digest, but its
+  contents are not, so a plain re-run attaches to the old lineage and skips. Session-capture (`--session-dir {phase_dir}`) is a separate,
   stanza-level opt-in — verify fresh-session-per-spawn behavior first
   (ADDENDUM-A preamble note 1); this flow does not test it.
 - **Approvals need a TTY.** `approve-plan` auto-rejects (exit 6) on non-TTY

@@ -68,8 +68,24 @@ before spending tokens.
   auto-reject, exit 6. Never resume-skipped.
 - **Readonly**: `spec.readonly: true` lets harness nodes fan out in parallel
   (drops the `tree` exclusion) but the executor stanza MUST declare
-  `readonly_argv` (`readonly-unenforced`). Readonly nodes answer on stdout —
-  they cannot write result files.
+  `readonly_argv` (`readonly-unenforced`) — §6.11 wants the enforcement
+  *visible in argv*, so an honour-system prompt does not qualify. Readonly
+  nodes answer on stdout — they cannot write result files.
+
+  What `readonly_argv` looks like per harness: claude takes
+  `--disallowedTools`; **pi takes `--tools`, an allowlist** —
+  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]`. Name
+  `submit_result` (or whatever tool the node answers with) explicitly: pi's
+  allowlist covers extension and custom tools too, so omitting it removes the
+  node's own answer channel. Naming a tool the harness does not have is
+  harmless. Use the *narrowest* list that still lets the node do its job —
+  this is the single cheapest reliability lever on a metered subscription,
+  because a reviewer that cannot edit cannot burn a round trip trying.
+
+  Readonly is not only for reviewers. Any node whose product is a *judgement*
+  — triage, estimation, planning, a verdict — should be readonly: it fans out,
+  it cannot corrupt the tree, and it cannot be sent back for rework over a
+  stray file.
 
 ## Advisory lints (`verify --lint`)
 
@@ -114,6 +130,11 @@ starter flows work against any target repo where lockstep is importable.
 - `coverage_delta --baseline F` — `totals.percent_covered` non-regression.
 - `fingerprint_check <orders.json>` — every entry's file still matches the
   fingerprint it was approved against (the codemod-apply staleness gate).
+- `pi_guard_smoke [--probe-node ID] [--escape-path P]` — did the pi extension
+  actually block the probe's out-of-scope write and record a verdict
+  (ADDENDUM-A A.3.3: it reads the guard's `verdicts.jsonl`, never the model's
+  claim about being blocked). Removes the escape file it finds, so a failed
+  smoke does not poison the next run.
 
 ## Writing a gate that earns its place
 

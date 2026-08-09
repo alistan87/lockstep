@@ -40,7 +40,12 @@
  * All control flow stays in Lockstep: this extension never retries, never
  * dispatches, never approves, never decides.
  *
- * Install: copy to .pi/extensions/ (project-local) or ~/.pi/agent/extensions/.
+ * Load it per STANZA, from argv — see the note on the default export below:
+ *     argv = ["pi", "-p", "--extension", "contrib/pi-extension/lockstep-guard.ts", ...]
+ * (`lockstep.toml.example`, stanza `pi-guarded`). Directory drop-ins
+ * (.pi/extensions/, ~/.pi/agent/extensions/) are in pi's docs but were not
+ * observed to load in 0.83.0 here, and argv is the better mechanism anyway:
+ * per-stanza rather than per-repo, and visible in the recorded spawn.
  * Activation is keyed on LOCKSTEP_NODE_ID being present in the environment —
  * interactive pi sessions without Lockstep env vars are left untouched except
  * for the (UI-gated) working-set status line.
@@ -123,6 +128,27 @@ function under(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent + path.sep);
 }
 
+/** The literal directory prefix of a `spec.writes` entry.
+ *
+ *  The driver matches `spec.writes` with fnmatch; this guard prefix-matches.
+ *  Where the two differ the guard MUST be the more permissive one. Blocking a
+ *  write the driver would have allowed is an A.1 violation — the extension
+ *  would be removing capability a correct agent needs, so deleting it would
+ *  change what that agent can accomplish. Under-blocking costs nothing: the
+ *  driver's post-hoc scope check is still there and still quarantines.
+ *
+ *  So a globbed entry collapses to the literal path above its first glob
+ *  character: `flows/pi-guard-*.tmp` -> `flows`, `docs/**` -> `docs`. An entry
+ *  that globs at the top level (`*.md`) collapses to "" — the repo root —
+ *  which allows everything, correctly: the driver alone can decide that one.
+ */
+function scopePrefix(entry: string): string {
+  const glob = entry.search(/[*?[]/);
+  if (glob === -1) return entry;
+  const cut = entry.slice(0, glob).lastIndexOf("/");
+  return cut === -1 ? "" : entry.slice(0, cut);
+}
+
 function insideScope(target: string): boolean {
   // No DECLARED scope => nothing to enforce. The driver's post-hoc check owns
   // it, and blocking on cwd instead would over-block a correct agent.
@@ -142,7 +168,7 @@ function insideScope(target: string): boolean {
   // `spec.cwd`; when one does, every entry silently points somewhere else.
   const base = REPO_ROOT || process.cwd();
   for (const entry of WRITE_SCOPE) {
-    if (under(resolved, path.resolve(base, entry))) return true;
+    if (under(resolved, path.resolve(base, scopePrefix(entry)))) return true;
   }
   return false;
 }

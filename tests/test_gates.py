@@ -13,6 +13,7 @@ from lockstep.gates import (
     citation_check,
     coverage_delta,
     numbers_check,
+    pi_guard_smoke,
     pytest_verdict,
     required_sections,
     version_sync,
@@ -353,3 +354,63 @@ def test_pytest_verdict_green_and_red(tmp_path, capsys, monkeypatch):
     v = run_gate(pytest_verdict, ["--no-ruff"], capsys)
     assert v["verdict"] == "block"
     assert v["findings"][0]["category"] == "tests"
+
+
+# ------------------------------------------------------- pi_guard_smoke
+
+
+def _probe_dirs(tmp_path):
+    """(gate phase dir, probe phase dir) under one synthetic run."""
+    phases = tmp_path / "runs" / "r" / "phases"
+    gate = phases / "guard-gate"
+    probe = phases / "scope-probe"
+    gate.mkdir(parents=True)
+    probe.mkdir(parents=True)
+    return gate, probe
+
+
+def test_pi_guard_smoke_passes_when_the_guard_recorded_a_block(tmp_path, capsys, monkeypatch):
+    gate, probe = _probe_dirs(tmp_path)
+    (probe / "verdicts.jsonl").write_text(
+        json.dumps({"ts": "t", "node_id": "scope-probe", "tool": "write",
+                    "reason": "outside scope", "input_digest": "d"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LOCKSTEP_PHASE_DIR", str(gate))
+    monkeypatch.setenv("LOCKSTEP_REPO_ROOT", str(tmp_path))
+    v = run_gate(pi_guard_smoke, [], capsys)
+    assert v["verdict"] == "pass" and "1 verdict record" in v["reason"]
+
+
+def test_pi_guard_smoke_blocks_when_no_verdict_was_recorded(tmp_path, capsys, monkeypatch):
+    """The extension did not load, or the hook API drifted."""
+    gate, _ = _probe_dirs(tmp_path)
+    monkeypatch.setenv("LOCKSTEP_PHASE_DIR", str(gate))
+    monkeypatch.setenv("LOCKSTEP_REPO_ROOT", str(tmp_path))
+    v = run_gate(pi_guard_smoke, [], capsys)
+    assert v["verdict"] == "block"
+    assert v["findings"][0]["category"] == "guard-missing"
+
+
+def test_pi_guard_smoke_blocks_on_an_escape_and_removes_it(tmp_path, capsys, monkeypatch):
+    """A guard that loaded but let the path through. The gate must also clean
+    up: leaving the escape file behind would make the NEXT run fail for a
+    reason that no longer exists."""
+    gate, probe = _probe_dirs(tmp_path)
+    (probe / "verdicts.jsonl").write_text(
+        json.dumps({"ts": "t", "tool": "write", "reason": "r"}) + "\n", encoding="utf-8"
+    )
+    escape = tmp_path / "pi-guard-escape.tmp"
+    escape.write_text("escaped\n", encoding="utf-8")
+    monkeypatch.setenv("LOCKSTEP_PHASE_DIR", str(gate))
+    monkeypatch.setenv("LOCKSTEP_REPO_ROOT", str(tmp_path))
+    v = run_gate(pi_guard_smoke, [], capsys)
+    assert v["verdict"] == "block"
+    assert [f["category"] for f in v["findings"]] == ["guard-bypassed"]
+    assert not escape.exists(), "the gate must remove the file it found"
+
+
+def test_pi_guard_smoke_reports_a_gate_error_without_the_spawn_env(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("LOCKSTEP_PHASE_DIR", raising=False)
+    v = run_gate(pi_guard_smoke, [], capsys)
+    assert v["verdict"] == "block" and v["findings"][0]["category"] == "gate-error"

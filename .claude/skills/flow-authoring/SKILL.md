@@ -37,7 +37,13 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   resolved via the flow-level `contracts_module` field).
 - **Gates**: `role: "gate"` requires `output: "json"` + a contract resolving to
   `Verdict`. Prefer `kind: "shell"` gates (deterministic) whenever the check is
-  machine-decidable — see `flows/gated-build.tg.json`.
+  machine-decidable — see `flows/gated-build.tg.json`. Reach for the **gate
+  library** before writing an inline `python -c`: `python -m
+  lockstep.gates.<name>` — `pytest_verdict`, `block_on_severity`,
+  `required_sections`, `version_sync`, `citation_check`, `numbers_check`,
+  `coverage_delta`, `fingerprint_check`, `pi_guard_smoke` (FLOW-AUTHORING has
+  the argv for each). An embedded one-liner is untested, unreadable in the run
+  dir, and re-quoted wrong on the first edit.
 - **Heal**: only on gates; `max_rounds > 0` requires explicit `targets` that
   are harness-kind ANCESTORS of the gate; a node may not be a target of two
   gates; a healing gate (`max_rounds > 0`) with `rollback: true` — the
@@ -50,8 +56,14 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   (exit 6) on non-TTY stdin; never resume-skipped.
 - **Readonly**: `spec.readonly: true` lets harness nodes fan out in parallel
   (drops the `tree` exclusion) but the executor stanza MUST declare
-  `readonly_argv` or verification fails (`readonly-unenforced`). Readonly
-  nodes answer on stdout — they cannot write `result.json`.
+  `readonly_argv` or verification fails (`readonly-unenforced`) — §6.11 wants
+  enforcement visible in argv, not in the prompt. Readonly nodes answer on
+  stdout — they cannot write `result.json`. claude: `--disallowedTools`.
+  **pi: `--tools read,grep,find,ls,submit_result`** — an allowlist, so name
+  the node's answer tool or you remove its answer channel. Make every
+  judgement node (review, triage, estimate, plan) readonly: it fans out, it
+  cannot corrupt the tree, and on a metered subscription it is the cheapest
+  reliability lever there is.
 
 ## Interpolation (§7)
 

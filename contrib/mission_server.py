@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""mission_server.py — MISSION as a read-only local trace page.
+"""mission_server.py — MISSION as a read-only local page.
 
     python contrib/mission_server.py                    # http://127.0.0.1:8787
     python contrib/mission_server.py --port 9000 runs/<run>

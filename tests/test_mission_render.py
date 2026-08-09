@@ -585,6 +585,43 @@ def test_the_glossary_matches_cockpit_ps1():
     assert pairs == mv.GLOSSARY
 
 
+def test_the_heal_decoration_matches_cockpit_ps1():
+    """The glossary test above pins the six base words — and passed while the
+    two surfaces disagreed about the seventh and eighth phrases.
+
+    `node_word` was fixed so a gate that healed and then PASSED reads
+    `done (sent back once)` instead of wearing the rework word forever;
+    `cockpit.ps1` kept saying `sent back for rework (1 of 3)` for the same
+    node. That is precisely the split the glossary test exists to prevent —
+    "when the two disagree, MISSION is right" is unusable with two MISSIONs —
+    so the DECORATIONS get pinned too, not just the base words.
+    """
+    text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+
+    # 1. The branch exists at all: a settled node must not take the in-rework
+    #    arm. Without this, the two phrases below could both be present and
+    #    still be reached in the wrong order.
+    assert re.search(
+        r"\$rec\.status -eq 'pending' -or \$rec\.status -eq 'running'", text
+    ), "cockpit.ps1's heal decoration no longer branches on the node's status"
+
+    # 2. In-rework phrasing, character for character.
+    assert '"sent back for rework ($rounds of $cap)"' in text
+    assert mv.node_word(
+        "n", {"status": "running", "heal_round": 1}, {"n": 3}
+    ) == "sent back for rework (1 of 3)"
+
+    # 3. Settled phrasing, including the ordinal words. A bare count ("sent
+    #    back 1") would pass a looser test and read wrong on the board.
+    assert "{ 'once' }" in text and "{ 'twice' }" in text
+    assert 'default { "$rounds times" }' in text
+    assert '"$word (sent back $times)"' in text
+    for rounds, phrase in ((1, "once"), (2, "twice"), (5, "5 times")):
+        assert mv.node_word(
+            "n", {"status": "done", "heal_round": rounds}, {"n": 3}
+        ) == f"done (sent back {phrase})"
+
+
 def test_a_healed_step_that_passed_says_it_is_done(tmp_path):
     """`heal_round` never resets, and the word used to replace the status
     outright — so a gate that healed and then PASSED read as "sent back for

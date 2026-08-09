@@ -15,7 +15,8 @@ from conftest import PY, build, make_config
 PRINT_ENV = (
     "import os, json; print(json.dumps({k: os.environ.get(k, '') for k in ("
     "'LOCKSTEP_NODE_ID', 'LOCKSTEP_ROLE', 'LOCKSTEP_WORKSPACE_SCOPE', "
-    "'LOCKSTEP_VERDICT_FILE', 'LOCKSTEP_PHASE_DIR', 'LOCKSTEP_CONTRACT')}))"
+    "'LOCKSTEP_VERDICT_FILE', 'LOCKSTEP_PHASE_DIR', 'LOCKSTEP_CONTRACT', "
+    "'LOCKSTEP_WRITE_SCOPE', 'LOCKSTEP_REPO_ROOT')}))"
 )
 
 
@@ -36,6 +37,13 @@ def test_node_identity_env_vars(tmp_path, git_repo):
     assert env["LOCKSTEP_VERDICT_FILE"].endswith("verdicts.jsonl")
     assert env["LOCKSTEP_PHASE_DIR"]
     assert env["LOCKSTEP_CONTRACT"] == ""  # no contract on this node
+    # The two the scope guard cannot work without. WRITE_SCOPE is the real
+    # write boundary (spec.writes), empty here because this node declares none;
+    # REPO_ROOT is what its relative globs resolve against. A guard that
+    # resolves them against cwd instead silently blocks nothing the moment a
+    # node sets spec.cwd — which is how it shipped the first time.
+    assert env["LOCKSTEP_WRITE_SCOPE"] == ""
+    assert Path(env["LOCKSTEP_REPO_ROOT"]).resolve() == Path(git_repo).resolve()
 
 
 def test_contract_env_var_names_the_node_contract(tmp_path, git_repo):

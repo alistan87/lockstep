@@ -102,8 +102,22 @@ Two facts worth knowing before you file a bug:
   view, permanently. That is a property of the harness, not a fault, and you
   still get task counts and wall time.
 - **`readonly: true` needs `readonly_argv` in the stanza.** A plain pi stanza
-  has none, so flows using readonly nodes fail verification. Remove the flag or
-  add the argv.
+  has none, so flows using readonly nodes fail verification. Add
+  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` — pi's
+  `--tools` is an argv-visible allowlist, which is what SPEC §6.11 asks for.
+  Name the node's answer tool in it (the allowlist covers extension tools too);
+  naming a tool pi does not have is harmless. Worth doing rather than dropping
+  the flag: on a request-metered plan your spend is round trips, and a node
+  that cannot edit cannot spend one trying.
+- **A 429 on Copilot usually means quota, not a blip.** Set
+  `"retry": {"max": 0}` on nodes using subscription-backed stanzas and resume
+  when quota returns; the default 60s backoff just burns two more requests
+  against the same wall.
+- **The scope guard attaches per stanza**, from argv:
+  `--extension contrib\pi-extension\lockstep-guard.ts` (the `pi-guarded`
+  stanza in `lockstep.toml.example`). Live-verify it on this machine with
+  `lockstep run flows\starter\pi-guard-smoke.tg.json --fresh` after install
+  and after any pi upgrade.
 
 Copy `contrib\cost-fields.toml.example` to `contrib\cost-fields.toml` to get
 token numbers where the harness reports them (pi does; copilot cannot).
@@ -163,10 +177,10 @@ pwsh -File contrib\cockpit.ps1 -RunDir runs\<run> -Approve   # hand over a decis
 python contrib\quiescent.py runs\<run>                       # is it safe to hand over?
 python contrib\cost_report.py --compact runs\<run>           # spend right now
 python contrib\retrospect.py runs\                           # friction across runs
-python contrib\mission_server.py                             # the trace page, loopback
+python contrib\mission_server.py                             # the MISSION page, loopback
 ```
 
-The trace page is the surface to give the domain expert if they would rather
+The MISSION page is the surface to give the domain expert if they would rather
 look at a browser than a terminal: board → timeline → step → raw record, all
 server-rendered so it works with JavaScript off, and no route that writes. It
 binds to loopback; `--host` requires an explicit value and prints a warning

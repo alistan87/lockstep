@@ -539,8 +539,19 @@ function Get-MissionLines {
       $rounds = [int]$rec.heal_round
     }
     if ($rounds -gt 0) {
-      $cap = if ($healBudget[$id]) { $healBudget[$id] } else { '?' }
-      $word = "sent back for rework ($rounds of $cap)"
+      if ($rec.status -eq 'pending' -or $rec.status -eq 'running') {
+        # IN rework right now: the counter is the state.
+        $cap = if ($healBudget[$id]) { $healBudget[$id] } else { '?' }
+        $word = "sent back for rework ($rounds of $cap)"
+      } else {
+        # SETTLED. heal_round never resets, so replacing the status word
+        # outright described a gate that healed and then PASSED as "sent back
+        # for rework (1 of 3)" — on a fully successful run the only line left
+        # on the board said the work had been rejected. Keep mission_view.py's
+        # node_word() and this branch identical; a test pins the glossaries.
+        $times = switch ($rounds) { 1 { 'once' } 2 { 'twice' } default { "$rounds times" } }
+        $word = "$word (sent back $times)"
+      }
     }
 
     # Map nodes collapse to one counter line — attention must not scale with

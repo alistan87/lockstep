@@ -37,11 +37,17 @@ resource: docs/spec/ADDENDUM-A-pi-hooks.md
 >    A.4.4-reconstructible from the checkout; a global install is hidden state
 >    and does not qualify). That granularity is per-REPO, not truly per-flow —
 >    a repo whose flows are not uniformly cwd-confined must leave the hard
->    block off.
+>    block off. **SUPERSEDED 2026-08-09 — see the resolution block below.**
+>    The guard blocks against the node's declared `spec.writes`, not `cwd`, and
+>    attaches per stanza via `--extension <path>`; both halves of this note
+>    (the wrong boundary, the per-repo granularity) are answered.
 > 3. **Readonly via extension (SPEC §6.11):** an extension `tool_call` gate
 >    could be pi's readonly enforcement, but §6.11 requires argv-visible
 >    enforcement (`readonly_argv`). Reconciling the two is an r7 candidate;
 >    until then, readonly nodes on pi remain a verification error.
+>    **CLOSED 2026-08-09 — see the resolution block below.** No r7 field was
+>    needed: pi's own `--tools` allowlist is argv-visible, so §6.11 is
+>    satisfied by the stanza, not by the extension.
 > 4. **A.4.4 and re-run contamination:** "reconstructible from env + run dir"
 >    must also honor the re-run isolation lesson (implementation-level, pinned
 >    by tests; an r7 spec candidate — not r6 text): extension artifacts in the
@@ -57,9 +63,10 @@ resource: docs/spec/ADDENDUM-A-pi-hooks.md
 > offline tests, `{phase_dir}` substitution — honored by doctor probes too);
 > item 4 is realized as the opt-in `--session-dir` stanza variant of note 1,
 > not the post-run copy step the original draft described; item 2 is the
-> reference extension at `contrib/pi-extension/lockstep-guard.ts` (UNTESTED
-> against live pi; implements the path-scope half of A.3.1 — the
-> ActionType/ontology half is Mimir-side and not written). A.7.3 needed no
+> reference extension at `contrib/pi-extension/lockstep-guard.ts` (its
+> path-scope block is verified against live pi 0.83.0 as of 2026-08-09 — see
+> below; it implements the path-scope half of A.3.1, the ActionType/ontology
+> half is Mimir-side and not written). A.7.3 needed no
 > driver code: a deterministic shell gate reads the verdict file — the spec's
 > preferred gate form.
 
@@ -128,9 +135,11 @@ Corollary: all control flow stays in Lockstep. Extensions never retry, never dis
 
 ## A.2 Pi extension hook inventory (reference)
 
-Pi extensions are TypeScript modules loaded from `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local), subscribing to lifecycle events via `pi.on(event, handler)` and registering tools via `pi.registerTool()`. Hooks relevant to this addendum:
+Pi extensions are TypeScript modules subscribing to lifecycle events via `pi.on(event, handler)` and registering tools via `pi.registerTool()`. The module's **default export** is the registration function (`export default function (pi) { ... }`); a bare top-level `pi.on(...)` never runs.
 
-- `tool_call` — fires before each tool executes; can **block** (`{ block: true, reason }`) or mutate `event.input` in place.
+Loading: the mechanism verified here is the argv flag **`--extension <path>`**, which is what Lockstep uses — it puts the guard in the recorded spawn and in the stanza digest, so attaching or removing it re-bills exactly the affected nodes. Directory drop-ins (`~/.pi/agent/extensions/`, `.pi/extensions/`) are described by pi's own docs but were not observed to load in 0.83.0 on this machine, and Lockstep does not depend on them. Hooks relevant to this addendum:
+
+- `tool_call` — fires before each tool executes; can **block** by RETURNING `{ block: true, reason }` (mutating the event object is not enough) or mutate `event.input` in place. The tool name has been seen on both `event.toolName` and `event.tool`; read `event.toolName ?? event.tool` so a rename cannot silently disable the gate.
 - `tool_result` — fires after execution; can modify the result; handlers chain like middleware.
 - `before_agent_start` — fires before the agent loop; can inject a message or replace the system prompt for the turn.
 - `context` — fires before each LLM call; can filter/modify the message list non-destructively.
@@ -156,9 +165,11 @@ Lockstep's existing enforcement is post-hoc: output contract validation, gate ph
 - Block `write`/`edit`/`bash` targeting paths outside the node's declared workspace scope — subject to preamble note 2's caveat: until a real scope field exists this is per-flow opt-in, because `cwd` is not a write boundary and hard-blocking outside it can over-block a correct agent (an A.1 violation).
 - Block direct writes to ontology files that bypass registered ActionType tools (Mimir's Actions-as-sole-write-path invariant).
 
+**Matcher asymmetry, and which way it must fail.** The driver matches `spec.writes` with `fnmatch`; the reference extension prefix-matches resolved paths, because a `tool_call` hook sees one path at a time and has no repo listing to glob against. Where the two disagree the extension MUST be the more permissive: blocking a write the driver would allow is an A.1 violation — deleting the extension would then change what a correct agent can accomplish — while allowing one the driver would block costs nothing, since the driver's post-hoc check still quarantines it. So a globbed entry collapses to the literal directory above its first glob character (`flows/pi-guard-*.tmp` → `flows`), and an entry that globs at the top level (`*.md`) collapses to the repo root and enforces nothing. This is enforcement-only degradation, which is the sanctioned direction.
+
 Effect: an out-of-scope write is refused before the damage lands, instead of surfacing later — if at all — through failed contracts or gate checks. Whether the node then fails is governed by the verdict-file gate policy (§A.3.3), not by luck. Lockstep remains the source of truth; the extension only fails faster.
 
-**Manifest selection:** the driver exports node identity into the session environment of every spawned node — `LOCKSTEP_NODE_ID`, `LOCKSTEP_ROLE`, `LOCKSTEP_WORKSPACE_SCOPE`, `LOCKSTEP_VERDICT_FILE`, `LOCKSTEP_PHASE_DIR`, `LOCKSTEP_CONTRACT` (driver code, uniform across executors; the argv template plays no part). Pi's bash tool already exposes session env to spawned commands; the extension reads these at load to select the manifest. A node run on a non-`pi` executor simply lacks this layer: out-of-scope writes there are caught only indirectly (contracts, gates) or not at all — acceptable, because the layer (with note 2's opt-in discipline observed) only ever removes damage a MISBEHAVING agent could do, never capability a correct one needs.
+**Manifest selection:** the driver exports node identity into the session environment of every spawned node — `LOCKSTEP_NODE_ID`, `LOCKSTEP_ROLE`, `LOCKSTEP_WORKSPACE_SCOPE`, `LOCKSTEP_WRITE_SCOPE`, `LOCKSTEP_VERDICT_FILE`, `LOCKSTEP_PHASE_DIR`, `LOCKSTEP_CONTRACT`, `LOCKSTEP_REPO_ROOT` (driver code, uniform across executors; the argv template plays no part). `LOCKSTEP_WRITE_SCOPE` is the node's declared `spec.writes` as a JSON array — the real write boundary, and what the guard enforces; `LOCKSTEP_REPO_ROOT` is the absolute root those relative globs resolve against, without which a guard running in a `cwd` below the root mis-resolves every path and blocks nothing. Pi's bash tool already exposes session env to spawned commands; the extension reads these at load to select the manifest. A node run on a non-`pi` executor simply lacks this layer: out-of-scope writes there are caught only indirectly (contracts, gates) or not at all — acceptable, because the layer (with note 2's opt-in discipline observed) only ever removes damage a MISBEHAVING agent could do, never capability a correct one needs.
 
 ### A.3.2 Structured output at the terminate boundary
 
@@ -255,8 +266,8 @@ These may share code with the headless extension (same manifest logic, same work
 
 ## A.7 Suggested v1.x work items (non-blocking)
 
-1. Node-identity env on every spawn: `LOCKSTEP_NODE_ID` / `LOCKSTEP_ROLE` / `LOCKSTEP_WORKSPACE_SCOPE` / `LOCKSTEP_VERDICT_FILE` / `LOCKSTEP_PHASE_DIR` / `LOCKSTEP_CONTRACT` — exported by shared driver code for every spawned process (shell and harness spawns alike; the fake test double spawns nothing); the `lockstep.toml.example` pi stanza documents them. *(Done.)*
-2. `~100`-line reference extension: env identity at load → `tool_call` path-scope gate → verdict file writer → contract-keyed `submit_result` structured-output tool. Single file, branches on `ctx.hasUI` for interactive reuse. *(Written — `contrib/pi-extension/lockstep-guard.ts`, UNTESTED against live pi; the ActionType half of A.3.1 is not included.)*
+1. Node-identity env on every spawn: `LOCKSTEP_NODE_ID` / `LOCKSTEP_ROLE` / `LOCKSTEP_WORKSPACE_SCOPE` / `LOCKSTEP_WRITE_SCOPE` / `LOCKSTEP_VERDICT_FILE` / `LOCKSTEP_PHASE_DIR` / `LOCKSTEP_CONTRACT` / `LOCKSTEP_REPO_ROOT` — exported by shared driver code for every spawned process (shell and harness spawns alike; the fake test double spawns nothing); the `lockstep.toml.example` pi stanza documents them. *(Done.)*
+2. `~100`-line reference extension: env identity at load → `tool_call` path-scope gate → verdict file writer → contract-keyed `submit_result` structured-output tool. Single file, branches on `ctx.hasUI` for interactive reuse. *(Done — `contrib/pi-extension/lockstep-guard.ts`. The `tool_call` path-scope block is verified against live pi 0.83.0 with a control run; loaded per stanza via `--extension <path>`. The ActionType half of A.3.1 is not included.)*
 3. Gate-phase reader for the verdict file format (§A.3.3) — realized as a deterministic shell gate: no driver changes, no exit-code changes, offline-tested. *(Done.)*
 4. Session-JSONL capture for the `pi` executor — realized as the opt-in `--session-dir {phase_dir}` stanza variant (§A.3.4, preamble note 1), not a post-run copy hook. *(Done, opt-in.)*
 5. Offline test: FakeExecutor variant that emits a verdict file, proving the gate path without a model. *(Done — plus per-attempt verdict rotation tests.)*

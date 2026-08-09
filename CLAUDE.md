@@ -66,7 +66,7 @@ python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is ru
 python contrib\session_spend.py               # this session: orchestrator transcript spend + runs it started
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
 pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
-python contrib\mission_server.py                       # the trace page: board -> timeline -> step -> raw record; GET only, loopback
+python contrib\mission_server.py                       # the MISSION page: board -> timeline -> step -> raw record; GET only, loopback
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
 ```
 
@@ -110,6 +110,13 @@ a feature over adding a dependency. Full pytest after every change.
 
 - Run `lockstep doctor` after any harness upgrade and weekly — the only check
   that catches harness flag drift. Not a pre-commit hook (AMENDMENTS A1).
+- A harness's tool set is argv, so it is per-stanza config the driver hashes:
+  pi `--tools`/`--exclude-tools`/`--no-tools`, claude `--disallowedTools`.
+  That is what makes `spec.readonly` enforceable on pi (§6.11 wants it visible
+  in argv) and what the `pi-guarded` stanza uses to attach the scope guard via
+  `--extension`. After a pi upgrade, re-run
+  `lockstep run flows\starter\pi-guard-smoke.tg.json --fresh` — `doctor` probes
+  the stanza, not the guard's behaviour.
 - This machine's AV causes transient `PermissionError` on file replaces and
   git object writes — retry once before investigating.
 - `runs/` holds prompts, diffs, and model output: sensitive, gitignored,
@@ -138,7 +145,7 @@ detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
 zero dependencies) plus `mission_view.py` — pure render functions shared by
 `mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
-trace page: board → timeline → step drawer → raw record, GET routes only, every
+MISSION page: board → timeline → step drawer → raw record, GET routes only, every
 word and time rendered server-side). Two tests pin vocabulary across surfaces —
 `mission_view.GLOSSARY` against `cockpit.ps1`'s, and the page's `L3_GLOSSARY`
 against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. The page's 1 Hz tick

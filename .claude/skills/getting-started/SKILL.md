@@ -51,8 +51,12 @@ wonder whether something is broken:
   in cost views. That is a property of the harness, not a fault, and nothing
   you do will change it. You still get task counts and wall time.
 - **`readonly: true` needs `readonly_argv` in the stanza.** A typical pi stanza
-  has none, so flows using readonly nodes fail verification there. Remove the
-  flag or add the argv.
+  has none, so flows using readonly nodes fail verification there. Add the
+  argv rather than dropping the flag — on pi that is
+  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` (an
+  allowlist, so name the node's answer tool), on claude it is
+  `--disallowedTools`. Readonly nodes drop the `tree` token and run in
+  parallel, so this is usually a speedup as well as a safety flag.
 
 ## Step 3 — the paid check
 
@@ -105,7 +109,7 @@ python contrib\quiescent.py runs\<run-dir>                     # safe to hand ov
 python contrib\mission_server.py                               # or the same board in a browser
 ```
 
-The last one is the trace page: loopback only, GET only, and it opens from the
+The last one is the MISSION page: loopback only, GET only, and it opens from the
 board into a timeline, a step drawer, and the raw record. Offer it to someone
 who would rather look at a browser than a terminal — the decision still happens
 at the terminal either way, and the page says so.
