@@ -213,7 +213,7 @@ def test_verdict_file_gate_passes_when_clean(tmp_path, git_repo):
 
 # ---------------------------------------- note 3: readonly on pi, resolved
 
-PI_READONLY_ARGV = ["--tools", "read,grep,find,ls,submit_result"]
+PI_READONLY_ARGV = ["--tools", "read,submit_result"]
 
 
 def _readonly_flow() -> dict:
@@ -264,7 +264,7 @@ def test_the_allowlist_keeps_the_extensions_tool():
     assert "submit_result" in PI_READONLY_ARGV[1]
     example = (Path(__file__).resolve().parents[1] / "lockstep.toml.example").read_text(
         encoding="utf-8")
-    assert 'readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]' in example
+    assert 'readonly_argv = ["--tools", "read,submit_result"]' in example
 
 
 def test_no_stanza_combines_mode_json_with_readonly_enforcement():

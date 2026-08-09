@@ -77,7 +77,7 @@ resource: docs/spec/ADDENDUM-A-pi-hooks.md
 > - **Note 3 (readonly on pi) is closed.** pi takes `--tools`, an argv-visible
 >   allowlist over built-in, extension and custom tools — which is exactly the
 >   enforcement SPEC §6.11 requires, so `spec.readonly: true` is now legal on
->   pi via `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]`.
+>   pi via `readonly_argv = ["--tools", "read,submit_result"]`.
 >   Verified: unrestricted, the model created the file; with the allowlist it
 >   did not, while still replying "DONE". `submit_result` is named in the list
 >   because the allowlist covers EXTENSION tools too and would otherwise

@@ -258,7 +258,7 @@ in a prompt. pi takes `--tools` (allowlist), `--exclude-tools`,
 That is the lever behind three separate things:
 
 - **`spec.readonly` is real enforcement on pi.** `readonly_argv = ["--tools",
-  "read,grep,find,ls,submit_result"]` satisfies SPEC §6.11's argv-visible
+  "read,submit_result"]` satisfies SPEC §6.11's argv-visible
   requirement, so readonly nodes are legal on pi — and they drop the `tree`
   token, so reviewers fan out in parallel instead of queueing. Name the node's
   answer tool in the list: the allowlist covers extension tools too. Put them

@@ -17,14 +17,14 @@ codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
 |---|---|---|
 | `pi-guard-smoke.tg.json` | ~2 spawns | Live-verifies the pi scope guard (ADDENDUM-A): env identity reaches the session, the `tool_call` guard blocks a write outside the node's declared `spec.writes` and records a verdict, `LOCKSTEP_CONTRACT` drives structured output. Run it with `--executor-default pi-guarded`. PASS = guard live. BLOCK = extension not loaded or the hook API drifted (lockstep still safe — you only lose the fast-fail layer). |
 | `plan-adversarial.tg.json` | up to ~12 | Author writes `PLAN.md` → two adversarial reviewers (feasibility/risk, completeness/scope) → arbiter gate **heals** the plan (≤2 rounds, findings folded into the author's re-prompt) → **human approval**. |
-| `implement-heal.tg.json` | up to ~15 | Implementer works the task (follows `PLAN.md` if present) → deterministic **lint+pytest shell gate heals** the implementer (≤2 rounds, failure output in the re-prompt) → adversarial diff review → deterministic gate blocks on blocker/major findings (no auto-heal: a human fixes/decides, then `resume`). |
+| `implement-heal.tg.json` | up to ~15 | Implementer works the task (follows `PLAN.md` if present) → deterministic **lint+pytest shell gate heals** the implementer (≤2 rounds, failure output in the re-prompt) → a shell probe captures the worktree change → **readonly** adversarial diff review → deterministic gate blocks on blocker/major findings (no auto-heal: a human fixes/decides, then `resume`). |
 | `sdlc-e2e.tg.json` | up to ~30 | The full chain: plan → adversarial plan review → healing plan gate → **approval** → implement → healing lint+pytest gate → adversarial diff review → block-on-major gate → closing report. |
 | `file-audit.tg.json` | 1/file + arbiter | **Map fan-out**: lists files matching `--arg glob=` as `path\|content-fingerprint` entries (per-item caching invalidates on content change, not just path); one readonly auditor per file (`concurrency: 4`); arbiter gate blocks on upheld blockers. `--arg focus=` steers the lens; `--arg max_files=` caps fan-out (default 40, truncation recorded in the manifest notes). |
 | `proposal-gate.tg.json` | up to ~12 | Review gates for a **human-owned** proposal/design doc (`--arg file=`): deterministic required-sections shell gate (`--arg sections=`, default `Goal, Approach, Risks, Test plan`) → completeness + ambiguity/testability reviewers → arbiter Verdict. No heal by design: a block returns findings to the author, who revises and `resume`s. |
 | `clarify-gate.tg.json` | up to ~8 | **FRAGMENT** — the clarification-gate pattern: a drafter works from an under-specified brief, and a NON-healing gate (`heal.max_rounds: 0`) reports what only a human can decide as findings with `category: "question"`. Answers arrive by `steer` + `resume`, never by heal text. Copy the gate into your own flow. |
 | `evidence-approval.tg.json` | up to ~6 | **FRAGMENT** — the evidence-bearing terminal approval: a shell node renders a mechanical extract to `<run_dir>/approval-evidence.txt`, which `contrib/approve.ps1` prints before the prompt. Shows the segmentation rule (only a trivial shell node after the approval). |
 | `retrospect.tg.json` | up to ~8 | Gate-driven improvement: `contrib/retrospect.py` emits the friction report (metadata only), an analyst proposes flow/prompt edits **each citing the number that motivates it**, an arbiter blocks anything the numbers do not support. Adoption is gated — run the report by hand first. |
-| `bugfix-heal.tg.json` | up to ~15 | Diagnose → fix → verify: diagnostician pins root cause from `--arg bug=` + `--arg repro=` (a command); fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); adversarial diff review → block-on-major gate. |
+| `bugfix-heal.tg.json` | up to ~15 | Observe → diagnose → fix → verify: a shell probe RUNS `--arg repro=` and captures the failure, a **readonly** diagnostician pins root cause from it plus `--arg bug=`; fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); probe captures the change → **readonly** diff review → block-on-major gate. |
 
 ## Running them
 
@@ -70,22 +70,37 @@ an approval node: `plan-adversarial` and `sdlc-e2e`.
 
 ## Portability notes (work-laptop / pi specifics)
 
-- **No `readonly: true` except in `file-audit`, deliberately.** Readonly
-  harness nodes require the executor stanza to declare `readonly_argv`, and a
-  typical `pi` stanza has none — flows using it would fail `verify` there.
-  Cost: the two reviewers in `plan-adversarial` (and likewise in
-  `proposal-gate`) share the `tree` exclusion and serialize (the
-  `exclusive-collision` warning is expected).
+- **Every judgement node is `readonly`, so YOUR DEFAULT STANZA MUST DECLARE
+  `readonly_argv`.** Reviewers, arbiters, the diagnostician and the closing
+  report all run readonly since 2026-08-09; without `readonly_argv` these flows
+  fail `verify` with `readonly-unenforced` — free, before anything spawns, but
+  it will be the first thing you hit on a fresh machine.
 
-  **Worth adding to your stanza rather than living with the cost.** pi's
-  `--tools` is an argv-visible allowlist, so
-  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` satisfies
-  §6.11; claude uses `--disallowedTools`. On pi put it on a stanza with **no
-  `--mode json`** (`pi-review`): a readonly node answers on stdout, which
-  `--mode json` fills with pi's event stream. Then add `"readonly": true` to the
-  reviewer/arbiter/report nodes: they parallelize, they cannot corrupt the
-  tree, and on a request-metered plan a node that cannot edit cannot spend a
-  round trip trying to.
+  - claude: `readonly_argv = ["--disallowedTools", "Edit,Write,NotebookEdit,Bash"]`
+  - pi: `readonly_argv = ["--tools", "read,submit_result"]`, on a stanza with
+    **no `--mode json`** (`pi-review` in `lockstep.toml.example`) — a readonly
+    node answers on stdout, and `--mode json` fills stdout with pi's event
+    stream.
+
+  **`readonly_argv` must remove the shell too**, not just write/edit: bash is a
+  write vector, and `readonly` is exactly what licenses the scheduler to drop
+  the `tree` token and run these nodes at the same time. A stanza that keeps
+  bash passes `verify` and breaks that guarantee.
+
+  What it buys: `plan-adversarial`'s and `proposal-gate`'s reviewer pairs now
+  genuinely fan out (the `exclusive-collision` warning is gone, not suppressed),
+  nothing that judges can corrupt what it is judging, and on a request-metered
+  plan a node that cannot edit cannot spend a round trip trying to.
+
+- **The probe pattern: shell observes, readonly judges.** A readonly node
+  cannot run `git diff` or the repro — so it does not. `implement-heal`,
+  `bugfix-heal` and `sdlc-e2e` put
+  `python -m lockstep.probes.worktree_diff` in a shell node and hand the
+  reviewer the captured change as data; `bugfix-heal` does the same with
+  `python -m lockstep.probes.command_output` before the diagnosis. Beyond
+  enabling readonly, the observation becomes deterministic, cached, and durable
+  in the run dir as evidence. Those three flows raise `max_interp_chars` to
+  60000 and tell the consumer to read the spill file if the capture is bigger.
 - **`pi-guard-smoke` assumptions**: **run it with the guarded stanza** —
   `--executor-default pi-guarded`. The flow deliberately pins no executor, so
   that it verifies on a machine that has no such stanza; the cost is that a

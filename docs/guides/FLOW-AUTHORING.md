@@ -74,13 +74,27 @@ before spending tokens.
 
   What `readonly_argv` looks like per harness: claude takes
   `--disallowedTools`; **pi takes `--tools`, an allowlist** —
-  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]`. Name
+  `readonly_argv = ["--tools", "read,submit_result"]`. Name
   `submit_result` (or whatever tool the node answers with) explicitly: pi's
   allowlist covers extension and custom tools too, so omitting it removes the
   node's own answer channel. Naming a tool the harness does not have is
   harmless. Use the *narrowest* list that still lets the node do its job —
   this is the single cheapest reliability lever on a metered subscription,
   because a reviewer that cannot edit cannot burn a round trip trying.
+
+  **Know what the list grants.** pi 0.83.0's built-ins are exactly `read, edit,
+  write, bash, web_search, source_check, fetch_content, get_search_content,
+  taskflow` — there is no `grep`, `find` or `ls`, because bash covers them. So
+  `--tools read,submit_result` grants read and nothing else, which is the
+  intended strength: `readonly` is what licenses the scheduler to drop the
+  `tree` token, and **bash is a write vector**. A stanza that keeps bash while
+  excluding write/edit passes verification and breaks that invariant — do not
+  build one. For the same reason claude's list must exclude `Bash`, not just
+  `Edit,Write`.
+
+  **So a readonly node cannot run `git diff` or search the repo.** Give it what
+  it needs as data from a shell node — that is what the probe library below is
+  for.
 
   **The stanza must also leave stdout usable**, because that is where a
   readonly node's answer comes back. On pi that means the readonly stanza must
@@ -144,6 +158,33 @@ starter flows work against any target repo where lockstep is importable.
   (ADDENDUM-A A.3.3: it reads the guard's `verdicts.jsonl`, never the model's
   claim about being blocked). Removes the escape file it finds, so a failed
   smoke does not poison the next run.
+
+## The probe library (`python -m lockstep.probes.<name>`)
+
+The sibling of the gate library, and the distinction is the point: a **gate
+decides** (emits a `Verdict`, the driver branches on it); a **probe observes**
+(emits text, a readonly node judges it). Every probe prints to stdout, **always
+exits 0** — a command that failed is an observation, not a broken node — and
+never writes to the workspace.
+
+- `worktree_diff [--base HEAD] [--max-lines N]` — `git status --short
+  --untracked-files=all`, the diff against the base, and the full contents of
+  CREATED files (untracked, so absent from any diff). Truncation says it
+  truncated.
+- `command_output "<cmd>" [--label repro] [--timeout S]` — run one command,
+  report exit code and output. The command arrives as one string (it comes from
+  `--arg`) and is `shlex`-split with POSIX rules off on Windows. Output is
+  capped middle-out, keeping both ends: a traceback's cause is at the top and
+  its assertion at the bottom.
+
+**Why they exist.** `readonly` has to remove every write vector to be worth
+anything, and shell execution is one — so a readonly reviewer cannot run
+`git diff`, and a readonly diagnostician cannot run the repro. Moving that one
+command into a shell node hands the judgement node its input as DATA, and buys
+three things on the way: the observation is deterministic, it is hashed and
+cached like any other node, and it survives in the run directory as evidence.
+The alternative — leaving the node write-capable so it can run commands — costs
+the `tree` token, and with it the parallelism and the guarantee.
 
 ## Writing a gate that earns its place
 

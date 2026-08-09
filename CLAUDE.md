@@ -43,7 +43,13 @@ pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-w
 
 Deterministic gate bodies live in `src/lockstep/gates/` (invoked as
 `python -m lockstep.gates.<name>` from shell gate nodes — tested programs, not
-inline one-liners; see FLOW-AUTHORING). `flows/selftest-replay.tg.json` is the
+inline one-liners; see FLOW-AUTHORING). Its sibling `src/lockstep/probes/`
+holds the OBSERVE half: a gate decides (emits a `Verdict`), a probe reports a
+fact and always exits 0. Probes exist because `readonly_argv` must remove the
+shell — bash is a write vector, and `readonly` is what licenses dropping the
+`tree` token — so a readonly reviewer cannot run `git diff` and a readonly
+diagnostician cannot run the repro. `worktree_diff` and `command_output` hand
+them that input as data. `flows/selftest-replay.tg.json` is the
 one flow that must stay **shell-only**: a harness node's input hash includes the
 local executor-config digest, so only an all-shell flow yields a fixture whose
 recorded hashes match on another machine — which is what makes

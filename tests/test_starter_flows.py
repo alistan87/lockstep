@@ -108,3 +108,80 @@ def test_a_map_over_a_manifest_with_no_fingerprint_still_warns():
     audit["spec"]["task"] = "Audit exactly one file: {item}. Report Finding objects."
     codes = [i.code for i in lint_flow(TaskGraph.model_validate(d))]
     assert "lint-map-over-manifest" in codes
+
+
+# ------------------------------------------- the readonly tiering (2026-08-09)
+
+JUDGEMENT_NODES = {
+    "plan-adversarial": ["rev-feasibility", "rev-completeness", "plan-gate"],
+    "proposal-gate": ["rev-completeness", "rev-ambiguity", "arbiter"],
+    "retrospect": ["analyst", "arbiter"],
+    "file-audit": ["audit", "arbiter"],
+    "implement-heal": ["review"],
+    "bugfix-heal": ["diagnose", "review"],
+    "sdlc-e2e": ["plan-review", "plan-gate", "review", "report"],
+}
+
+
+@pytest.mark.parametrize("name,ids", sorted(JUDGEMENT_NODES.items()))
+def test_every_judgement_node_is_readonly(name, ids):
+    """A node whose product is a judgement holds no `tree` token, cannot
+    corrupt what it is judging, and on a request-metered plan cannot spend a
+    round trip attempting an edit it is not there to make."""
+    ns = nodes(name)
+    for nid in ids:
+        assert ns[nid]["spec"].get("readonly") is True, f"{name}:{nid}"
+
+
+def test_no_readonly_node_is_told_to_run_a_command():
+    """`readonly_argv` removes the shell — bash is a write vector, and
+    `readonly` is what licenses the scheduler to drop the tree token. So a
+    readonly node CANNOT run `git diff` or the repro, and a prompt that tells
+    it to is the honour-system defect in reverse: an instruction the tools
+    forbid. `diagnose` was told to run the repro; `review` to run git.
+    """
+    forbidden = ("run `git", "run git ", "Run `git", "run the repro", "Run the repro")
+    for path in STARTER.glob("*.tg.json"):
+        for n in json.loads(path.read_text(encoding="utf-8"))["nodes"]:
+            spec = n.get("spec", {})
+            if not spec.get("readonly"):
+                continue
+            task = spec.get("task", "")
+            hits = [f for f in forbidden if f in task]
+            assert not hits, f"{path.stem}:{n['id']} is readonly but told to {hits}"
+
+
+@pytest.mark.parametrize("name", ["implement-heal", "bugfix-heal", "sdlc-e2e"])
+def test_the_diff_reaches_the_reviewer_as_data(name):
+    """Tier B: a shell probe captures the change, the readonly reviewer judges
+    it. The reviewer must depend on the probe and interpolate its output —
+    otherwise it is a readonly node with no way to see what changed."""
+    ns = nodes(name)
+    assert ns["capture-diff"]["kind"] == "shell"
+    assert ns["capture-diff"]["spec"]["cmd"][:3] == ["python", "-m", "lockstep.probes.worktree_diff"]
+    review = ns["review"]
+    assert "capture-diff" in review["depends_on"]
+    assert "{steps.capture-diff.output}" in review["spec"]["task"]
+
+
+def test_the_repro_is_observed_before_the_diagnosis():
+    """`diagnose` was told to run the repro itself. A shell probe runs it now,
+    which is also why the diagnostician can be readonly."""
+    ns = nodes("bugfix-heal")
+    probe = ns["observe-repro"]
+    assert probe["kind"] == "shell"
+    assert probe["spec"]["cmd"][:3] == ["python", "-m", "lockstep.probes.command_output"]
+    assert "{args.repro}" in probe["spec"]["cmd"]
+    diag = ns["diagnose"]
+    assert "observe-repro" in diag["depends_on"]
+    assert "{steps.observe-repro.output}" in diag["spec"]["task"]
+
+
+@pytest.mark.parametrize("name", ["implement-heal", "bugfix-heal", "sdlc-e2e"])
+def test_flows_that_interpolate_a_diff_raise_the_spill_cap(name):
+    """A real diff blows past the 20000-char default, and the reviewer's prompt
+    then carries a stub path instead of the change. Raised, and the prompt says
+    what to do if it spills anyway."""
+    d = flow(name)
+    assert d.get("max_interp_chars", 20000) >= 60000
+    assert "spilled" in nodes(name)["review"]["spec"]["task"]

@@ -68,13 +68,41 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   `readonly_argv` or verification fails (`readonly-unenforced`) — §6.11 wants
   enforcement visible in argv, not in the prompt. Readonly nodes answer on
   stdout — they cannot write `result.json`. claude: `--disallowedTools`.
-  **pi: `--tools read,grep,find,ls,submit_result`** — an allowlist, so name
+  **pi: `--tools read,submit_result`** — an allowlist, so name
   the node's answer tool or you remove its answer channel, on a stanza with
   **no `--mode json`** (`pi-review`): readonly answers on stdout, and
   `--mode json` fills stdout with pi's event stream. Make every
   judgement node (review, triage, estimate, plan) readonly: it fans out, it
   cannot corrupt the tree, and on a metered subscription it is the cheapest
   reliability lever there is.
+
+  **`readonly_argv` must remove the SHELL too**, not just write/edit — bash is
+  a write vector (`echo x > file`), and `readonly` is exactly what licenses the
+  scheduler to drop the `tree` token and run these nodes concurrently. claude:
+  `--disallowedTools Edit,Write,NotebookEdit,Bash`. pi's built-ins are `read,
+  edit, write, bash, web_search, source_check, fetch_content,
+  get_search_content, taskflow` — no `grep`/`find`/`ls`, so `read` really is
+  the whole grant.
+
+  **Consequence to design around: a readonly node cannot run `git diff` or
+  search the repo.** Hand it the input as data from a shell node — see the
+  probe library below.
+
+## The probe library (`python -m lockstep.probes.<name>`)
+
+A gate DECIDES (emits `Verdict`, driver branches); a probe OBSERVES (emits
+text, a readonly node judges it). Always exits 0 — a failed command is an
+observation, not a broken node.
+
+- `worktree_diff [--base HEAD]` — status, diff, and the contents of CREATED
+  files (untracked, so absent from any diff).
+- `command_output "<cmd>" [--label repro]` — run one command, report exit code
+  and output, capped middle-out so a traceback keeps both ends.
+
+Shape: `shell probe → readonly judge`. `flows/starter/implement-heal` (capture
+the diff, then review it) and `bugfix-heal` (run the repro, then diagnose it)
+are the worked examples. Beyond enabling `readonly`, the observation becomes
+deterministic, cached, and durable as evidence in the run dir.
 
 ## Interpolation (§7)
 

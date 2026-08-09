@@ -112,7 +112,7 @@ prompt_via = "stdin"                       # not argv: see §11 on the 32k cap
 [executors.pi-review]
 argv = ["pi.cmd", "-p", "--no-session", "{prompt}"]
 prompt_via = "stdin"
-readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
+readonly_argv = ["--tools", "read,submit_result"]
 
 # The work order's `bulk` class: high-volume classification.
 [executors.bulk]

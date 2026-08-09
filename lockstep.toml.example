@@ -20,7 +20,7 @@ argv = ["claude", "-p", "{prompt}", "--output-format", "json"]
 prompt_via = "argv"                        # "argv" | "stdin"
 json_field = "result"                      # unwrap this envelope field; omit for raw
 persona_flag = []                          # empty => prepend persona body to the prompt
-readonly_argv = ["--disallowed-tools", "Edit,Write"]   # appended for spec.readonly nodes;
+readonly_argv = ["--disallowed-tools", "Edit,Write,NotebookEdit,Bash"]  # for spec.readonly nodes;
                                            # absent => readonly nodes error at verify
 
 [executors.pi]                             # work machine: pi carries the Copilot login
@@ -70,8 +70,28 @@ prompt_via = "stdin"                       # not argv: a corrective re-spawn's p
 # unrestricted the model created the file; with the allowlist it did not, while
 # still replying "DONE". The allowlist covers EXTENSION tools too, so name
 # `submit_result` or the guard extension's own tool disappears; naming a tool
-# that is not installed is harmless. grep/find/ls are OFF by default in pi and
-# the allowlist turns them ON.
+# that is not installed is harmless.
+#
+# KNOW WHAT THIS GRANTS. pi 0.83.0's built-in tools are exactly: read, edit,
+# write, bash, web_search, source_check, fetch_content, get_search_content,
+# taskflow. There is no grep, find or ls — bash covers those. So this list
+# grants READ AND NOTHING ELSE. (An earlier version of this file said
+# `read,grep,find,ls,submit_result`, copied from pi's own --help example;
+# three of those five are not tool names, so the list did nothing extra and
+# the comment claiming it "turned grep/find/ls on" was wrong.)
+#
+# That is the intended strength, not an accident: `readonly` is what licenses
+# the scheduler to DROP THE TREE TOKEN and run these nodes concurrently, and
+# bash is a write vector (`echo x > file`). A stanza that keeps bash while
+# excluding write/edit passes verification and still breaks that invariant —
+# do not build one. Same reason claude's readonly_argv above excludes Bash,
+# not just Edit/Write.
+#
+# The consequence to design around: a readonly node CANNOT run `git diff` or
+# search the repo. Give it what it needs as DATA from a shell node instead —
+# `python -m lockstep.probes.worktree_diff` captures the change,
+# `python -m lockstep.probes.command_output` captures a command's output.
+# flows/starter/implement-heal and bugfix-heal are the worked examples.
 #
 # Two things this buys beyond safety: readonly nodes drop the `tree` token, so
 # reviewers fan out in parallel instead of queueing; and on a request-metered
@@ -86,7 +106,7 @@ prompt_via = "stdin"                       # not argv: a corrective re-spawn's p
 [executors.pi-review]
 argv = ["pi", "-p", "--no-session", "{prompt}"]
 prompt_via = "stdin"
-readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
+readonly_argv = ["--tools", "read,submit_result"]
 
 [executors.copilot-cli]
 argv = ["copilot", "-p", "{prompt}"]

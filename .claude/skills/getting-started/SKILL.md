@@ -53,7 +53,7 @@ wonder whether something is broken:
 - **`readonly: true` needs `readonly_argv` in the stanza.** A typical pi stanza
   has none, so flows using readonly nodes fail verification there. Add the
   argv rather than dropping the flag — on pi that is
-  `readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]` (an
+  `readonly_argv = ["--tools", "read,submit_result"]` (an
   allowlist, so name the node's answer tool) on a stanza with **no
   `--mode json`**, because a readonly node answers on stdout; on claude it is
   `--disallowedTools`. Readonly nodes drop the `tree` token and run in
