@@ -1,0 +1,42 @@
+{
+  "format_version": "1.0",
+  "name": "torture-timeout",
+  "description": "TIMEOUT AND PROCESS-TREE KILL. `sleeper` blocks for an hour against a 10s timeout. Expected: exit 3, and no orphaned child left running. `retry.max` is 0 so the run does not spend a minute of backoff proving it twice \u2014 SPEC \u00a79.3's one automatic retry on timeout still applies and is additive, so the node is attempted twice regardless.",
+  "budget": {
+    "max_agent_spawns": 8,
+    "max_run_minutes": 10
+  },
+  "nodes": [
+    {
+      "id": "sleeper",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "Sleep.\n\nSCENARIO: hang\n"
+      },
+      "output": "text",
+      "timeout_s": 10,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "final",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "print('torture flow reached its final node')"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120,
+      "depends_on": [
+        "sleeper"
+      ],
+      "final": true
+    }
+  ]
+}

@@ -37,6 +37,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
 .venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
+python contrib\torture_suite.py                    # zero-token ENGINE regression: heal/rollback/cascade, corrective re-spawn, quarantine, timeout — the paths a recording never takes (flows\demo\torture\README.md)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
 pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-waiting / failed / stopped
 ```

@@ -1,0 +1,43 @@
+{
+  "format_version": "1.0",
+  "name": "torture-contract",
+  "description": "CORRECTIVE RE-SPAWN. `emit` returns malformed JSON on its first invocation against a Finding[] contract; SPEC \u00a79.3 allows exactly one output-only corrective re-spawn, which must carry the original prompt AND the validation error. Expected: exit 0, emit x2, second invocation carrying the corrective block (asserted by the agent). Every scripted node sets retry.max 0: the harness default (2 tries, 60s backoff) is sized for transient provider 429/529s, and a scripted agent has no provider \u2014 its failures are deterministic, so retrying is pure latency. Found by a mutation test that took four minutes to fail.",
+  "budget": {
+    "max_agent_spawns": 8,
+    "max_run_minutes": 10
+  },
+  "nodes": [
+    {
+      "id": "emit",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "Emit findings.\n\nSCENARIO: bad-json:1\nEXPECT_RESPAWN: corrective\n"
+      },
+      "output": "json",
+      "timeout_s": 120,
+      "contract": "Finding[]",
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "final",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "print('torture flow reached its final node')"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120,
+      "depends_on": [
+        "emit"
+      ],
+      "final": true
+    }
+  ]
+}
