@@ -23,6 +23,20 @@ Two things are being installed, and they go to different places:
 | `lockstep` (the driver) | a venv | a Python package; never touches your data |
 | the cockpit (`contrib/`, `flows/`, `personas/`) | **inside your work repo** | the scripts resolve paths relative to the repo root they sit in |
 
+**Building the bundle (do this on the source machine, not the work machine):**
+
+```powershell
+.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
+.venv\Scripts\python.exe contrib\build_bundle.py --version 0.3.1
+```
+
+That produces `dist\lockstep-cockpit-<version>.zip` — wheel, `contrib/`,
+`flows/`, `personas/`, `docs/`, the skills, and this guide. It refuses to build
+if an input is missing rather than shipping a bundle with quiet gaps, and it
+never carries `runs/`, `lockstep.toml`, or `cost-fields.toml`. **Rebuild it
+after any change to the repo**; a stale zip is the most common way the work
+machine ends up on documentation that no longer matches the code.
+
 ---
 
 ## 1. Install the driver
@@ -83,7 +97,8 @@ default = "pi"
 
 [executors.pi]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "{prompt}"]
-prompt_via = "argv"
+prompt_via = "stdin"                       # not argv: see §11 on the 32k cap
+readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 
 # The work order's `bulk` class: high-volume classification.
 [executors.bulk]
@@ -93,8 +108,22 @@ prompt_via = "argv"
 # The `strong` class: review gates and adversarial passes.
 [executors.strong]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "{prompt}"]
-prompt_via = "argv"
+prompt_via = "stdin"
+readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
+
+# Same as `pi`, plus the in-session write-scope guard. Use it for nodes that
+# declare `spec.writes`; the guard does not gate a node that declares none.
+[executors.pi-guarded]
+argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--tools", "read,grep,find,ls,submit_result"]
 ```
+
+`prompt_via = "stdin"` from the start, not `"argv"`: a corrective re-spawn's
+prompt is several times the original, and Windows caps a command line near 32k
+(`verify --lint` warns about it). Switching later re-bills every node on the
+stanza, because argv composition is part of the input hash.
 
 Two facts worth knowing before you file a bug:
 
@@ -114,10 +143,17 @@ Two facts worth knowing before you file a bug:
   when quota returns; the default 60s backoff just burns two more requests
   against the same wall.
 - **The scope guard attaches per stanza**, from argv:
-  `--extension contrib\pi-extension\lockstep-guard.ts` (the `pi-guarded`
-  stanza in `lockstep.toml.example`). Live-verify it on this machine with
-  `lockstep run flows\starter\pi-guard-smoke.tg.json --fresh` after install
-  and after any pi upgrade.
+  `--extension contrib/pi-extension/lockstep-guard.ts` (the `pi-guarded`
+  stanza above). Live-verify it on this machine after install and after any pi
+  upgrade — **with the guarded stanza, or the probe tests the wrong thing**:
+
+  ```powershell
+  .venv\Scripts\lockstep.exe run flows\starter\pi-guard-smoke.tg.json `
+    --executor-default pi-guarded --fresh
+  ```
+
+  `--fresh` because editing the extension does not change the argv that names
+  it, so a plain re-run reuses the cached result and skips the probe.
 
 Copy `contrib\cost-fields.toml.example` to `contrib\cost-fields.toml` to get
 token numbers where the harness reports them (pi does; copilot cannot).
