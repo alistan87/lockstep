@@ -1,0 +1,64 @@
+{
+  "format_version": "1.0",
+  "name": "torture-resume",
+  "description": "MID-FLIGHT KILL AND RESUME. The suite starts the run, waits until `slow` has actually begun, kills the driver's whole process tree, and then runs a PLAIN `resume` \u2014 no --force-unlock. That is the property under test: the killed run leaves its lockfile behind, and `acquire_lock` clears it only because the recorded pid is dead on this host (SPEC \u00a710.3). Expected: exit 0, `first` NOT re-run (its input hash still matches, so resume serves it from the record), `slow` run twice (it never completed), and `last` reached. Only the first invocation of `slow` sleeps; the resumed one returns immediately.",
+  "budget": {
+    "max_agent_spawns": 10,
+    "max_run_minutes": 10
+  },
+  "nodes": [
+    {
+      "id": "first",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "Complete quickly and stay completed.\n\nSCENARIO: ok\nARTIFACT: torture/first.txt\n",
+        "writes": [
+          "torture/first.txt"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "slow",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "first"
+      ],
+      "spec": {
+        "task": "Take long enough to be killed.\n\nSCENARIO: slow:12\nARTIFACT: torture/slow.txt\n",
+        "writes": [
+          "torture/slow.txt"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "last",
+      "role": "work",
+      "kind": "shell",
+      "depends_on": [
+        "slow"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "print('resumed and finished')"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 120,
+      "final": true
+    }
+  ]
+}

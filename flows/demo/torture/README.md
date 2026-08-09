@@ -5,11 +5,11 @@ resource: flows/demo/torture/README.md
 ---
 # The torture flows
 
-Five flows that make something go wrong on purpose, so the engine paths that
+Six flows that make something go wrong on purpose, so the engine paths that
 only exist when something goes wrong can be tested at all.
 
 ```powershell
-python contrib\torture_suite.py                  # all five; zero tokens, ~1 minute
+python contrib\torture_suite.py                  # all six; zero tokens, ~90s
 python contrib\torture_suite.py --only heal      # substring filter
 python contrib\torture_suite.py --keep           # leave the temp repos to inspect
 ```
@@ -38,7 +38,7 @@ EXPECT_RESPAWN: heal
 Zero tokens, about a minute, repeatable, and the scenario is part of the prompt
 so it lands in the input hash like any other prompt content.
 
-## The five
+## The six
 
 | Flow | Exit | What it proves |
 |---|---|---|
@@ -47,6 +47,7 @@ so it lands in the input hash like any other prompt content.
 | `torture-contract` | 0 | malformed JSON against a contract ⇒ exactly one corrective re-spawn, carrying the original prompt AND the validation error |
 | `torture-quarantine` | 3 | a write outside `spec.writes` is detected inside the node's lock, preserved as a patch, removed from the tree, and the node fails naming it |
 | `torture-timeout` | 3 | a hung child is killed at `timeout_s` and the failure says so |
+| `torture-resume` | 0 | the driver is killed mid-node; a PLAIN `resume` reclaims the stale lock, does not re-run the completed node, re-runs the interrupted one, and finishes |
 
 ## Two things that make it a test rather than a demo
 
@@ -71,11 +72,39 @@ which artifacts the engine left behind.
 Each scenario runs in its own throwaway git repo with its own generated
 `lockstep.toml`, so the suite never touches the tree it is launched from.
 
+## The resume scenario, specifically
+
+`torture-resume` is the one with a custom driver, because it has to interrupt
+the driver rather than wait for it. It starts the run, waits until `slow` has
+**actually begun** — on the node's own invocation record, never on a sleep,
+because a timing guess would make a crash-recovery test flaky in exactly the
+way it must not be — then `kill_tree`s the whole process group and runs a
+**plain `resume`**.
+
+Plain is the point. The killed run leaves its lockfile behind, and
+`acquire_lock` clears it only because the recorded pid is dead *on this host*
+(SPEC §10.3); a cross-host lock still needs `--force-unlock`. That is what
+makes the boot protocol's rule — *lock pid dead ⇒ a plain resume is safe* —
+a mechanical fact rather than advice.
+
+What it then asserts: `first` ran **once**, because its input hash had not
+moved and resume served it from the record rather than re-billing it; `slow`
+ran twice, because it never completed; `last` was reached; and the lockfile is
+gone at the end. Only the first invocation of `slow` sleeps — after a resume the
+node has to re-run anyway, and making the second pass wait again would add
+latency to a point already made.
+
 ## Keeping it honest
 
 The suite passed on its first run, which is exactly the situation that warrants
-suspicion. It was mutation-tested: making the agent always succeed correctly
-produced five failures across two scenarios (`build ran 1x, expected 3`,
-`0 heal-round events`, `0 preserved attempt patch(es)`, and so on), and making
-the heal marker unmatchable made the agent's own assertion fire. Do the same
-after changing anything here — an assertion that cannot fail is not one.
+suspicion. It was mutation-tested, and every mutation was detected:
+
+| Mutation | What should break |
+|---|---|
+| agent always writes a GOOD artifact | 5 failures across the two heal scenarios — `build ran 1x, expected 3`, `0 heal-round events`, `0 preserved attempt patch(es)` … |
+| `HEAL_MARKER` made unmatchable | the agent's own assertion fires: *a re-spawn of 'build' did not carry the gate's findings* |
+| `torture-resume`'s slow node made fast | `slow ran 1x, expected 2` — nothing was there to interrupt |
+| the resume step skipped after the kill | `slow ended 'running'`, `last ended 'pending'`, `the lockfile survived` |
+
+Do the same after changing anything here — an assertion that cannot fail is
+not one.

@@ -147,6 +147,13 @@ def main() -> int:
     if name == "hang":
         time.sleep(3600)
         return 0
+    if name == "slow":
+        # A window for the suite to kill the driver mid-flight. Only the FIRST
+        # invocation is slow: after a resume the node has to re-run (it never
+        # completed), and making that second pass wait again would only add
+        # latency to a scenario whose point is already made.
+        if n == 1:
+            time.sleep(limit or 10)
     if name == "crash":
         sys.stderr.write(f"scripted_agent: crashing on purpose (invocation {n})\n")
         return 3

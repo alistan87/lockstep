@@ -114,8 +114,13 @@ def test_every_scenario_in_the_suite_has_a_flow_and_an_assertion():
     )
     suite = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(suite)
-    named = {name for name, _, _ in suite.SCENARIOS}
+    named = {entry[0] for entry in suite.SCENARIOS}
     on_disk = {flow_name(p) for p in TORTURE.glob("*.tg.json")}
     assert named == on_disk, f"suite covers {named}, flows on disk are {on_disk}"
-    for _, expected, assertion in suite.SCENARIOS:
-        assert callable(assertion) and expected in (0, 2, 3, 4, 6, 7, 8)
+    for entry in suite.SCENARIOS:
+        # (name, expected_exit, assertion[, custom driver]) — `torture-resume`
+        # carries the fourth because it interrupts the driver instead of
+        # waiting for it.
+        name, expected, assertion, *rest = entry
+        assert callable(assertion) and expected in (0, 2, 3, 4, 6, 7, 8), name
+        assert not rest or callable(rest[0]), name

@@ -31,10 +31,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 FLOWS = REPO / "flows" / "demo" / "torture"
+sys.path.insert(0, str(REPO / "src"))
+
+from lockstep.executors.proc import kill_tree  # noqa: E402  (after the path insert)
 
 
 # --------------------------------------------------------------- run-dir readers
@@ -172,14 +176,24 @@ def check_timeout(run_dir: Path, repo: Path) -> list[str]:
     return bad
 
 
-SCENARIOS = [
-    # flow name, expected exit, assertion
-    ("torture-heal", 0, check_heal),
-    ("torture-heal-exhausted", 2, check_heal_exhausted),
-    ("torture-contract", 0, check_contract),
-    ("torture-quarantine", 3, check_quarantine),
-    ("torture-timeout", 3, check_timeout),
-]
+def check_resume(run_dir: Path, repo: Path) -> list[str]:
+    bad = []
+    first = invocations(run_dir, "first")
+    if len(first) != 1:
+        bad.append(f"first ran {len(first)}x, expected 1 — resume re-ran a node whose "
+                   f"input hash had not moved, and re-billed it")
+    slow = invocations(run_dir, "slow")
+    if len(slow) != 2:
+        bad.append(f"slow ran {len(slow)}x, expected 2 (killed mid-flight, then resumed)")
+    for nid in ("first", "slow", "last"):
+        st = node_record(run_dir, nid).get("status")
+        if st != "done":
+            bad.append(f"{nid} ended {st!r}, expected 'done'")
+    if (run_dir / "lock").is_file():
+        bad.append("the lockfile survived a completed resume")
+    return bad
+
+
 
 
 # --------------------------------------------------------------- the harness
@@ -214,30 +228,102 @@ def latest_run(runs: Path) -> Path | None:
     return max(dirs, key=lambda d: d.stat().st_mtime) if dirs else None
 
 
-def run_one(name: str, expected: int, assertion, *, keep: bool) -> tuple[bool, list[str]]:
+def _cli(tmp: Path, *args: str) -> list[str]:
+    """`-m lockstep` has no __main__ and the console script may not be on PATH
+    from a checkout, so call main() directly. `--runs-dir` belongs to `run`
+    alone — `resume` is handed the run dir itself."""
+    argv = [sys.executable, "-c",
+            "import sys; from lockstep.cli import main; sys.exit(main())", *args,
+            "--repo-root", str(tmp), "--config", str(tmp / "lockstep.toml")]
+    if args and args[0] == "run":
+        argv += ["--runs-dir", str(tmp / "runs")]
+    return argv
+
+
+def _env() -> dict:
+    return {**os.environ, "PYTHONPATH": str(REPO / "src")}
+
+
+def drive_plain(tmp: Path, name: str) -> tuple[int, str]:
+    proc = subprocess.run(
+        _cli(tmp, "run", str(FLOWS / f"{name}.tg.json")),
+        capture_output=True, encoding="utf-8", errors="replace",
+        env=_env(), stdin=subprocess.DEVNULL, timeout=600,
+    )
+    return proc.returncode, (proc.stderr or "")
+
+
+def drive_kill_and_resume(tmp: Path, name: str) -> tuple[int, str]:
+    """Start it, kill the tree once `slow` is really running, then resume.
+
+    The wait is on the node's OWN evidence that it started — its invocation
+    record — not on a sleep. A timing guess would make this scenario flaky in
+    exactly the way a test of crash recovery must not be.
+    """
+    runs = tmp / "runs"
+    proc = subprocess.Popen(
+        _cli(tmp, "run", str(FLOWS / f"{name}.tg.json")),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+        env=_env(), text=True,
+    )
+    marker, deadline = None, time.time() + 120
+    while time.time() < deadline:
+        hits = list(runs.glob("*/phases/slow/scripted-invocations.jsonl"))
+        if hits:
+            marker = hits[0]
+            break
+        if proc.poll() is not None:
+            return proc.returncode, "the run finished before `slow` ever started"
+        time.sleep(0.2)
+    if marker is None:
+        kill_tree(proc)
+        return -1, "`slow` never started within 120s"
+
+    kill_tree(proc)
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        return -1, "the driver survived kill_tree"
+
+    run_dir = marker.parents[2]
+    notes = ""
+    lock = run_dir / "lock"
+    if not lock.is_file():
+        # Not fatal: it only means the kill landed outside the locked window.
+        notes += "note: no lockfile left behind by the killed run; "
+
+    resumed = subprocess.run(
+        _cli(tmp, "resume", str(run_dir)),   # PLAIN resume: no --force-unlock
+        capture_output=True, encoding="utf-8", errors="replace",
+        env=_env(), stdin=subprocess.DEVNULL, timeout=600,
+    )
+    return resumed.returncode, notes + (resumed.stderr or "")
+
+
+SCENARIOS = [
+    # flow name, expected exit, assertion
+    ("torture-heal", 0, check_heal),
+    ("torture-heal-exhausted", 2, check_heal_exhausted),
+    ("torture-contract", 0, check_contract),
+    ("torture-quarantine", 3, check_quarantine),
+    ("torture-timeout", 3, check_timeout),
+    ("torture-resume", 0, check_resume, drive_kill_and_resume),
+]
+
+
+def run_one(name: str, expected: int, assertion, *, keep: bool, driver=None) -> tuple[bool, list[str]]:
     tmp = Path(tempfile.mkdtemp(prefix=f"lockstep-torture-{name}-"))
     try:
         build_repo(tmp)
-        proc = subprocess.run(
-            # `-m lockstep` needs a __main__; the console script may not be on
-            # PATH when the suite is run from a checkout. Call main() directly.
-            [sys.executable, "-c", "import sys; from lockstep.cli import main; sys.exit(main())",
-             "run", str(FLOWS / f"{name}.tg.json"),
-             "--repo-root", str(tmp), "--runs-dir", str(tmp / "runs"),
-             "--config", str(tmp / "lockstep.toml")],
-            capture_output=True, encoding="utf-8", errors="replace",
-            env={**os.environ, "PYTHONPATH": str(REPO / "src")},
-            stdin=subprocess.DEVNULL, timeout=600,
-        )
+        code, stderr = (driver or drive_plain)(tmp, name)
         problems: list[str] = []
-        if proc.returncode != expected:
-            problems.append(f"exit {proc.returncode}, expected {expected}")
-            problems.append("  stderr tail: " + (proc.stderr or "").strip()[-400:])
+        if code != expected:
+            problems.append(f"exit {code}, expected {expected}")
+            problems.append("  stderr tail: " + stderr.strip()[-400:])
         run_dir = latest_run(tmp / "runs")
         if run_dir is None:
             problems.append("no run directory was created")
-            problems.append("  stdout tail: " + (proc.stdout or "").strip()[-600:])
-            problems.append("  stderr tail: " + (proc.stderr or "").strip()[-600:])
+            problems.append("  stderr tail: " + stderr.strip()[-600:])
         else:
             problems.extend(assertion(run_dir, tmp))
         if problems and keep:
@@ -260,8 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     passed = 0
-    for name, expected, assertion in picked:
-        ok, problems = run_one(name, expected, assertion, keep=ns.keep)
+    for name, expected, assertion, *rest in picked:
+        ok, problems = run_one(name, expected, assertion, keep=ns.keep,
+                               driver=(rest[0] if rest else None))
         if ok:
             passed += 1
             print(f"ok   {name}")
