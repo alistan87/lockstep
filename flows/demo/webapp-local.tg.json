@@ -1,0 +1,308 @@
+{
+  "format_version": "1.0",
+  "name": "webapp-local",
+  "description": "Build a working expense splitter - settlement logic, a stdlib HTTP API and a frontend - entirely on LOCAL models: no network, no credential, no token cost. Every harness node is TOOL-LESS, because a 7B given a read tool was measured emitting a hallucinated tool call AS ITS ANSWER; the models only write text and shell nodes do all file I/O. Three deterministic gates heal their own author: split_check runs the settlement against its own reference implementation and hands back a runnable counterexample, api_check drives the real server over HTTP in a child process, and ui_check runs the frontend logic under Node and refuses a page that loads anything from the network. REQUIRES two stanzas in lockstep.toml, `local-fast` and `local-smart` - see flows/demo/README-webapp.md.",
+  "max_interp_chars": 60000,
+  "budget": {
+    "max_agent_spawns": 40,
+    "max_run_minutes": 180
+  },
+  "nodes": [
+    {
+      "id": "write-logic",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "The project is an expense splitter: a group shares costs and the app works out who owes whom.\n\n`backend/split.py` is a PURE module - no I/O, no server, no work at import time - exposing exactly:\n\n    balances(expenses) -> {name: net}\n        expenses is a list of {\"payer\": str, \"amount\": float, \"participants\": [str, ...]}\n        Each expense splits `amount` EQUALLY among its participants.\n        The payer is credited the full amount; each participant is debited amount/len(participants).\n        A payer who is also a participant gets both. net > 0 means that person is owed money.\n\n    settle(balances) -> [{\"from\": str, \"to\": str, \"amount\": float}, ...]\n        Transfers that bring every balance to zero.\n        Match the largest creditor with the largest debtor, move the SMALLER of the two\n        magnitudes, and repeat. That gives at most n-1 transfers for n people.\n        No self-transfers, and no zero or negative amounts.\n\nWrite backend/split.py: exactly those two functions, nothing else.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
+        "executor": "local-smart",
+        "readonly": true
+      },
+      "output": "text",
+      "timeout_s": 900,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "save-logic",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "write-logic",
+          "--out",
+          "backend/split.py",
+          "--strip-fence"
+        ],
+        "writes": [
+          "backend/split.py"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300,
+      "depends_on": [
+        "write-logic"
+      ]
+    },
+    {
+      "id": "logic-gate",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/demo/split_check.py",
+          "backend/split.py"
+        ]
+      },
+      "output": "json",
+      "timeout_s": 300,
+      "depends_on": [
+        "save-logic"
+      ],
+      "contract": "Verdict",
+      "heal": {
+        "max_rounds": 3,
+        "targets": [
+          "write-logic"
+        ],
+        "rollback": true
+      }
+    },
+    {
+      "id": "write-server",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "The project is an expense splitter: a group shares costs and the app works out who owes whom.\n\n`backend/split.py` is a PURE module - no I/O, no server, no work at import time - exposing exactly:\n\n    balances(expenses) -> {name: net}\n        expenses is a list of {\"payer\": str, \"amount\": float, \"participants\": [str, ...]}\n        Each expense splits `amount` EQUALLY among its participants.\n        The payer is credited the full amount; each participant is debited amount/len(participants).\n        A payer who is also a participant gets both. net > 0 means that person is owed money.\n\n    settle(balances) -> [{\"from\": str, \"to\": str, \"amount\": float}, ...]\n        Transfers that bring every balance to zero.\n        Match the largest creditor with the largest debtor, move the SMALLER of the two\n        magnitudes, and repeat. That gives at most n-1 transfers for n people.\n        No self-transfers, and no zero or negative amounts.\n\nWrite backend/server.py: a Python standard-library HTTP server. No third-party imports.\n\n- It is started as `python backend/server.py <PORT>` and MUST bind that port on 127.0.0.1.\n- It imports balances and settle from the split module sitting NEXT TO IT: add the file's own\n  directory to sys.path first, then `from split import balances, settle`.\n- Keep posted expenses in a module-level list.\n- Every response is JSON with Content-Type application/json.\n\n    POST /expenses  body {\"payer\",\"amount\",\"participants\"}  -> 201 {\"ok\": true, \"count\": <total so far>}\n    GET  /expenses                                          -> 200 {\"expenses\": [...]}\n    GET  /balances                                          -> 200 {\"balances\": {name: net}}\n    GET  /settlement                                        -> 200 {\"settlement\": [{\"from\",\"to\",\"amount\"}]}\n    GET  /health                                            -> 200 {\"ok\": true}\n    any other path, GET or POST                             -> 404\n\nSilence the default request logging.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
+        "executor": "local-fast",
+        "readonly": true
+      },
+      "output": "text",
+      "timeout_s": 900,
+      "retry": {
+        "max": 0
+      },
+      "depends_on": [
+        "logic-gate"
+      ]
+    },
+    {
+      "id": "save-server",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "write-server",
+          "--out",
+          "backend/server.py",
+          "--strip-fence"
+        ],
+        "writes": [
+          "backend/server.py"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300,
+      "depends_on": [
+        "write-server"
+      ]
+    },
+    {
+      "id": "api-gate",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/demo/api_check.py",
+          "backend/server.py"
+        ]
+      },
+      "output": "json",
+      "timeout_s": 180,
+      "depends_on": [
+        "save-server"
+      ],
+      "contract": "Verdict",
+      "heal": {
+        "max_rounds": 3,
+        "targets": [
+          "write-server"
+        ],
+        "rollback": true
+      }
+    },
+    {
+      "id": "write-ui",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "Write frontend/split.js: a pure ES module, no DOM access, exporting exactly:\n\n    formatAmount(n)        -> a string with ALWAYS two decimals: 12.345 -> \"12.35\", 4 -> \"4.00\"\n    summarise(balances)    -> [{name, text}] one row per person, SORTED BY NAME.\n                              text says \"<name> is owed <amount>\" when they are owed money,\n                              \"<name> owes <amount>\" when they owe, and \"<name> is settled\"\n                              when the balance is within half a cent of zero.\n                              Amounts in the text always have two decimals and are positive.\n    renderSettlement(list) -> [\"ben pays ana 4.00\", ...] one line per transfer naming both\n                              people and the amount; an empty list gives an empty array.\n\n`balances` is {name: net} where net > 0 means that person is owed money.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
+        "executor": "local-fast",
+        "readonly": true
+      },
+      "output": "text",
+      "timeout_s": 900,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "save-ui",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "write-ui",
+          "--out",
+          "frontend/split.js",
+          "--strip-fence"
+        ],
+        "writes": [
+          "frontend/split.js"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300,
+      "depends_on": [
+        "write-ui"
+      ]
+    },
+    {
+      "id": "write-page",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "task": "Write frontend/index.html: one self-contained HTML page.\n\n- It MUST contain elements with these exact ids: expense-form, balances, settlement.\n- It MUST NOT reference any external URL - no CDN, no https:// and no // in any src or href.\n  There is no network. Load only \"./app.js\" as a module.\n- A form to add an expense (payer, amount, participants), and two empty containers for the\n  balance summary and the settlement lines.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
+        "executor": "local-fast",
+        "readonly": true
+      },
+      "output": "text",
+      "timeout_s": 900,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "save-page",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/save_result.py",
+          "--node",
+          "write-page",
+          "--out",
+          "frontend/index.html",
+          "--strip-fence"
+        ],
+        "writes": [
+          "frontend/index.html"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300,
+      "depends_on": [
+        "write-page"
+      ]
+    },
+    {
+      "id": "ui-gate",
+      "role": "gate",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "contrib/demo/ui_check.py",
+          "frontend/split.js",
+          "frontend/index.html"
+        ]
+      },
+      "output": "json",
+      "timeout_s": 300,
+      "depends_on": [
+        "save-ui",
+        "save-page"
+      ],
+      "contract": "Verdict",
+      "heal": {
+        "max_rounds": 3,
+        "targets": [
+          "write-ui",
+          "write-page"
+        ],
+        "rollback": true
+      }
+    },
+    {
+      "id": "list-files",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "import json, hashlib, pathlib\nout = []\nfor f in ('backend/split.py', 'backend/server.py', 'frontend/split.js', 'frontend/index.html'):\n    p = pathlib.Path(f)\n    h = hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.is_file() else 'missing'\n    out.append(f + '|' + h)\nprint(json.dumps({'schema_version': '1.0', 'files': out, 'notes': 'the four generated files'}))"
+        ]
+      },
+      "output": "json",
+      "timeout_s": 300,
+      "depends_on": [
+        "api-gate",
+        "ui-gate"
+      ],
+      "contract": "PathManifest"
+    },
+    {
+      "id": "review",
+      "role": "map",
+      "kind": "harness",
+      "depends_on": [
+        "list-files"
+      ],
+      "over": "{steps.list-files.json.files}",
+      "item_var": "item",
+      "concurrency": 1,
+      "optional": true,
+      "spec": {
+        "executor": "local-smart",
+        "readonly": true,
+        "task": "A generated file passed its machine checks. Your assignment (as data): {item}\n\nThe part before the LAST '|' is the repo-relative path; the part after is a content fingerprint,\nincluded only so this re-runs when the file changes - ignore its value. You cannot open the file.\nFrom the path alone, say in ONE short sentence what a human reviewer should look at first in it.\n\nAnswer with that one sentence and nothing else.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose."
+      },
+      "output": "text",
+      "timeout_s": 600,
+      "retry": {
+        "max": 0
+      }
+    },
+    {
+      "id": "report",
+      "role": "work",
+      "kind": "shell",
+      "spec": {
+        "cmd": [
+          "python",
+          "-c",
+          "import pathlib\nfiles = ['backend/split.py', 'backend/server.py', 'frontend/split.js', 'frontend/index.html']\nfor f in files:\n    p = pathlib.Path(f)\n    size = ('  %d bytes' % p.stat().st_size) if p.is_file() else ''\n    print(('  ok   ' if p.is_file() else '  MISS ') + f + size)\nprint('expense splitter built and gated: settlement logic, HTTP API and frontend all passed')"
+        ]
+      },
+      "output": "text",
+      "timeout_s": 300,
+      "depends_on": [
+        "review"
+      ],
+      "final": true
+    }
+  ]
+}

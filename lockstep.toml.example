@@ -168,3 +168,39 @@ prompt_via = "stdin"
 argv = ["pi", "-p", "--mode", "json", "--no-session",
         "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
 prompt_via = "stdin"
+
+# --- LOCAL MODELS, TOOL-LESS ---------------------------------------------------
+# Used by flows/demo/webapp-local.tg.json. `pi.cmd` on Windows; `pi` elsewhere.
+#
+# `--no-tools` is not a safety flourish, it is the only shape that WORKS. Probed
+# against pi 0.83.0 + ollama on 2026-08-09:
+#
+#     qwen2.5-coder:7b  --tools read : answered with a HALLUCINATED TOOL CALL
+#                                      ({"name":"read","arguments":{...}}) as its
+#                                      result text -- unusable on any channel
+#     qwen2.5-coder:7b  --no-tools   : clean, correct JSON in 3s
+#     qwen2.5-coder:14b --no-tools   : clean, correct JSON in 27s
+#
+# Small models narrate tool calls into the result channel. Give them none, put
+# everything they need in the prompt, and let shell nodes do the file I/O
+# (`contrib/save_result.py`). That is also the §8.3 stdout-channel shape.
+#
+# readonly_argv repeats `--no-tools` deliberately. The enforcement is already in
+# the base argv -- which is what SPEC §6.11 asks for, argv-visible rather than
+# asked-for-in-the-prompt -- and declaring it here is what makes
+# `spec.readonly: true` legal on these stanzas. That flag is worth having twice
+# over: it drops the `tree` token so the writers fan out, and it swaps the
+# standard footer for FOOTER_READONLY, which stops the driver telling a model
+# with no tools to go and write a result file it cannot write.
+
+[executors.local-fast]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+        "--provider", "ollama", "--model", "qwen2.5-coder:7b", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--no-tools"]
+
+[executors.local-smart]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+        "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--no-tools"]
