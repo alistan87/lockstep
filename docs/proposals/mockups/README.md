@@ -35,6 +35,15 @@ $c = "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
 
 Use a throwaway `--user-data-dir` so it does not touch a real browser profile.
 
+**Check the file actually changed.** Chrome resolves a path it cannot find to
+nothing, writes no file, and still exits 0 — so a bad `--screenshot` path or a
+bash-style `file:///d/...` URL (Windows Chrome wants `file:///D:/...`) leaves
+the PREVIOUS png sitting there, and the next person reads a stale image as if
+it were the new page. That happened three times in a row on 2026-08-10 while
+regenerating this snapshot, and each time the conclusion drawn from it was
+wrong. Drive it from Python and use `Path.as_uri()` plus an mtime assertion, or
+check the byte size moved.
+
 ## The snapshot is a snapshot
 
 It is generated, not authored, and it will drift as the page changes. It carries

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """build_bundle.py — assemble the work-machine bundle: wheel + cockpit + docs.
 
-    python contrib/build_bundle.py [--version 0.4.0]
+    python contrib/build_bundle.py [--version 0.5.0]
 
 Lives IN the repo deliberately. The first version of this script sat outside it,
 which meant the docs reorganisation rewrote every path in the project except the
@@ -99,15 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
 
-    # The install guide goes to the TOP LEVEL, which is what the comment above
-    # promised and the code did not do: it was copied to its own nested path,
-    # where the wholesale contrib/ copy had already put it. A recipient opening
-    # the zip should not have to go looking for the one file that tells them
-    # what to do with it.
-    src = REPO / INSTALL_GUIDE
-    if src.is_file():
-        shutil.copy2(src, stage / Path(INSTALL_GUIDE).name)
-    else:
+    if not (REPO / INSTALL_GUIDE).is_file():
         missing.append(INSTALL_GUIDE)
 
     if missing:

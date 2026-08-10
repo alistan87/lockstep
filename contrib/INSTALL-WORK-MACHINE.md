@@ -27,7 +27,7 @@ Two things are being installed, and they go to different places:
 
 ```powershell
 .venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
-.venv\Scripts\python.exe contrib\build_bundle.py --version 0.4.0
+.venv\Scripts\python.exe contrib\build_bundle.py --version 0.5.0
 ```
 
 That produces `dist\lockstep-cockpit-<version>.zip` — wheel, `contrib/`,
@@ -44,7 +44,7 @@ machine ends up on documentation that no longer matches the code.
 ```powershell
 cd <your-work-repo>
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install lockstep-0.4.0-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install lockstep-0.5.0-py3-none-any.whl
 .venv\Scripts\lockstep.exe --help
 ```
 
@@ -236,7 +236,8 @@ python contrib\mission_server.py                             # the MISSION page,
 ```
 
 The MISSION page is the surface to give the domain expert if they would rather
-look at a browser than a terminal: board → timeline → step → raw record, all
+look at a browser than a terminal: a rail of recent runs, then board → timeline
+→ step → raw record, all
 server-rendered so it works with JavaScript off, and no route that writes. It
 binds to loopback; `--host` requires an explicit value and prints a warning
 naming what it exposes, because `runs/` is exactly the sensitive material this

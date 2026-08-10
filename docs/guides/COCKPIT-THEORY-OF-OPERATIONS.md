@@ -398,7 +398,7 @@ usable instruction the moment there are two MISSIONs that can drift.
 
 ### 7.1 The MISSION page
 
-`mission_server.py` is one page with four disclosure levels, aimed at being a
+`mission_server.py` is one page with four disclosure levels and a run rail, aimed at being a
 surface the domain expert opens *by choice*. There is no tier split and no
 `--driver` flag: a CLI flag is a per-process seam, so a DE and a driver at the
 same URL would see the same page anyway.

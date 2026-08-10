@@ -212,8 +212,8 @@ that writes.
 
 ### The MISSION page
 
-`contrib/mission_server.py` is one page with four levels of disclosure, aimed at
-being a surface a domain expert opens *by choice*:
+`contrib/mission_server.py` is one page with four levels of disclosure and a rail
+of recent runs, aimed at being a surface a domain expert opens *by choice*:
 
 | level | what it shows | entry |
 |---|---|---|

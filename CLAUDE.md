@@ -76,7 +76,7 @@ python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is ru
 python contrib\session_spend.py               # this session: orchestrator transcript spend + runs it started
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
 pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
-python contrib\mission_server.py                       # the MISSION page: board -> timeline -> step -> raw record; GET only, loopback
+python contrib\mission_server.py                       # the MISSION page: runs rail -> board -> timeline -> step -> raw record; GET only, loopback (?run=<name> picks a past run)
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
 ```
 
@@ -155,7 +155,9 @@ detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
 zero dependencies) plus `mission_view.py` — pure render functions shared by
 `mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
-MISSION page: board → timeline → step drawer → raw record, GET routes only, every
+MISSION page: a left rail of recent runs (`?run=<name>`, matched against the
+directory listing, unknown = 404) → board → timeline → step drawer → raw
+record, GET routes only, every
 word and time rendered server-side). Two tests pin vocabulary across surfaces —
 `mission_view.GLOSSARY` against `cockpit.ps1`'s, and the page's `L3_GLOSSARY`
 against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. The page's 1 Hz tick

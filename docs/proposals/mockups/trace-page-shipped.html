@@ -34,7 +34,46 @@
 body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
  -webkit-font-smoothing:antialiased}
-.wrap{max-width:1080px;margin:0 auto;transition:opacity .12s}
+.wrap{max-width:1180px;margin:0 auto;transition:opacity .12s;min-width:0}
+/* The shell. A left rail for runs and one main column -- NOT an app frame.
+   The board is still a page you scroll; the rail only answers "which run".
+   Below 1100px the rail goes horizontal and scrolls, so a narrow window loses
+   a sidebar rather than a feature. */
+.shell{display:grid;grid-template-columns:230px minmax(0,1fr);gap:0 22px;
+ align-items:start;max-width:1760px;margin:0 auto}
+.side{position:sticky;top:12px;padding:14px 4px 14px 14px;min-width:0}
+.side-h{font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+ color:var(--muted);padding:0 8px 8px}
+.side-run{display:grid;grid-template-columns:8px 1fr;gap:2px 8px;align-items:center;
+ padding:7px 8px;border-radius:7px;text-decoration:none;color:var(--ink);
+ border:1px solid transparent}
+.side-run:hover{background:var(--raise)}
+.side-run.cur{background:var(--raise);border-color:var(--line)}
+.side-name{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-word{grid-column:2;font-size:11px;color:var(--muted)}
+.side-empty{color:var(--muted);font-size:12px;padding:4px 8px}
+@media (max-width:1100px){
+ .shell{grid-template-columns:minmax(0,1fr)}
+ .side{position:static;display:flex;gap:8px;overflow-x:auto;padding:10px 0}
+ .side-h{display:none}
+ .side-run{flex:0 0 auto;grid-template-columns:8px auto}
+ .side-word{display:none}}
+/* The plot is the reason for the width, so give it the room: taller rows, a
+   wider label gutter, and a legend that says what the marks mean. */
+.wf-legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:2px 0 10px;
+ font-size:11.5px;color:var(--muted)}
+.wf-legend i{display:inline-block;width:18px;height:3px;border-radius:2px;
+ margin-right:6px;vertical-align:middle}
+.wf-legend .k-crit{background:var(--accent);height:9px;width:3px;border-radius:1px}
+.wf-legend .k-roll{background:var(--warning);height:11px;width:2px;border-radius:0}
+.wf-legend .k-ser{background:var(--serious);opacity:.5}
+/* The chain everything else waited for. A left edge, not a fill: the segment
+   colours already carry status, and repainting them would say two things at
+   once with one channel. */
+.wf-row.crit .wf-lab{box-shadow:inset 3px 0 0 var(--accent)}
+.wf-row.crit .wf-lab .n{font-weight:600}
+.rollback{position:absolute;top:0;bottom:0;width:0;
+ border-left:2px dashed var(--warning);opacity:.75;pointer-events:auto;z-index:2}
 .wrap.stale{opacity:.62}
 .top{display:flex;align-items:center;gap:9px;margin-bottom:16px;flex-wrap:wrap}
 .brand{font-weight:600;letter-spacing:.02em;font-size:12.5px}
@@ -143,6 +182,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  font-size:11.5px;color:var(--ink-2);white-space:nowrap}
 .seg.end .hint{left:auto;right:0}   /* clamped: neither may overflow the plot */
 .seg.end .tip{left:auto;right:calc(100% + 8px)}
+.seg.inside .hint{left:auto;right:0}
+.seg.inside .tip{left:auto;right:7px;top:-1px;color:var(--plane);font-weight:600}
+.seg.run.inside .tip{color:var(--ink);font-weight:400}
 .seg:hover .hint,.seg:focus-visible .hint{display:block}
 /* the axis and the gridlines share the TRACK column's coordinate space, not
    the card's, so a tick and a bar edge mean the same x */
@@ -178,6 +220,8 @@ pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospa
 .feed div{padding:2px 0}
 .foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
 body.offline .live .dot{animation:none;background:var(--muted)}
+@media (min-width:1280px){.wf-plot{--gutter:260px}.wf-track{height:26px}
+ .seg{border-radius:5px}}
 @media (max-width:700px){.wf-plot{--gutter:118px}.wf-lab .w{padding-left:0}
  .seg .hint{white-space:normal;max-width:60vw}}
 /* Under forced colours or on paper, the page falls to the TABLE VIEW. Both are
@@ -190,15 +234,18 @@ body.offline .live .dot{animation:none;background:var(--muted)}
 }
 @media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
 </style>
-<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-09T05:04:48Z" data-event-cursor="18">
-<div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip"><span class="dot mut"></span>not running</span><span class="chip" title="unchained: 18 events carry no chain digest"><span class="dot warn"></span>unchained — 18 events carry no fingerprint</span></div>
+<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-10T14:39:48Z" data-event-cursor="18" data-run="2026-08-08-quarterly-brief-a41c">
+<div class="shell"><nav class="side" aria-label="runs">
+<div class="side-h">runs on this machine</div>
+<a class="side-run cur" href="?run=2026-08-08-quarterly-brief-a41c" aria-current="page"><span class="dot warn"></span><span class="side-name">quarterly-brief</span><span class="side-word">07:39 &middot; needs you</span></a>
+</nav><div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip"><span class="dot mut"></span>not running</span><span class="chip" title="unchained: 18 events carry no chain digest"><span class="dot warn"></span>unchained — 18 events carry no fingerprint</span></div>
 <p class="stale-note" id="offline-note" role="status" hidden>This page has stopped hearing from the run. What you can see below is the last thing it knew, and it may be out of date — ask the assistant whether the run is still going.</p>
 <p class="hero">step 7 of 9  -  needs you  -  18 m  -  1 rework round  -  your decision is next</p>
 <p class="hero-sub" style="color:var(--warning)">NEEDS YOU &mdash; read the terminal pane.</p>
 <p class="hero-sub">This page only reads files. Decisions are not made here — when something needs you, it happens in the terminal.</p>
-<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">11m24s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">your decision</div><div class="v">next</div></div></div>
+<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">10m00s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">your decision</div><div class="v">next</div></div></div>
 <div class="card"><div class="meter-head"><span class="lab">agent tasks used</span><span class="num">9 of 25</span></div><div class="track"><div class="fill" style="width:36.0%"></div><div class="ceil"></div></div><div class="meter-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div></div>
-<div class="card"><h2>spend</h2><pre>1 rework round | 11m of node time | tokens: 178,150 in / 22,500 out | $1.66 notional
+<div class="card"><h2>spend</h2><pre>1 rework round | 10m of node time | tokens: 178,150 in / 22,500 out | $1.66 notional
 running: nothing - waiting or done
 this session: no orchestrator transcript found for this repo</pre></div>
 <div class="card decide"><h2>⊗ needs you — a decision</h2><div class="evidence">Approve: publish the quarterly brief
@@ -213,61 +260,63 @@ What this changes if you approve
 </div><p class="terminal-note" id="terminal-note">This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p><p class="key-echo" id="key-echo" role="status" hidden>This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p></div>
 <div class="card"><div class="cardhead"><h2>the steps</h2><div class="viewswitch"><button class="btn" data-view="l0" aria-pressed="true">board</button><button class="btn" data-view="l1" aria-pressed="false">show every step</button></div></div>
 <div id="l0" class="steps">
-<div class="step"><span class="ico good">✓</span><a class="name" href="#step-draft">draft the sections</a><span class="word">sent back for rework (1 of 2)</span></div>
+<div class="step"><span class="ico good">✓</span><a class="name" href="#step-draft">draft the sections</a><span class="word">done (sent back once)</span></div>
 <div class="note">two figures disagreed with the source; sent back once</div>
 <div class="step"><span class="ico warn">⊗</span><a class="name" href="#step-approve">approve the brief</a><span class="word">needs you</span></div>
 <div class="step"><span class="ico mut">○</span><a class="name" href="#step-publish">publish to the drive</a><span class="word">waiting</span></div>
 <div class="tail">5 finished, 1 not needed</div>
 </div>
 <div id="l1">
+<div class="wf-legend"><span><i class="k-crit"></i>the chain everything else waited for</span><span><i class="k-roll"></i>work sent back and files restored</span><span><i class="k-ser"></i>an attempt that was replaced</span></div>
 <div class="wf-plot"><div class="wf-scale">
 <div class="gridline" style="left:1.11%"></div>
 <div class="gridline" style="left:28.89%"></div>
 <div class="gridline" style="left:56.67%"></div>
 <div class="gridline" style="left:84.44%"></div>
+<div class="rollback" style="left:35.00%" title="07:46 — numbers sent work back and the files were restored; bars to the left of this line describe work that was then discarded"></div>
 </div><div class="wf">
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-plan">plan the brief</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 22:04–22:07 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 22:04–22:07 · 2m30s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-plan">plan the brief</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 07:39–07:42 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 07:39–07:42 · 2m30s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-draft">draft the sections</a> <span class="ico mut" title="this step left a note">•</span></span><span class="w">sent back for rework (1 of 2)</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 22:07–22:11 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 22:07–22:11 · 3m42s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — sent back for rework (1 of 2) · 22:12–22:13 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — sent back for rework (1 of 2) · 22:12–22:13 · 1m12s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-draft">draft the sections</a> <span class="ico mut" title="this step left a note">•</span></span><span class="w">done (sent back once)</span></div><div class="wf-track">
+<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:42–07:46 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:42–07:46 · 3m42s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:47–07:48 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:47–07:48 · 1m12s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-numbers">check the numbers</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 22:11–22:12 · 1m30s" style="left:34.44%;width:8.33%"><span class="hint" aria-hidden="true">check the numbers — done · 22:11–22:12 · 1m30s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 22:13–22:14 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 22:13–22:14 · 30s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-numbers">check the numbers</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 07:46–07:46 · 6s" style="left:34.44%;width:0.56%"><span class="hint" aria-hidden="true">check the numbers — done · 07:46–07:46 · 6s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 07:48–07:49 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 07:48–07:49 · 30s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-figures">fix the figures</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 22:14–22:14 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 22:14–22:14 · 12s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-figures">fix the figures</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 07:49–07:49 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 07:49–07:49 · 12s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-evidence">write the evidence</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 22:14–22:14 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 22:14–22:14 · 30s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-evidence">write the evidence</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 07:49–07:49 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 07:49–07:49 · 30s</span></div>
 </div></div>
-<div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-render">render the appendix</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good end" tabindex="0" role="img" aria-label="render the appendix — done · 22:14–22:16 · 1m18s" style="left:56.11%;width:7.22%"><span class="hint" aria-hidden="true">render the appendix — done · 22:14–22:16 · 1m18s</span></div>
+<div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-render">render the appendix</a></span><span class="w">done</span></div><div class="wf-track">
+<div class="seg good end" tabindex="0" role="img" aria-label="render the appendix — done · 07:49–07:51 · 1m18s" style="left:56.11%;width:7.22%"><span class="hint" aria-hidden="true">render the appendix — done · 07:49–07:51 · 1m18s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico warn">⊗</span><a href="#step-approve">approve the brief</a></span><span class="w">needs you</span></div><div class="wf-track">
-<div class="seg warn open end" tabindex="0" role="img" aria-label="approve the brief — needs you · 22:16–now · 6m36s" style="left:63.33%;width:36.67%"><span class="hint" aria-hidden="true">approve the brief — needs you · 22:16–now · 6m36s</span><span class="tip">6m36s</span></div>
+<div class="seg warn open inside" tabindex="0" role="img" aria-label="approve the brief — needs you · 07:51–now · 6m36s" style="left:63.33%;width:36.67%"><span class="hint" aria-hidden="true">approve the brief — needs you · 07:51–now · 6m36s</span><span class="tip">6m36s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">○</span><a href="#step-publish">publish to the drive</a></span><span class="w">waiting</span></div><div class="wf-track">
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">⊘</span><a href="#step-notify">notify the team</a></span><span class="w">not needed</span></div><div class="wf-track skip">
 </div></div>
 </div><div class="wf-axis">
-<span class="tick" style="left:1.11%">22:05</span>
-<span class="tick" style="left:28.89%">22:10</span>
-<span class="tick" style="left:56.67%">22:15</span>
-<span class="tick" style="left:84.44%">22:20</span>
+<span class="tick" style="left:1.11%">07:40</span>
+<span class="tick" style="left:28.89%">07:45</span>
+<span class="tick" style="left:56.67%">07:50</span>
+<span class="tick" style="left:84.44%">07:55</span>
 </div></div>
 <details id="table-twin" open><summary>the same thing as a table</summary><table>
 <tr><th>step</th><th>state</th><th class="n">started</th><th class="n">worked for</th><th class="n">tries</th></tr>
-<tr><td>plan the brief</td><td>done</td><td class="n">22:04</td><td class="n">2m30s</td><td class="n">1</td></tr>
-<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>sent back for rework (1 of 2)</td><td class="n">22:07</td><td class="n">4m54s</td><td class="n">2</td></tr>
-<tr><td>check the numbers</td><td>done</td><td class="n">22:11</td><td class="n">2m00s</td><td class="n">2</td></tr>
-<tr><td>fix the figures</td><td>done</td><td class="n">22:14</td><td class="n">12s</td><td class="n">1</td></tr>
-<tr><td>write the evidence</td><td>done</td><td class="n">22:14</td><td class="n">30s</td><td class="n">1</td></tr>
-<tr><td>render the appendix</td><td>done</td><td class="n">22:14</td><td class="n">1m18s</td><td class="n">1</td></tr>
-<tr><td>approve the brief</td><td>needs you</td><td class="n">22:16</td><td class="n">6m36s</td><td class="n">1</td></tr>
+<tr><td>plan the brief</td><td>done</td><td class="n">07:39</td><td class="n">2m30s</td><td class="n">1</td></tr>
+<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>done (sent back once)</td><td class="n">07:42</td><td class="n">4m54s</td><td class="n">2</td></tr>
+<tr><td>check the numbers</td><td>done</td><td class="n">07:46</td><td class="n">36s</td><td class="n">2</td></tr>
+<tr><td>fix the figures</td><td>done</td><td class="n">07:49</td><td class="n">12s</td><td class="n">1</td></tr>
+<tr><td>write the evidence</td><td>done</td><td class="n">07:49</td><td class="n">30s</td><td class="n">1</td></tr>
+<tr><td>render the appendix</td><td>done</td><td class="n">07:49</td><td class="n">1m18s</td><td class="n">1</td></tr>
+<tr><td>approve the brief</td><td>needs you</td><td class="n">07:51</td><td class="n">6m36s</td><td class="n">1</td></tr>
 <tr><td>publish to the drive</td><td>waiting</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 <tr><td>notify the team</td><td>not needed</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 </table></details></div>
@@ -284,24 +333,24 @@ What this changes if you approve
 <span><i class="sw" style="background:var(--c3)"></i>cache read 69,000</span>
 <span><i class="sw" style="background:var(--c4)"></i>cache write 10,200</span>
 </div>
-<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
+<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m01s
   (history: every attempt is counted)
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
     ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
-    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
+    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  36s
     ✓ figures   harness  claude-opus-5  $0.11  12s
     ✓ evidence  shell    30s
     ✓ render    harness  claude-opus-5  $0.08  1m18s
     ⊗ approve   ?        needs you
     ○ publish   shell    -
     ⊘ notify    shell    not needed</pre></details>
-<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
+<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m01s
   (head: kept attempts only)
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
     ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
-    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  2m00s
+    ✓ numbers   harness  claude-opus-5  $0.22  ↻1  rework 1  36s
     ✓ figures   harness  claude-opus-5  $0.11  12s
     ✓ evidence  shell    30s
     ✓ render    harness  claude-opus-5  $0.08  1m18s
@@ -311,18 +360,18 @@ What this changes if you approve
 </div>
 <div class="card"><h2>ACTIVITY</h2><pre>needs you - nothing is spending</pre></div>
 <div class="card"><h2>what just happened</h2><div class="feed" id="feed">
-<div>22:12  draft the sections  running</div>
-<div>22:12  check the numbers  done</div>
-<div>22:13  draft the sections  done</div>
-<div>22:13  check the numbers  running</div>
-<div>22:14  check the numbers  done</div>
-<div>22:14  fix the figures  running</div>
-<div>22:14  fix the figures  done</div>
-<div>22:14  write the evidence  running</div>
-<div>22:14  write the evidence  done</div>
-<div>22:14  render the appendix  running</div>
-<div>22:16  render the appendix  done</div>
-<div>22:16  approve the brief  running</div>
+<div>07:47  draft the sections  running</div>
+<div>07:47  check the numbers  done</div>
+<div>07:48  draft the sections  done</div>
+<div>07:48  check the numbers  running</div>
+<div>07:49  check the numbers  done</div>
+<div>07:49  fix the figures  running</div>
+<div>07:49  fix the figures  done</div>
+<div>07:49  write the evidence  running</div>
+<div>07:49  write the evidence  done</div>
+<div>07:49  render the appendix  running</div>
+<div>07:51  render the appendix  done</div>
+<div>07:51  approve the brief  running</div>
 </div>
 <details id="raw-record"><summary>show the raw record</summary><table>
 <tr><th>term</th><th>what it means</th><th>value</th></tr>
@@ -335,8 +384,8 @@ What this changes if you approve
 <div class="card"><h2>what happened at each step</h2>
 <details id="step-plan"><summary>plan the brief</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T05:04:48Z
-  ended_at   : 2026-08-09T05:07:18Z
+  started_at : 2026-08-10T14:39:48Z
+  ended_at   : 2026-08-10T14:42:18Z
 
   artifacts
     argv.json                          50 bytes
@@ -345,8 +394,8 @@ What this changes if you approve
 <details id="step-draft"><summary>draft the sections</summary><pre>  state      : done
   attempts   : 2
   rework     : round 1
-  started_at : 2026-08-09T05:07:18Z
-  ended_at   : 2026-08-09T05:13:42Z
+  started_at : 2026-08-10T14:42:18Z
+  ended_at   : 2026-08-10T14:48:42Z
 
   artifacts
     argv.json                          50 bytes
@@ -355,8 +404,8 @@ What this changes if you approve
     stdout.log                        234 bytes</pre></details>
 <details id="step-numbers"><summary>check the numbers</summary><pre>  state      : done
   attempts   : 2
-  started_at : 2026-08-09T05:11:00Z
-  ended_at   : 2026-08-09T05:14:12Z
+  started_at : 2026-08-10T14:46:00Z
+  ended_at   : 2026-08-10T14:49:12Z
 
   latest verdict (lossy - per-round truth is in the rotated files)
     pass
@@ -367,8 +416,8 @@ What this changes if you approve
     stdout.log                        232 bytes</pre></details>
 <details id="step-figures"><summary>fix the figures</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T05:14:12Z
-  ended_at   : 2026-08-09T05:14:24Z
+  started_at : 2026-08-10T14:49:12Z
+  ended_at   : 2026-08-10T14:49:24Z
 
   artifacts
     argv.json                          50 bytes
@@ -376,15 +425,15 @@ What this changes if you approve
     stdout.log                        231 bytes</pre></details>
 <details id="step-evidence"><summary>write the evidence</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T05:14:24Z
-  ended_at   : 2026-08-09T05:14:54Z
+  started_at : 2026-08-10T14:49:24Z
+  ended_at   : 2026-08-10T14:49:54Z
 
   artifacts
     result.txt                          4 bytes</pre></details>
 <details id="step-render"><summary>render the appendix</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-09T05:14:54Z
-  ended_at   : 2026-08-09T05:16:12Z
+  started_at : 2026-08-10T14:49:54Z
+  ended_at   : 2026-08-10T14:51:12Z
 
   artifacts
     argv.json                          50 bytes
@@ -392,7 +441,7 @@ What this changes if you approve
     stdout.log                        230 bytes</pre></details>
 <details id="step-approve"><summary>approve the brief</summary><pre>  state      : needs you
   attempts   : 1
-  started_at : 2026-08-09T05:16:12Z
+  started_at : 2026-08-10T14:51:12Z
 
   artifacts
     result.txt                          4 bytes</pre></details>
@@ -407,10 +456,18 @@ What this changes if you approve
   artifacts
     result.txt                          4 bytes</pre></details>
 </div>
-<p class="foot">This page only reads files. It never changes the run.</p></div>
+<p class="foot">This page only reads files. It never changes the run.</p></div></div>
 <script>
 (function () {
   var wrap = document.querySelector('.wrap');
+  // Which run this page is about. The switcher navigates with ?run=<name>, so
+  // the poll has to carry it or a page opened on an OLD run would quietly
+  // start refreshing itself with the newest one's data -- the page showing a
+  // run you did not ask for, under a heading that says you did.
+  function runq(sep) {
+    var n = document.body.dataset.run || '';
+    return n ? (sep || '?') + 'run=' + encodeURIComponent(n) : '';
+  }
   function show(which) {
     var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
     if (!l0 || !l1) return;
@@ -467,7 +524,7 @@ What this changes if you approve
     var view = currentView(), open = openIds();
     var focused = document.activeElement && document.activeElement.id;
     wrap.classList.add('stale');       // hold the previous render, never a skeleton
-    fetch('api/state', { cache: 'no-store' })
+    fetch('api/state' + runq(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (doc) {
         wrap.innerHTML = doc.html;
@@ -483,7 +540,7 @@ What this changes if you approve
 
   function tick() {
     if (document.visibilityState === 'hidden') return;
-    fetch('api/events?after=' + cursor, { cache: 'no-store' })
+    fetch('api/events?after=' + cursor + runq('&'), { cache: 'no-store' })
       .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
       .then(function (doc) {
         fails = 0; offline(false);
