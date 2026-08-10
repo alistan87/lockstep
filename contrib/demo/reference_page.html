@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- reference_page.html — a page satisfying webapp-local's frontend contract.
+     Staged beside a candidate split.js when baking off `write-ui`, so a model
+     is judged on its MODULE rather than on a page it was not asked for. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>split</title></head>
+<body>
+  <form id="expense-form">
+    <input name="payer" placeholder="payer">
+    <input name="amount" placeholder="amount">
+    <input name="participants" placeholder="participants">
+    <button type="submit">add</button>
+  </form>
+  <div id="balances"></div>
+  <div id="settlement"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

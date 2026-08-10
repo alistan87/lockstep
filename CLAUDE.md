@@ -13,7 +13,10 @@ before changing engine behaviour or authoring a flow.
 (all adopted; the LATER
 revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
 Implementation-level departures are logged in `docs/spec/DEVIATIONS.md` — check it
-before reporting a spec mismatch. Adversarial audit reports live in
+before reporting a spec mismatch. **SPEC §15's open question is answered**
+(owner, 2026-08-10): lockstep is a build-loop tool AND a future domain runtime,
+and we are in the build-loop phase — so where ergonomics and domain generality
+conflict, take the ergonomics and record the seam (`docs/notes/ROADMAP-NOTES.md`). Adversarial audit reports live in
 `docs/audits/`. `docs/spec/ADDENDUM-A-pi-hooks.md` (informative) governs pi
 extension use: extensions may only ENFORCE, never enable — deleting one must
 not change what a correct agent can accomplish on any executor.

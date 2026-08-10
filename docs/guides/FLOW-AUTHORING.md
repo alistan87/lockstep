@@ -126,6 +126,7 @@ reading as clean.
 | `lint-map-without-budget` | a flow has a map node but no explicit `budget` | fan-out width is decided by runtime data; the spawn budget is the only ceiling |
 | `lint-argv-prompt` *(config)* | a reachable stanza uses `prompt_via = "argv"` | the 59,028-char corrective prompt vs Windows' 32,767 cap; `ArgvTooLong` fails cleanly, stdin removes the ceiling |
 | `lint-serialized-map` | a map with `concurrency > 1` whose items are not readonly | items hold the `tree` token and serialize anyway; the fan-out buys nothing and reads as a hang |
+| `lint-concurrent-heal-rollback` | two healing gates with `rollback: true` whose windows can overlap | a rollback discards every path changed since ITS baseline, not just its target's, so the gates undo each other; recorded twice on `webapp-local`, the second time exiting 0 with half the deliverable deleted |
 
 ## The gate library (`python -m lockstep.gates.<name>`)
 

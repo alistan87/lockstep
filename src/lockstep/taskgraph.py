@@ -594,6 +594,51 @@ def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
                 "spec.readonly (with a readonly_argv stanza) or concurrency 1",
             )
 
+    # W6 — two healing gates whose ROLLBACK WINDOWS can be open at the same
+    # time. A rollback's scope is every path changed since ITS baseline
+    # (SPEC §9.4.4), not just the paths its own target wrote — so two gates
+    # that snapshot the same tree and then heal concurrently discard each
+    # other's output.
+    #
+    # Recorded twice on flows/demo/webapp-local (2026-08-09 and -08-10). The
+    # first time, the backend gate's restore removed the frontend's module
+    # three rounds running and the frontend gate blocked on a file the other
+    # branch had deleted. The fix moved the collision one gate along rather
+    # than removing it, and the second time the run EXITED 0 with half the
+    # deliverable missing, because every gate had genuinely passed before a
+    # later rollback undid an earlier one's approved work.
+    #
+    # `heal-target-overlap` does not catch this: the targets are disjoint. It
+    # is the baselines that collide. A window opens when a gate's first heal
+    # target may start and closes when the gate settles, so two windows are
+    # disjoint exactly when one gate is an ancestor of EVERY target of the
+    # other — that is what forces it to have finished first.
+    healers = [
+        n for n in tg.nodes
+        if n.role == "gate" and n.heal and n.heal.max_rounds > 0 and n.heal.rollback
+    ]
+    if len(healers) > 1:
+        anc = {n.id: _ancestors(tg, n.id) for n in tg.nodes}
+
+        def finishes_before(gate: Node, other: Node) -> bool:
+            targets = [t for t in other.heal.targets if t in idset]
+            return bool(targets) and all(gate.id in anc.get(t, set()) for t in targets)
+
+        for i, g1 in enumerate(healers):
+            for g2 in healers[i + 1:]:
+                if finishes_before(g1, g2) or finishes_before(g2, g1):
+                    continue
+                warn(
+                    "lint-concurrent-heal-rollback",
+                    f"healing gates {g1.id!r} and {g2.id!r} both roll back, and neither is "
+                    f"forced to finish before the other's targets start — their rollback "
+                    f"windows can overlap, and a rollback discards every path changed since "
+                    f"its own baseline, not just its target's. Each will undo the other's "
+                    f"work; the run can even exit 0 with files a passed gate approved already "
+                    f"deleted. Add a dependency edge that serialises the branches, even where "
+                    f"no data flows along it",
+                )
+
     # W3 — a map's width is data-dependent at runtime; the spawn budget is the
     # only ceiling, so an explicit one beats the default.
     if any(n.role == "map" for n in tg.nodes) and "budget" not in tg.model_fields_set:

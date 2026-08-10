@@ -235,3 +235,13 @@ argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
         "--provider", "ollama", "--model", "qwen3.6:35b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
+
+# gemma4:26b is the best generalist on this machine: it passes the settlement,
+# the API and the frontend gates (179s / 127s / 94s). 17 GB against 16 GB of
+# VRAM, so a little CPU offload. Used for the frontend nodes, where the 7B
+# cannot produce a module and the 14B forgets two-decimal formatting.
+[executors.local-mid]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+        "--provider", "ollama", "--model", "gemma4:26b", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--no-tools"]

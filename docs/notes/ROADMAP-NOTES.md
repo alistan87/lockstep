@@ -115,3 +115,28 @@ spec-level refinements:
 - **Readonly result-channel formalization.** `FOOTER_READONLY` (DEVIATIONS
   entry) works, but the spec's §7 footer contract should acquire the readonly
   variant officially rather than by deviation.
+
+---
+
+## §15 answered (owner decision, 2026-08-10)
+
+**Both — and the build-loop phase is the one we are in.** Lockstep is a
+build-loop tool for driving coding agents *and*, later, the runtime executor
+for domain work; the domain system does not yet have a working graph or a real
+DAG to run, so the tool is being built first and the domain seams stay
+deferred.
+
+What that settles, and what it does not:
+
+- `pyfunc` / `action` executor kinds and a graph-backed `Store` (§16.3) are
+  **not cancelled** — they are waiting for a real second consumer. The rule of
+  two still holds: do not design `Workspace` / `Store` / `Policy` against an
+  imagined one. §15's own instruction, *revisit when the domain system has a
+  working graph*, is unchanged.
+- `Policy` stays the `AllowAllPolicy` no-op until domain work needs teeth.
+- Nothing in the core (§8.1) moves, which is why the question could stay open
+  through v1 in the first place.
+
+The practical consequence for now is a tie-breaker rather than a roadmap item:
+where a design choice trades build-loop ergonomics against domain-runtime
+generality, **take the ergonomics** and record the seam.

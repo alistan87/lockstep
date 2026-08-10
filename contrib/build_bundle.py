@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(f, dest)
 
-    for f in FILES + [INSTALL_GUIDE]:
+    for f in FILES:
         src = REPO / f
         if not src.is_file():
             missing.append(f)
@@ -98,6 +98,17 @@ def main(argv: list[str] | None = None) -> int:
         dest = stage / f
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
+
+    # The install guide goes to the TOP LEVEL, which is what the comment above
+    # promised and the code did not do: it was copied to its own nested path,
+    # where the wholesale contrib/ copy had already put it. A recipient opening
+    # the zip should not have to go looking for the one file that tells them
+    # what to do with it.
+    src = REPO / INSTALL_GUIDE
+    if src.is_file():
+        shutil.copy2(src, stage / Path(INSTALL_GUIDE).name)
+    else:
+        missing.append(INSTALL_GUIDE)
 
     if missing:
         # Refuse rather than ship a bundle whose gaps are announced only in

@@ -255,3 +255,79 @@ def test_fixture_flows_verify_clean(tmp_path):
             if i.level == "error"
         ]
         assert errors == [], f"{name}: {errors}"
+
+
+# --------------------------------------------- lint-concurrent-heal-rollback
+
+def _two_healers(ui_deps):
+    """Two branches, each with its own healing rollback gate. `ui_deps` decides
+    whether the second branch is forced to wait for the first."""
+    return {
+        "format_version": "1.0", "name": "two-healers",
+        "nodes": [
+            {"id": "a", "role": "work", "kind": "fake", "spec": {"task": "a"},
+             "output": "text"},
+            {"id": "gate-a", "role": "gate", "kind": "shell", "depends_on": ["a"],
+             "spec": {"cmd": ["true"]}, "output": "json", "contract": "Verdict",
+             "heal": {"max_rounds": 1, "targets": ["a"], "rollback": True}},
+            {"id": "b", "role": "work", "kind": "fake", "spec": {"task": "b"},
+             "depends_on": ui_deps, "output": "text"},
+            {"id": "gate-b", "role": "gate", "kind": "shell", "depends_on": ["b"],
+             "spec": {"cmd": ["true"]}, "output": "json", "contract": "Verdict",
+             "heal": {"max_rounds": 1, "targets": ["b"], "rollback": True},
+             "final": True},
+        ],
+    }
+
+
+def _lint_codes(flow: dict) -> list[str]:
+    from lockstep.taskgraph import TaskGraph, lint_flow
+
+    return [i.code for i in lint_flow(TaskGraph.model_validate(flow))]
+
+
+def test_concurrent_healing_rollback_gates_are_linted():
+    """Recorded twice on flows/demo/webapp-local. A rollback's scope is every
+    path changed since ITS baseline (SPEC §9.4.4), not just its target's, so
+    two gates healing over one tree discard each other's work. The second
+    occurrence exited 0 with half the deliverable missing — every gate had
+    passed, and a later rollback then removed files an earlier one approved.
+
+    `heal-target-overlap` cannot catch it: the targets ARE disjoint. It is the
+    baselines that collide.
+    """
+    assert "lint-concurrent-heal-rollback" in _lint_codes(_two_healers([]))
+
+
+def test_serialised_healing_gates_are_not_linted():
+    """One dependency edge — carrying no data — forces the first gate to settle
+    before the second's target can start, which makes the windows disjoint."""
+    assert "lint-concurrent-heal-rollback" not in _lint_codes(_two_healers(["gate-a"]))
+
+
+def test_a_single_healing_gate_is_never_linted():
+    flow = _two_healers([])
+    flow["nodes"] = [n for n in flow["nodes"] if n["id"] != "gate-b"]
+    flow["nodes"][-1]["final"] = True
+    assert "lint-concurrent-heal-rollback" not in _lint_codes(flow)
+
+
+def test_gates_that_do_not_roll_back_cannot_collide():
+    """No restore, no scope, nothing to clobber."""
+    flow = _two_healers([])
+    for n in flow["nodes"]:
+        if n.get("heal"):
+            n["heal"]["rollback"] = False
+    assert "lint-concurrent-heal-rollback" not in _lint_codes(flow)
+
+
+def test_the_shipped_flows_are_all_clean_of_it():
+    """Whatever else they warn about, no shipped flow may carry this one: it
+    produces a run that claims success while destroying its own output."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    for path in root.glob("flows/**/*.tg.json"):
+        flow = _json.loads(path.read_text(encoding="utf-8"))
+        assert "lint-concurrent-heal-rollback" not in _lint_codes(flow), path.name
