@@ -99,9 +99,12 @@ def settle(bal):
     return out
 ''',
      "settle"),
+    # A markdown fence IS a SyntaxError, and `syntax` is the more useful
+    # diagnosis: it quotes the offending line instead of handing back a
+    # traceback that points into this gate.
     ("prose in a markdown fence",
      "Here is the module:\n\n```python\ndef balances(x):\n    return {}\n```\n",
-     "import"),
+     "syntax"),
     ("no settle function",
      GOOD.split("def settle")[0],
      "api"),

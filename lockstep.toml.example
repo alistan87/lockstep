@@ -204,3 +204,14 @@ argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
         "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
+
+# The algorithm node of webapp-local needs more capacity than the mechanical
+# ones. Measured: qwen2.5-coder:14b cycled across three heal rounds on the
+# settlement loop (two wrong answers and one infinite loop); the 7B is fine for
+# the files that are mostly boilerplate. THE MODEL IS PER NODE - that is the
+# whole point of spec.executor.
+[executors.local-strong]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+        "--provider", "ollama", "--model", "mistral-small:24b", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--no-tools"]

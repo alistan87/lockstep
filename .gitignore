@@ -10,8 +10,3 @@ contrib/cost-fields.toml
 Deliverables/
 docs-manifest.json
 .cockpit-preview.html
-
-# flows/demo/webapp-local.tg.json builds an app at the repo root; it is
-# generated output, not source.
-/backend/
-/frontend/

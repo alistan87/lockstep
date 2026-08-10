@@ -122,6 +122,15 @@ def worker(module_path: str) -> int:
         spec = importlib.util.spec_from_file_location("candidate_split", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+    except SyntaxError as e:
+        # By far the commonest way a small model's file fails to import, and a
+        # traceback pointing into THIS gate is not a heal prompt. Quote the
+        # offending line: the model gets told exactly what to retype.
+        try:
+            line = path.read_text(encoding="utf-8", errors="replace").splitlines()[e.lineno - 1]
+        except (IndexError, TypeError, OSError):
+            line = ""
+        return fail("syntax", f"line {e.lineno}: {e.msg}\n    {line.strip()}")
     except Exception:
         return fail("import", traceback.format_exc(limit=3).strip())
 
@@ -202,6 +211,9 @@ def worker(module_path: str) -> int:
 # --------------------------------------------------------------- the gate
 
 FIX = {
+    "syntax": "the file is not valid Python — fix that one line and re-check the brackets "
+              "around it; a generator expression passed to sorted() needs its own parentheses, "
+              "and the key= argument goes INSIDE sorted(...)",
     "import": "make the file a plain importable Python module — no markdown fence, no prose, "
               "no server startup or other work at import time",
     "api": "define exactly the two required functions at module level",
@@ -217,6 +229,7 @@ FIX = {
     "crash": "the gate could not run the module",
 }
 SUMMARY = {
+    "syntax": "the file is not valid Python",
     "import": "the module does not import",
     "api": "the module does not expose the required functions",
     "balances": "balances are wrong",

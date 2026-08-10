@@ -14,11 +14,11 @@
       "kind": "harness",
       "spec": {
         "task": "The project is an expense splitter: a group shares costs and the app works out who owes whom.\n\n`backend/split.py` is a PURE module - no I/O, no server, no work at import time - exposing exactly:\n\n    balances(expenses) -> {name: net}\n        expenses is a list of {\"payer\": str, \"amount\": float, \"participants\": [str, ...]}\n        Each expense splits `amount` EQUALLY among its participants.\n        The payer is credited the full amount; each participant is debited amount/len(participants).\n        A payer who is also a participant gets both. net > 0 means that person is owed money.\n\n    settle(balances) -> [{\"from\": str, \"to\": str, \"amount\": float}, ...]\n        Transfers that bring every balance to zero.\n        Match the largest creditor with the largest debtor, move the SMALLER of the two\n        magnitudes, and repeat. That gives at most n-1 transfers for n people.\n        No self-transfers, and no zero or negative amounts.\n\nWrite backend/split.py: exactly those two functions, nothing else.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
-        "executor": "local-smart",
+        "executor": "local-strong",
         "readonly": true
       },
       "output": "text",
-      "timeout_s": 900,
+      "timeout_s": 1800,
       "retry": {
         "max": 0
       }
