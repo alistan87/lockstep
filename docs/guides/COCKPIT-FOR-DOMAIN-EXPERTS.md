@@ -111,6 +111,29 @@ say so. And if the page loses touch with the run it tells you, in a line near
 the top, rather than quietly showing you old numbers — the same rule as ACTIVITY:
 nothing on screen is allowed to be ambiguous between "fine" and "broken".
 
+### If a part of the page says it is not installed
+
+You may see one of these, where a chart or a column of numbers would have been:
+
+> *The part of this page that reads timings and cost is not installed here. The
+> time bars, and the started / worked for / tries columns, and what each step
+> cost, are BLANK — not zero, and not nothing happened.*
+
+> *Nobody has told this page how to read your assistant's usage figures, so what
+> each step cost is BLANK — not zero.*
+
+Both mean **a piece of the software is missing on this machine, not that
+anything went wrong with your work.** Every other panel is unaffected and
+correct, the run is unaffected, and nothing you did caused it. Read the rest of
+the page normally and mention the sentence to the assistant — it says what to
+fetch, and it is a one-time setup fix.
+
+They exist because of the alternative. Without them the page drew an empty
+chart and a column of dashes, which looks exactly like *a run that did nothing*
+— and telling you that when nine steps had finished is the one thing this page
+must never do. **Blank is only ever allowed to mean blank when something on
+screen says so.**
+
 You can also select and copy anything on it. The page updates itself, but it
 will not do that while you are in the middle of reading something — a step you
 have opened stays open, and text you have selected stays selected.

@@ -176,6 +176,13 @@ what you may say. Three rules that are enforced by code, not discretion:
   blast radius (`--impact`) and reversibility (`--reversible`). The rule is
   symmetric: after a rejection, quote `<run_dir>/rejection.txt` — the human's
   own words — rather than characterising why they said no.
+- **Never let a missing part of the cockpit read as an empty run.**
+  `mission_server.reader_note()` / `mission_view.cost_lines` name the case when
+  `contrib/cost_report.py` is absent (or Python < 3.11, so no `tomllib`) or
+  `cost-fields.toml` is unset, and the page prints it where the chart would
+  have been. Without it a cockpit copied without that one file drew an empty
+  timeline and a column of dashes — indistinguishable from a run that did
+  nothing, which is the one thing the page may not say.
 - **Never quote a cost from memory.** `contrib/plan_card.py` computes it from
   prior runs; that used to be the one number in the protocol with no artifact
   behind it.

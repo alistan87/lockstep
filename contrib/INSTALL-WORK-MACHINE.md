@@ -27,7 +27,7 @@ Two things are being installed, and they go to different places:
 
 ```powershell
 .venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
-.venv\Scripts\python.exe contrib\build_bundle.py --version 0.3.1
+.venv\Scripts\python.exe contrib\build_bundle.py --version 0.4.0
 ```
 
 That produces `dist\lockstep-cockpit-<version>.zip` — wheel, `contrib/`,
@@ -44,11 +44,18 @@ machine ends up on documentation that no longer matches the code.
 ```powershell
 cd <your-work-repo>
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install lockstep-0.3.1-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install lockstep-0.4.0-py3-none-any.whl
 .venv\Scripts\lockstep.exe --help
 ```
 
 Python 3.11+. The only runtime dependency is `pydantic`.
+
+**3.11 is a floor for the cockpit too, not just the driver.**
+`contrib/cost_report.py` needs `tomllib`, and every timing and cost figure on
+the MISSION page and in the TUI's cost panel is a projection of it. On an older
+Python — or in a copy of `contrib/` that left that one file behind — those
+panels say so in a sentence rather than drawing an empty chart, but they are
+still blank. Copy `contrib/` whole.
 
 ## 2. Copy the cockpit into your repo
 

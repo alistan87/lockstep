@@ -222,6 +222,13 @@ being a surface a domain expert opens *by choice*:
 | **step** | a drawer per step: names, sizes, attempts, cost — never stdout bodies | click a row |
 | **raw** | node id, hash parts, what moved, the chain head — each with a one-line gloss, pinned by test against the domain-expert guide | "show the raw record" |
 
+A missing piece of the cockpit is a **named case, not an empty chart.**
+`reader_note()` distinguishes `cost_report.py` being unimportable (a copy that
+left it behind, or a Python below 3.11 with no `tomllib`) from a `state.json`
+caught mid-replace, and prints a plain sentence where the timeline or the cost
+would have been. Riding over both with the same `except` drew a blank chart and
+a column of dashes — indistinguishable from a run that did nothing.
+
 Four properties that are structural rather than stylistic:
 
 - **It renders with JavaScript switched off.** Every level is server-rendered,

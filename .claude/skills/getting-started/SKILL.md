@@ -32,6 +32,7 @@ contents, never anything from inside your data.
 | `[FAIL] personas/` | flows naming a persona will fail | Copy `personas/` from the repo |
 | `[warn] wezterm` | no panes | Everything still works; you get a plain status loop instead of the cockpit |
 | `[warn] cost-fields.toml` | no token numbers | Copy `contrib/cost-fields.toml.example` to `contrib/cost-fields.toml`; spend still shows tasks and time |
+| page says *"the part that reads timings and cost is not installed"* | timings AND cost blank everywhere | `contrib/cost_report.py` is missing, or this is a Python below 3.11 (no `tomllib`). Copy `contrib/` whole and check `python --version`. Not a run failure — every other panel is correct |
 
 ## Step 2 — the executor config
 

@@ -274,6 +274,24 @@ python contrib\session_spend.py                                # this session: y
   report usage. Say so when it appears, or the DE reads it as breakage.
 - **`unmapped harness` IS actionable** — someone must add the binary to
   `contrib/cost-fields.toml`.
+- **"not installed here" is YOURS to fix, and the DE is told to hand it to
+  you.** `mission_server.reader_note()` returns `{}` when the readers are whole
+  and otherwise `{scope, text, detail}`: `scope: "all"` when `cost_report.py`
+  cannot be imported at all — a cockpit copied without it, or a Python older
+  than 3.11, which has no `tomllib` — and `scope: "cost"` when it imports but
+  no field map exists. `all` blanks the timings AND the cost; `cost` blanks
+  only the figures. The page prints the sentence wherever the missing thing
+  would have been drawn, and `mission_view.cost_lines` makes the same
+  distinction in the terminal panel.
+
+  Why it is a named case rather than one more `except`: every timing and every
+  cost figure on the page is a projection of `cost_report`, imported by bare
+  name from a sibling file, and the readers caught that failure with the same
+  `except Exception` they use to ride over a `state.json` caught mid-replace.
+  Riding over the mid-replace is correct — it fixes itself within the second.
+  Riding over a missing file drew an empty chart and a column of dashes, which
+  reads as *a run that did nothing*. The DE guide promises blank never means
+  broken; that promise needed these two sentences to be true.
 - **History vs head.** The full tables (and the TUI's `c` panel) tally two
   honest numbers per node: *history* — every attempt, retries and correctives
   included, which is what was SPENT and what the spend line shows — and *head*,
