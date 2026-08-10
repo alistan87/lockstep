@@ -63,7 +63,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -393,6 +393,68 @@ def _tick_step(span_s: float) -> int:
     return _TICK_LADDER[-1] if span_s / _TICK_LADDER[-1] > 8 else _TICK_LADDER[0]
 
 
+def _critical_path(run_dir: Path, spans: dict) -> set[str]:
+    """The chain of steps that decided when the run finished.
+
+    Walks back from the last node to finish, each time stepping to whichever of
+    its declared dependencies ended LATEST — that dependency is the one it was
+    actually waiting on. Greedy rather than exact, and deliberately so: an exact
+    longest-path needs edge weights this page does not have (queueing on the
+    `tree` token is not in `depends_on`), and the greedy walk answers the
+    question a reader actually asks — "what was everything else waiting for?"
+
+    Empty when nothing ran, or when the flow file is missing. A highlight that
+    guesses is worse than no highlight.
+    """
+    flow = mv.read_json(run_dir / "flow.tg.json") or {}
+    deps = {n["id"]: list(n.get("depends_on") or [])
+            for n in (flow.get("nodes") or []) if n.get("id")}
+    if not deps:
+        return set()
+
+    def end_of(nid: str):
+        got = spans.get(nid) or []
+        stamps = [mv._parse_ts(b) for _, b in got if b]
+        return max(stamps) if stamps else None
+
+    finished = {nid: end_of(nid) for nid in deps if end_of(nid)}
+    if not finished:
+        return set()
+    node = max(finished, key=lambda n: finished[n])
+    chain, seen = set(), set()
+    while node and node not in seen:
+        seen.add(node)
+        chain.add(node)
+        ran = [d for d in deps.get(node, []) if finished.get(d)]
+        node = max(ran, key=lambda d: finished[d]) if ran else None
+    return chain
+
+
+def _heal_marks(run_dir: Path, t0, total: float) -> list[dict]:
+    """Vertical markers where the engine ROLLED THE TREE BACK.
+
+    A heal round is the one event that makes earlier bars on the plot stop
+    describing files that still exist, and it was invisible: the bars stayed,
+    the work they represented was discarded, and the only trace was a line in
+    `events.jsonl`. Two defects this session turned on exactly that (a rollback
+    window overlapping another gate's, twice) and both were found by hand-reading
+    the journal.
+    """
+    if not t0 or total <= 0:
+        return []
+    marks = []
+    for ev in _events(run_dir):
+        if ev.get("status") != "heal-round":
+            continue
+        when = mv._parse_ts(ev.get("ts"))
+        if not when:
+            continue
+        pct = max(0.0, min(100.0, 100.0 * (when - t0).total_seconds() / total))
+        marks.append({"pct": pct, "node": ev.get("node") or "",
+                      "label": mv.format_clock(ev.get("ts"))})
+    return marks
+
+
 def waterfall(run_dir: Path, repo_root: Path | None = None,
               now: datetime | None = None) -> dict:
     """`{rows, ticks, plotted, span_s, note}` — the timeline's whole geometry.
@@ -436,7 +498,13 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
                 open_span = True
     t0 = min(stamps) if stamps else None
     t1 = max(stamps) if stamps else None
-    if t0 is not None and (open_span or t1 is None or t1 < now):
+    # Extend the axis to NOW only while something is still running. `t1 < now`
+    # is true of every run that has ever finished, so the old condition stretched
+    # a FINISHED run's plot from its last event to the present: a four-minute run
+    # looked at two hours later drew its whole self in the leftmost 3% and two
+    # hours of empty grid to the right. Invisible at 1080px, obvious the moment
+    # the plot was widened — which is the whole argument for looking at it.
+    if t0 is not None and (open_span or t1 is None):
         t1 = max(t1 or now, now)
     total = (t1 - t0).total_seconds() if (t0 and t1) else 0.0
     plotted = bool(t0) and total > 0
@@ -504,8 +572,13 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
         while cur < t1:  # type: ignore[operator]
             ticks.append({"pct": pct(cur), "label": mv.format_clock(cur.isoformat())})
             cur = cur + timedelta(seconds=step_s)
+    critical = _critical_path(run_dir, spans) if plotted else set()
+    for row in rows:
+        row["critical"] = row["node_id"] in critical
     note = reader_note(run_dir)
     return {"rows": rows, "ticks": ticks, "plotted": plotted, "span_s": total,
+            "marks": _heal_marks(run_dir, t0, total) if plotted else [],
+            "critical": sorted(critical),
             "note": note if note.get("scope") == "all" else {}}
 
 
@@ -605,7 +678,46 @@ CSS = """
 body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
  -webkit-font-smoothing:antialiased}
-.wrap{max-width:1080px;margin:0 auto;transition:opacity .12s}
+.wrap{max-width:1180px;margin:0 auto;transition:opacity .12s;min-width:0}
+/* The shell. A left rail for runs and one main column -- NOT an app frame.
+   The board is still a page you scroll; the rail only answers "which run".
+   Below 1100px the rail goes horizontal and scrolls, so a narrow window loses
+   a sidebar rather than a feature. */
+.shell{display:grid;grid-template-columns:230px minmax(0,1fr);gap:0 22px;
+ align-items:start;max-width:1760px;margin:0 auto}
+.side{position:sticky;top:12px;padding:14px 4px 14px 14px;min-width:0}
+.side-h{font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+ color:var(--muted);padding:0 8px 8px}
+.side-run{display:grid;grid-template-columns:8px 1fr;gap:2px 8px;align-items:center;
+ padding:7px 8px;border-radius:7px;text-decoration:none;color:var(--ink);
+ border:1px solid transparent}
+.side-run:hover{background:var(--raise)}
+.side-run.cur{background:var(--raise);border-color:var(--line)}
+.side-name{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-word{grid-column:2;font-size:11px;color:var(--muted)}
+.side-empty{color:var(--muted);font-size:12px;padding:4px 8px}
+@media (max-width:1100px){
+ .shell{grid-template-columns:minmax(0,1fr)}
+ .side{position:static;display:flex;gap:8px;overflow-x:auto;padding:10px 0}
+ .side-h{display:none}
+ .side-run{flex:0 0 auto;grid-template-columns:8px auto}
+ .side-word{display:none}}
+/* The plot is the reason for the width, so give it the room: taller rows, a
+   wider label gutter, and a legend that says what the marks mean. */
+.wf-legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:2px 0 10px;
+ font-size:11.5px;color:var(--muted)}
+.wf-legend i{display:inline-block;width:18px;height:3px;border-radius:2px;
+ margin-right:6px;vertical-align:middle}
+.wf-legend .k-crit{background:var(--accent);height:9px;width:3px;border-radius:1px}
+.wf-legend .k-roll{background:var(--warning);height:11px;width:2px;border-radius:0}
+.wf-legend .k-ser{background:var(--serious);opacity:.5}
+/* The chain everything else waited for. A left edge, not a fill: the segment
+   colours already carry status, and repainting them would say two things at
+   once with one channel. */
+.wf-row.crit .wf-lab{box-shadow:inset 3px 0 0 var(--accent)}
+.wf-row.crit .wf-lab .n{font-weight:600}
+.rollback{position:absolute;top:0;bottom:0;width:0;
+ border-left:2px dashed var(--warning);opacity:.75;pointer-events:auto;z-index:2}
 .wrap.stale{opacity:.62}
 .top{display:flex;align-items:center;gap:9px;margin-bottom:16px;flex-wrap:wrap}
 .brand{font-weight:600;letter-spacing:.02em;font-size:12.5px}
@@ -752,6 +864,8 @@ pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospa
 .feed div{padding:2px 0}
 .foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
 body.offline .live .dot{animation:none;background:var(--muted)}
+@media (min-width:1280px){.wf-plot{--gutter:260px}.wf-track{height:26px}
+ .seg{border-radius:5px}}
 @media (max-width:700px){.wf-plot{--gutter:118px}.wf-lab .w{padding-left:0}
  .seg .hint{white-space:normal;max-width:60vw}}
 /* Under forced colours or on paper, the page falls to the TABLE VIEW. Both are
@@ -783,6 +897,14 @@ body.offline .live .dot{animation:none;background:var(--muted)}
 JS = """
 (function () {
   var wrap = document.querySelector('.wrap');
+  // Which run this page is about. The switcher navigates with ?run=<name>, so
+  // the poll has to carry it or a page opened on an OLD run would quietly
+  // start refreshing itself with the newest one's data -- the page showing a
+  // run you did not ask for, under a heading that says you did.
+  function runq(sep) {
+    var n = document.body.dataset.run || '';
+    return n ? (sep || '?') + 'run=' + encodeURIComponent(n) : '';
+  }
   function show(which) {
     var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
     if (!l0 || !l1) return;
@@ -839,7 +961,7 @@ JS = """
     var view = currentView(), open = openIds();
     var focused = document.activeElement && document.activeElement.id;
     wrap.classList.add('stale');       // hold the previous render, never a skeleton
-    fetch('api/state', { cache: 'no-store' })
+    fetch('api/state' + runq(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (doc) {
         wrap.innerHTML = doc.html;
@@ -855,7 +977,7 @@ JS = """
 
   function tick() {
     if (document.visibilityState === 'hidden') return;
-    fetch('api/events?after=' + cursor, { cache: 'no-store' })
+    fetch('api/events?after=' + cursor + runq('&'), { cache: 'no-store' })
       .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
       .then(function (doc) {
         fails = 0; offline(false);
@@ -942,14 +1064,33 @@ def render_timeline(wf: dict) -> str:
         out.append(f'<p class="stale-note" role="status" '
                    f'title="{e(wf["note"]["detail"])}">{e(wf["note"]["text"])}</p>')
     if wf["plotted"]:
+        legend = ['<div class="wf-legend">']
+        if wf.get("critical"):
+            legend.append('<span><i class="k-crit"></i>the chain everything else '
+                          'waited for</span>')
+        if wf.get("marks"):
+            legend.append('<span><i class="k-roll"></i>work sent back and files '
+                          'restored</span>')
+        legend.append('<span><i class="k-ser"></i>an attempt that was replaced</span>')
+        legend.append("</div>")
+        if len(legend) > 2:
+            out.append("".join(legend))
         out.append('<div class="wf-plot"><div class="wf-scale">')
         for tick in wf["ticks"]:
             out.append(f'<div class="gridline" style="left:{tick["pct"]:.2f}%"></div>')
+        for mark in wf.get("marks", []):
+            out.append(
+                f'<div class="rollback" style="left:{mark["pct"]:.2f}%" '
+                f'title="{e(mark["label"])} — {e(mark["node"])} sent work back and the '
+                f'files were restored; bars to the left of this line describe work that '
+                f'was then discarded"></div>'
+            )
         out.append('</div><div class="wf">')
         for row in wf["rows"]:
             marker = ' <span class="ico mut" title="this step left a note">•</span>' if row["note"] else ""
+            crit = " crit" if row.get("critical") else ""
             out.append(
-                '<div class="wf-row">'
+                f'<div class="wf-row{crit}">'
                 f'<div class="wf-lab"><span class="n">{_icon_span(row)}'
                 f'<a href="#step-{e(row["node_id"])}">{e(row["label"])}</a>{marker}</span>'
                 f'<span class="w">{e(row["word"])}</span></div>'
@@ -1217,6 +1358,90 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
     return "\n".join(out)
 
 
+def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dict]:
+    """Recent runs, newest first, for the switcher.
+
+    Capped and SAID to be capped for the same reason the step list collapses:
+    `runs/` grows without bound and a wall of them is not navigation. Reads
+    `state.json` for the word, so the switcher speaks the same glossary as
+    everything else on the page.
+    """
+    if not runs_root.is_dir():
+        return []
+    dirs = [d for d in runs_root.iterdir() if d.is_dir() and (d / "state.json").is_file()]
+    dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    out = []
+    for d in dirs[:limit]:
+        state = mv.read_json(d / "state.json") or {}
+        nodes = (state.get("nodes") or {}).values()
+        # `failed` outranks `needs you`. A run with a failed node DID stop with
+        # a problem, and calling that "needs you" sends the reader to a terminal
+        # to answer a question nobody asked. Checked in this order because a
+        # blocked-on-approval run also has non-done nodes.
+        if any(r.get("status") == "running" for r in nodes):
+            word, cls = mv.GLOSSARY.get("running", "running"), "run"
+        elif any(r.get("status") == "failed" for r in nodes):
+            word, cls = mv.GLOSSARY.get("failed", "stopped with a problem"), "bad"
+        elif mv.needs_you(state):
+            word, cls = mv.GLOSSARY.get("blocked", "needs you"), "warn"
+        else:
+            word, cls = mv.GLOSSARY.get("done", "done"), "ok"
+        out.append({
+            "name": d.name,
+            "flow": (state.get("flow_name") or d.name.rsplit("-", 1)[0]),
+            # WITHOUT this the rail was nine rows all reading "webapp-local"
+            # and nothing to choose between them. The run dir's own stamp, put
+            # through the same clock formatter as every other time on the page.
+            "when": mv.format_clock(state.get("started_at")) or "",
+            "day": (state.get("started_at") or "")[:10],
+            "word": word, "cls": cls,
+            "current": bool(current and d.resolve() == current.resolve()),
+        })
+    return out, len(dirs)
+
+
+def resolve_run(runs_root: Path, name: str | None, pinned: Path | None) -> Path | None:
+    """The run a request is about: `?run=<name>`, else the pin, else the newest.
+
+    `name` is attacker-controlled, so it is matched against the DIRECTORY
+    LISTING rather than joined onto a path — no `..`, no absolute path, no
+    symlink out of `runs/` can name something that is not already a run dir
+    sitting directly in it.
+    """
+    if not name:
+        return pinned or mv.newest_run(runs_root)
+    if not runs_root.is_dir():
+        return None
+    for d in runs_root.iterdir():
+        if d.is_dir() and d.name == name and (d / "state.json").is_file():
+            return d
+    return None
+
+
+def render_nav(runs_root: Path, current: Path | None) -> str:
+    """The left rail. A plain list of links: no state, no JavaScript, and it
+    degrades to a list of links with the stylesheet off."""
+    runs, total = run_list(runs_root, current)
+    out = ['<nav class="side" aria-label="runs">',
+           '<div class="side-h">runs on this machine</div>']
+    if not runs:
+        out.append('<p class="side-empty">none yet</p>')
+    for r in runs:
+        cur = " cur" if r["current"] else ""
+        href = "?run=" + quote(r["name"])
+        aria = ' aria-current="page"' if r["current"] else ""
+        out.append(
+            f'<a class="side-run{cur}" href="{e(href)}"{aria}>'
+            f'<span class="dot {e(r["cls"])}"></span>'
+            f'<span class="side-name">{e(r["flow"])}</span>'
+            f'<span class="side-word">{e(r["when"])} &middot; {e(r["word"])}</span></a>'
+        )
+    if total > len(runs):
+        out.append(f'<p class="side-empty">{total - len(runs)} older, not listed</p>')
+    out.append("</nav>")
+    return "\n".join(out)
+
+
 def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
                 now: datetime | None = None) -> tuple[str, int]:
     """The whole `.wrap` fragment, server-rendered, plus the event cursor it
@@ -1305,8 +1530,10 @@ def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>MISSION - {e(name)}</title>\n"
         f"<style>{stylesheet()}</style>\n"
-        f'<body data-run-token="{e(run_token(run_dir))}" data-event-cursor="{cursor}">\n'
-        f'<div class="wrap">{body}</div>\n'
+        f'<body data-run-token="{e(run_token(run_dir))}" data-event-cursor="{cursor}"'
+        f' data-run="{e(run_dir.name if run_dir else "")}">\n'
+        f'<div class="shell">{render_nav(runs_root, run_dir)}'
+        f'<div class="wrap">{body}</div></div>\n'
         f"<script>{client_js()}</script>\n"
     )
 
@@ -1341,7 +1568,14 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
     """
     parsed = urlparse(path)
     route = parsed.path
-    run_dir = pinned or mv.newest_run(runs_root)
+    query = parse_qs(parsed.query)
+    wanted = (query.get("run") or [None])[0]
+    run_dir = resolve_run(runs_root, wanted, pinned)
+    if wanted and run_dir is None:
+        # Named a run that is not in runs/. 404 rather than silently showing a
+        # DIFFERENT run: a page that answers a question you did not ask, with a
+        # headline that looks authoritative, is the worst of the three options.
+        return 404, HTML_CT, b"no such run"
     token = run_token(run_dir)
 
     if route in ("/", "/index.html"):

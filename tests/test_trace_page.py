@@ -1147,3 +1147,184 @@ def test_the_cost_panel_itself_distinguishes_a_missing_reader(tmp_path, monkeypa
     lines = " ".join(mv.cost_lines(run))
     assert "not installed" in lines and "3.11" in lines
     assert "mid-replace" not in lines, "that is the other cause, and it is not this one"
+
+
+# ------------------------------------------- the wide plot and the run rail
+
+
+def mini_run(where: Path, *, nodes: dict, events: list[dict],
+             flow: dict | None = None) -> Path:
+    """The smallest run dir the page will render: state, journal, flow."""
+    where.mkdir(parents=True, exist_ok=True)
+    (where / "state.json").write_text(
+        json.dumps({"flow_name": where.name.rsplit("-", 1)[0],
+                    "started_at": events[0]["ts"] if events else None,
+                    "nodes": nodes}), encoding="utf-8")
+    (where / "events.jsonl").write_text(
+        "".join(json.dumps(ev) + "\n" for ev in events), encoding="utf-8")
+    if flow is not None:
+        (where / "flow.tg.json").write_text(json.dumps(flow), encoding="utf-8")
+    return where
+
+
+def _span(minutes: int) -> str:
+    return (datetime(2026, 8, 10, 5, 0, tzinfo=timezone.utc)
+            + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+
+
+def test_a_finished_run_does_not_stretch_its_plot_to_now(tmp_path):
+    """The axis follows the RUN, not the clock.
+
+    `t1 < now` is true of every run that has ever finished, so the old
+    condition extended a completed run's span to the present: a four-minute run
+    looked at two hours later drew itself in the leftmost 3% with two hours of
+    empty grid beside it. Invisible while the plot was 1080px wide, and obvious
+    the moment it was widened — which is the argument for rendering the page and
+    looking at it, not for one more unit test of the same function.
+    """
+    run = mini_run(tmp_path / "flow-a", nodes={
+        "a": {"node_id": "a", "status": "done", "attempts": 1,
+              "started_at": _span(0), "ended_at": _span(4)}},
+        events=[{"ts": _span(0), "node": "a", "status": "running"},
+                {"ts": _span(4), "node": "a", "status": "done"}])
+    late = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)   # four hours later
+    wf = mission_server.waterfall(run, tmp_path, now=late)
+    assert wf["plotted"]
+    assert 230 <= wf["span_s"] <= 250, (
+        f"span is {wf['span_s']}s; a 4-minute run must not draw a 4-hour axis")
+    ends = [s["left"] + s["width"] for r in wf["rows"] for s in r["segments"]]
+    assert ends and max(ends) > 99.0, "the last bar should reach the right edge"
+
+
+def test_a_running_run_still_extends_to_now(tmp_path):
+    """The other half: a live run's bar must keep growing, or a step that has
+    been working for ten minutes draws a stub."""
+    run = mini_run(tmp_path / "flow-b", nodes={
+        "a": {"node_id": "a", "status": "running", "attempts": 1, "started_at": _span(0)}},
+        events=[{"ts": _span(0), "node": "a", "status": "running"}])
+    wf = mission_server.waterfall(run, tmp_path, now=datetime(
+        2026, 8, 10, 5, 10, tzinfo=timezone.utc))
+    assert 590 <= wf["span_s"] <= 610
+
+
+def test_rollback_markers_appear_where_the_tree_was_restored(tmp_path):
+    """A heal round is the one event that makes earlier bars stop describing
+    files that still exist. Two defects this session turned on exactly that,
+    and both were found by hand-reading events.jsonl."""
+    run = mini_run(tmp_path / "flow-c", nodes={
+        "a": {"node_id": "a", "status": "done", "attempts": 1,
+              "started_at": _span(0), "ended_at": _span(4)}},
+        events=[{"ts": _span(0), "node": "a", "status": "running"},
+                {"ts": _span(2), "node": "g", "status": "heal-round"},
+                {"ts": _span(4), "node": "a", "status": "done"}])
+    wf = mission_server.waterfall(run, tmp_path, now=datetime(
+        2026, 8, 10, 5, 4, tzinfo=timezone.utc))
+    assert len(wf["marks"]) == 1
+    assert 48 <= wf["marks"][0]["pct"] <= 52
+    assert wf["marks"][0]["node"] == "g"
+
+
+def test_the_critical_path_is_empty_rather_than_guessed(tmp_path):
+    """No flow file means no dependency edges, and a highlight that guesses
+    which chain mattered is worse than no highlight."""
+    run = mini_run(tmp_path / "flow-d", nodes={
+        "a": {"node_id": "a", "status": "done", "attempts": 1,
+              "started_at": _span(0), "ended_at": _span(1)}},
+        events=[{"ts": _span(0), "node": "a", "status": "running"},
+                {"ts": _span(1), "node": "a", "status": "done"}])
+    wf = mission_server.waterfall(run, tmp_path, now=datetime(
+        2026, 8, 10, 5, 1, tzinfo=timezone.utc))
+    assert wf["critical"] == []
+    assert all(not r["critical"] for r in wf["rows"])
+
+
+def test_the_critical_path_follows_the_dependency_that_finished_last(tmp_path):
+    """`slow` and `quick` both feed `end`; only `slow` held it up."""
+    run = mini_run(tmp_path / "flow-e", nodes={
+        "quick": {"node_id": "quick", "status": "done", "attempts": 1,
+                  "started_at": _span(0), "ended_at": _span(1)},
+        "slow": {"node_id": "slow", "status": "done", "attempts": 1,
+                 "started_at": _span(0), "ended_at": _span(5)},
+        "end": {"node_id": "end", "status": "done", "attempts": 1,
+                "started_at": _span(5), "ended_at": _span(6)}},
+        events=[{"ts": _span(0), "node": "quick", "status": "running"},
+                {"ts": _span(1), "node": "quick", "status": "done"},
+                {"ts": _span(0), "node": "slow", "status": "running"},
+                {"ts": _span(5), "node": "slow", "status": "done"},
+                {"ts": _span(5), "node": "end", "status": "running"},
+                {"ts": _span(6), "node": "end", "status": "done"}],
+        flow={"format_version": "1.0", "name": "e", "nodes": [
+            {"id": "quick"}, {"id": "slow"},
+            {"id": "end", "depends_on": ["quick", "slow"]}]})
+    wf = mission_server.waterfall(run, tmp_path, now=datetime(
+        2026, 8, 10, 5, 6, tzinfo=timezone.utc))
+    assert set(wf["critical"]) == {"end", "slow"}, wf["critical"]
+
+
+def test_resolve_run_never_leaves_the_runs_directory(tmp_path):
+    """`?run=` is attacker-controlled. It is matched against the directory
+    LISTING rather than joined onto a path, so no traversal, absolute path or
+    symlink can name something that is not already a run dir in runs/."""
+    runs = tmp_path / "runs"
+    real = mini_run(runs / "real-run", nodes={"a": {"node_id": "a", "status": "done"}},
+                    events=[{"ts": _span(0), "node": "a", "status": "done"}])
+    for name in ("../secret", "..", "/etc/passwd", "D:/Windows", "nope", "runs"):
+        got = mission_server.resolve_run(runs, name, None)
+        assert got is None, f"{name!r} resolved to {got}"
+    assert mission_server.resolve_run(runs, "real-run", None).resolve() == real.resolve()
+
+
+def test_an_unknown_run_is_a_404_not_a_different_run(tmp_path):
+    runs = tmp_path / "runs"
+    mini_run(runs / "real-run", nodes={"a": {"node_id": "a", "status": "done"}},
+             events=[{"ts": _span(0), "node": "a", "status": "done"}])
+    status, _, _ = mission_server.handle("/?run=ghost", runs, None, tmp_path)
+    assert status == 404, "showing a different run under an authoritative headline is worse"
+
+
+def test_the_rail_lists_runs_and_marks_the_current_one(tmp_path):
+    runs = tmp_path / "runs"
+    a = mini_run(runs / "flow-a-1", nodes={"n": {"node_id": "n", "status": "done"}},
+                 events=[{"ts": _span(0), "node": "n", "status": "done"}])
+    mini_run(runs / "flow-a-2", nodes={"n": {"node_id": "n", "status": "failed"}},
+             events=[{"ts": _span(0), "node": "n", "status": "failed"}])
+    html_out = mission_server.render_nav(runs, a)
+    assert 'aria-current="page"' in html_out
+    assert "?run=flow-a-1" in html_out and "?run=flow-a-2" in html_out
+    # Every word in the rail comes from the same glossary as the board.
+    assert mv.GLOSSARY["failed"] in html_out
+
+
+def test_a_failed_run_reads_as_stopped_not_needs_you(tmp_path):
+    """A run with a failed node DID stop with a problem; calling that "needs
+    you" sends the reader to a terminal to answer a question nobody asked."""
+    runs = tmp_path / "runs"
+    mini_run(runs / "boom", nodes={"a": {"node_id": "a", "status": "failed"},
+                                   "b": {"node_id": "b", "status": "blocked"}},
+             events=[{"ts": _span(0), "node": "a", "status": "failed"}])
+    rows, _ = mission_server.run_list(runs, None)
+    assert rows[0]["word"] == mv.GLOSSARY["failed"]
+
+
+def test_the_rail_distinguishes_runs_of_the_same_flow(tmp_path):
+    """Nine rows all reading "webapp-local" is not navigation. Seen on the real
+    page the first time the rail was rendered."""
+    runs = tmp_path / "runs"
+    for i in (1, 2):
+        mini_run(runs / f"same-{i}", nodes={"n": {"node_id": "n", "status": "done"}},
+                 events=[{"ts": _span(i * 10), "node": "n", "status": "done"}])
+    rows, _ = mission_server.run_list(runs, None)
+    assert len({r["when"] for r in rows}) == 2, "each row needs its own time"
+
+
+def test_the_poll_carries_the_selected_run(tmp_path):
+    """A page opened on an OLD run must not quietly start refreshing itself
+    with the newest one's data."""
+    js = mission_server.client_js()
+    assert "runq(" in js and "dataset.run" in js
+    runs = tmp_path / "runs"
+    mini_run(runs / "r1", nodes={"a": {"node_id": "a", "status": "done"}},
+             events=[{"ts": _span(0), "node": "a", "status": "done"}])
+    page = mission_server.render_page(
+        mission_server.resolve_run(runs, "r1", None), tmp_path, runs)
+    assert 'data-run="r1"' in page

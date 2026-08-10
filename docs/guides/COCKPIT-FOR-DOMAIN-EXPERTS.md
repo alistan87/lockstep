@@ -96,7 +96,17 @@ MISSION shows, and it opens further if you want it to:
   figure. If you read nothing else, read this.
 - **show every step** — the same run drawn on a clock, so you can see what took
   the time and what was redone. Beside it is the same thing as a plain table, in
-  case that reads better.
+  case that reads better. Three things on that chart have a key above it: a
+  **dashed upright line** is a moment where work was sent back and the files
+  were put back as they were, so bars to the left of it describe work that was
+  then thrown away; a **faded bar** is an attempt that was replaced; and the
+  steps down the left with a bright edge are **the chain everything else was
+  waiting for** — the one worth looking at if something took longer than you
+  expected.
+- **the list of runs down the left** — every run this machine has done
+  recently, newest first, each with the time it started and how it ended. Click
+  one to look at it. You are only ever looking; opening an old run cannot
+  disturb anything, including a run that is going on right now.
 - **click a step** — what that step produced: file names and sizes, what it
   cost, which checks ran. Never the raw text a worker wrote; that is not
   something anyone should have to read.

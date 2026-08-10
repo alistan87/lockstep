@@ -425,6 +425,31 @@ Four things about it that are decisions, not accidents:
 - **Every word and every formatted time comes from `mission_view`** over the
   wire. The client swaps server-rendered fragments and advances an integer; a
   formatter in the browser would be a glossary pytest cannot execute.
+- **The axis follows the RUN, not the clock.** It is extended to `now` only
+  while something is still running. The first cut also extended it whenever
+  `t1 < now`, which is true of every run that has ever finished — so a
+  four-minute run looked at two hours later drew itself in the leftmost 3% with
+  two hours of empty grid beside it. It survived months at `max-width:1080px`
+  and was obvious within a second of the plot being widened. Render it and look
+  at it; that is the only check that finds this class.
+- **The critical path is greedy and says so.** `_critical_path` walks back from
+  the last node to finish, each time stepping to whichever declared dependency
+  ended latest. An exact longest path needs edge weights the page does not have
+  (queueing on the `tree` token is not in `depends_on`). With no flow file it
+  returns EMPTY rather than guessing — a highlight that is wrong is worse than
+  none, because it sends the reader to optimise the wrong step.
+- **Rollback markers come from `heal-round` events**, and they are the one
+  annotation that changes what the bars MEAN: to the left of a marker, bars
+  describe work the engine then discarded. Both heal-window defects found on
+  2026-08-09/10 were invisible on the board and found by hand-reading
+  `events.jsonl`; this is that reading, drawn.
+- **`?run=<name>` selects the run, and the poll carries it.** `resolve_run`
+  matches the name against the directory LISTING rather than joining it onto a
+  path, so traversal and absolute paths cannot name anything that is not
+  already a run dir in `runs/`; an unknown name is a 404, never a silent
+  fallback to a different run under an authoritative headline. The client
+  appends the same parameter to `/api/state` and `/api/events`, or a page
+  opened on an old run would quietly refresh itself with the newest one's data.
 - **Every response carries a run token.** A meta-refresh page reset its client
   state by construction; a poll does not, so at a segment boundary the client
   would hold segment A's cursor against segment B forever.

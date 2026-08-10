@@ -218,9 +218,14 @@ being a surface a domain expert opens *by choice*:
 | level | what it shows | entry |
 |---|---|---|
 | **board** | headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, and the evidence or the question card, verbatim, when one waits | on load |
-| **timeline** | every step on a shared time axis, **in place of** the step list, with a table twin beside it | "show every step" |
+| **timeline** | every step on a shared time axis, **in place of** the step list, with a table twin beside it. Annotated: rollback markers where the tree was restored, replaced attempts faded, and the critical path — the chain everything else waited for — edged | "show every step" |
 | **step** | a drawer per step: names, sizes, attempts, cost — never stdout bodies | click a row |
 | **raw** | node id, hash parts, what moved, the chain head — each with a one-line gloss, pinned by test against the domain-expert guide | "show the raw record" |
+
+A left rail lists recent runs (`?run=<name>`), so a failed run and the one that
+fixed it can be compared without restarting anything. The name is matched
+against the directory listing rather than joined onto a path, and an unknown
+one is a 404 rather than a silent fallback to a different run.
 
 A missing piece of the cockpit is a **named case, not an empty chart.**
 `reader_note()` distinguishes `cost_report.py` being unimportable (a copy that
