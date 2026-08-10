@@ -1046,3 +1046,104 @@ def test_the_response_carries_the_headers_that_back_the_escaping():
     assert "frame-ancestors 'none'" in csp
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["Referrer-Policy"] == "no-referrer"
+
+
+# ------------------------------- when a reader is missing rather than empty
+
+def _no_cost_reader(monkeypatch):
+    """Make `import cost_report` fail the way a work-repo copy that left the
+    file behind makes it fail. `None` in sys.modules is the interpreter's own
+    "this import is blocked" mechanism, so the seam under test is the real
+    import statement and not a patched function — a caller that goes back to a
+    bare `import cost_report` is still caught."""
+    monkeypatch.setitem(sys.modules, "cost_report", None)
+
+
+def test_a_missing_cost_reader_is_named_instead_of_drawing_nothing(tmp_path, monkeypatch):
+    """The defect this whole section exists for. `cost_report.py` is imported
+    by bare name from a sibling file and every timing and cost figure is a
+    projection of it, so a copy of the cockpit without it drew an empty
+    timeline, a column of dashes, and no cost — with nothing anywhere saying
+    why. The guide promises blank never means broken."""
+    run = page_run(tmp_path)
+    _no_cost_reader(monkeypatch)
+
+    wf = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
+    assert not wf["plotted"], "precondition: this is the state that used to be silent"
+    assert all(not r["started"] and not r["worked"] and not r["tries"] for r in wf["rows"])
+    assert wf["note"]["scope"] == "all"
+
+    timeline = mission_server.render_timeline(wf)
+    assert html.escape(mission_server.COST_READER_SENTENCE) in timeline
+    # said above the twin, where the dashes are, not below it
+    assert (timeline.index(html.escape(mission_server.COST_READER_SENTENCE))
+            < timeline.index("the same thing as a table"))
+
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.count(html.escape(mission_server.COST_READER_SENTENCE)) == 2, \
+        "both places the missing thing would have been drawn: the timeline and the cost block"
+
+
+def test_the_missing_reader_note_names_a_file_and_a_python(tmp_path, monkeypatch):
+    """Two causes, one symptom: the file was not copied, or it was copied onto
+    a Python below 3.11, where `cost_report`'s `import tomllib` fails. The
+    sentence has to carry both or it sends half the readers hunting."""
+    assert "cost_report.py" in mission_server.COST_READER_SENTENCE
+    assert "3.11" in mission_server.COST_READER_SENTENCE
+    assert "not zero" in mission_server.COST_READER_SENTENCE, \
+        "an empty chart reads as 'the run did nothing' until this says otherwise"
+    run = page_run(tmp_path)
+    _no_cost_reader(monkeypatch)
+    _, detail = mission_server.cost_absence(run, None)
+    assert "cost_report" in detail, "the hover carries the real exception"
+
+
+def test_a_missing_field_map_costs_the_figures_but_not_the_timings(tmp_path, monkeypatch):
+    """A reader with no `cost-fields.toml` still knows when every step ran. So
+    the timeline must NOT carry this note — only the cost block does."""
+    import cost_report
+    run = page_run(tmp_path)
+    monkeypatch.setattr(cost_report, "load_field_maps", lambda _: {})
+
+    wf = mission_server.waterfall(run, ROOT, now=PAGE_NOW)
+    assert wf["plotted"] and not wf["note"], "timings do not depend on the field map"
+    assert html.escape(mission_server.COST_FIELDS_SENTENCE) not in \
+        mission_server.render_timeline(wf)
+
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.count(html.escape(mission_server.COST_FIELDS_SENTENCE)) == 1
+    assert "cost-fields.toml" in mission_server.reader_note(run)["detail"]
+
+
+def test_the_empty_cost_block_tells_setup_apart_from_a_harness_limit(tmp_path):
+    """Four events used to print the same seven words. Three are a setup
+    problem fixable in a minute; the fourth is a limit no configuration lifts —
+    `copilot-cli` has no JSON output mode, so no usage envelope is ever written.
+    A reader who cannot tell those apart either chases a phantom or gives up on
+    a number that was one file away."""
+    run = page_run(tmp_path)
+
+    unmapped, _ = mission_server.cost_absence(
+        run, {"rows": [{"note": "no field map (copilot)"}]})
+    assert "copilot" in unmapped, "name the harness, or the fix is a guessing game"
+    assert "cost-fields.toml" in unmapped
+
+    limit, detail = mission_server.cost_absence(run, {"rows": [{"note": "no envelope"}]})
+    assert "not a setup problem" in limit
+    assert "copilot-cli" in detail
+    assert "cost-fields.toml" not in limit, "there is no file to add; saying so wastes a trip"
+
+    assert mission_server.cost_absence(run, {"rows": [{"note": ""}]})[0] == \
+        "No usage was reported for this run."
+
+
+def test_the_cost_panel_itself_distinguishes_a_missing_reader(tmp_path, monkeypatch):
+    """`mission_view.cost_lines` feeds the page's two cost panes AND the TUI and
+    cockpit.ps1, and it used to print both possibilities in one line — leaving
+    the choosing to a reader chosen for not being a programmer. A mid-replace
+    `state.json` fixes itself within the second; a missing file never does."""
+    run = page_run(tmp_path)
+    _no_cost_reader(monkeypatch)
+    lines = " ".join(mv.cost_lines(run))
+    assert "not installed" in lines and "3.11" in lines
+    assert "mid-replace" not in lines, "that is the other cause, and it is not this one"

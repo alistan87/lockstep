@@ -215,3 +215,23 @@ argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
         "--provider", "ollama", "--model", "mistral-small:24b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
+
+# The bakeoff model. `contrib/demo/model_bakeoff.py` put the real write-logic
+# prompt through every model on this machine and this was the ONLY one that
+# passed the settlement gate first try, in 90s:
+#
+#   qwen3.6:35b        PASS    90s
+#   mistral-small:24b  block   49s   settle returned no transfers
+#   qwen2.5-coder:14b  block   18s   SyntaxError
+#   gemma4:12b         block  108s   settle leaves 10.00 unsettled
+#   qwen2.5-coder:7b   block    7s   payer never debited as a participant
+#   qwen3.5:9b         block   23s   SyntaxError
+#
+# It is 23 GB against 16 GB of VRAM, so roughly a third of it runs on the CPU —
+# and 90s is still cheap for the one node in the flow that has to be right.
+# That is the argument for `spec.executor` in one table.
+[executors.local-best]
+argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+        "--provider", "ollama", "--model", "qwen3.6:35b", "{prompt}"]
+prompt_via = "stdin"
+readonly_argv = ["--no-tools"]

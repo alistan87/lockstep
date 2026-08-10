@@ -131,6 +131,31 @@ OFFLINE_SENTENCE = (
     "the run is still going."
 )
 
+# Two sentences for the same class of event: a part of this page is NOT
+# INSTALLED, as opposed to not finished. They exist because the failure they
+# describe used to be invisible. `cost_report.py` is where every timing and
+# every cost figure on this page comes from, it is imported by bare name from a
+# sibling file, and the readers below caught the failure with the same
+# `except Exception` they use to ride over a `state.json` caught mid-replace.
+# A copy of the cockpit that left that file behind — or ran it on a Python older
+# than 3.11, which has no `tomllib` — therefore drew an empty timeline, a column
+# of dashes under "started", "worked for" and "tries", and no cost at all, while
+# every other panel rendered normally. Nothing said why. The guide promises
+# blank never means broken; that promise needs these sentences to be true.
+COST_READER_SENTENCE = (
+    "The part of this page that reads timings and cost is not installed here. "
+    "The time bars, and the started / worked for / tries columns, and what each "
+    "step cost, are BLANK — not zero, and not nothing happened. Every other "
+    "panel on this page is unaffected and correct. Ask the assistant to check "
+    "for contrib/cost_report.py, which needs Python 3.11 or newer."
+)
+
+COST_FIELDS_SENTENCE = (
+    "Nobody has told this page how to read your assistant's usage figures, so "
+    "what each step cost is BLANK — not zero. Timings are unaffected. Ask the "
+    "assistant to set up contrib/cost-fields.toml."
+)
+
 # Defence in depth on a page whose every string came from somewhere else — a
 # label from a sidecar, a note from an agent, evidence from a render node. The
 # escaping is the guarantee (and is tested); these are what stop a miss from
@@ -164,10 +189,55 @@ def _trace_status(run_dir: Path) -> dict | None:
         return None
 
 
-def _events(run_dir: Path) -> list[dict]:
+def _cost_reader() -> tuple[object | None, str]:
+    """`(cost_report, "")` or `(None, why)` — the module every timing and every
+    cost figure on this page is a projection of.
+
+    Split out because an IMPORT failure and a READ failure are not the same
+    event and must not degrade the same way. A `state.json` caught mid-replace
+    is a normal moment in a healthy run (this machine's AV trips file replaces),
+    and riding over it silently is correct. A missing `cost_report.py` is a
+    piece of the cockpit that was never installed, and answering that with an
+    empty chart tells the reader the run did nothing — the one thing this page
+    is not allowed to say. The reason travels as a string so `reader_note` can
+    put it on the page instead of in a traceback nobody sees.
+    """
     try:
         import cost_report
-        return cost_report._read_events(Path(run_dir))
+    except Exception as exc:  # noqa: BLE001 - a view never raises
+        return None, f"{type(exc).__name__}: {exc}"
+    return cost_report, ""
+
+
+def reader_note(run_dir: Path) -> dict:
+    """`{}` when the readers are whole, else `{scope, text, detail}`.
+
+    `scope` is `all` when timings AND cost are gone (no reader at all) and
+    `cost` when only the figures are (a reader, but no field map to read them
+    with). The page shows it wherever the missing thing would have been drawn,
+    which is two places for `all` and one for `cost`.
+    """
+    reader, why = _cost_reader()
+    if reader is None:
+        return {"scope": "all", "text": COST_READER_SENTENCE, "detail": why}
+    try:
+        maps = reader.load_field_maps(None)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        return {"scope": "cost", "text": COST_FIELDS_SENTENCE,
+                "detail": f"{type(exc).__name__}: {exc}"}
+    if not maps:
+        return {"scope": "cost", "text": COST_FIELDS_SENTENCE,
+                "detail": "no cost-fields.toml in the working directory or beside "
+                          "cost_report.py (copy contrib/cost-fields.toml.example)"}
+    return {}
+
+
+def _events(run_dir: Path) -> list[dict]:
+    reader, _ = _cost_reader()
+    if reader is None:
+        return []
+    try:
+        return reader._read_events(Path(run_dir))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         return []
 
@@ -195,25 +265,32 @@ def _events_after(run_dir: Path, after: int) -> list[dict]:
 
 
 def _intervals(run_dir: Path) -> dict[str, list[tuple[str, str | None]]]:
+    reader, _ = _cost_reader()
+    if reader is None:
+        return {}
     try:
-        import cost_report
-        return cost_report.node_intervals(_events(run_dir))
+        return reader.node_intervals(_events(run_dir))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         return {}
 
 
 def _collect(run_dir: Path) -> dict | None:
+    reader, _ = _cost_reader()
+    if reader is None:
+        return None
     try:
-        import cost_report
-        return cost_report.collect_run(Path(run_dir), cost_report.load_field_maps(None))
+        return reader.collect_run(  # type: ignore[attr-defined]
+            Path(run_dir), reader.load_field_maps(None))
     except Exception:  # noqa: BLE001
         return None
 
 
 def _cap(run_dir: Path) -> int | None:
+    reader, _ = _cost_reader()
+    if reader is None:
+        return None
     try:
-        import cost_report
-        return cost_report._budget_cap(Path(run_dir))
+        return reader._budget_cap(Path(run_dir))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         return None
 
@@ -318,7 +395,11 @@ def _tick_step(span_s: float) -> int:
 
 def waterfall(run_dir: Path, repo_root: Path | None = None,
               now: datetime | None = None) -> dict:
-    """`{rows, ticks, plotted, span_s}` — the timeline's whole geometry, here.
+    """`{rows, ticks, plotted, span_s, note}` — the timeline's whole geometry.
+
+    `note` is why there is no plot when there is no plot, and it rides in the
+    geometry rather than being fetched beside it so that `render_timeline(wf)`
+    keeps its one argument and cannot be called without it.
 
     ONE SEGMENT PER INTERVAL, never one span per node: `state.json`'s
     `started_at` is the first start and `ended_at` the last end, kept across
@@ -423,7 +504,9 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
         while cur < t1:  # type: ignore[operator]
             ticks.append({"pct": pct(cur), "label": mv.format_clock(cur.isoformat())})
             cur = cur + timedelta(seconds=step_s)
-    return {"rows": rows, "ticks": ticks, "plotted": plotted, "span_s": total}
+    note = reader_note(run_dir)
+    return {"rows": rows, "ticks": ticks, "plotted": plotted, "span_s": total,
+            "note": note if note.get("scope") == "all" else {}}
 
 
 def event_text(ev: dict, labels: dict[str, str]) -> str:
@@ -851,6 +934,13 @@ def render_timeline(wf: dict) -> str:
     # of them on load; a table twin behind a `hidden` attribute would be a
     # fallback that only works when the thing it falls back from does.
     out = ['<div id="l1">']
+    # Said ABOVE the twin, because the twin is the thing whose every cell is a
+    # dash. A reader who scrolls past this and sees "—" under `worked for` on a
+    # step that plainly ran has been told the run is broken, by a page that only
+    # meant its own reader was.
+    if wf.get("note"):
+        out.append(f'<p class="stale-note" role="status" '
+                   f'title="{e(wf["note"]["detail"])}">{e(wf["note"]["text"])}</p>')
     if wf["plotted"]:
         out.append('<div class="wf-plot"><div class="wf-scale">')
         for tick in wf["ticks"]:
@@ -1020,6 +1110,39 @@ def _decision_card(run_dir: Path) -> str:
     return ""
 
 
+def cost_absence(run_dir: Path, usage: dict | None) -> tuple[str, str]:
+    """`(sentence, detail)` for a cost block with nothing in it.
+
+    Four different events used to print the same seven words. Three of them are
+    a SETUP problem the reader can get fixed in a minute — no reader, no field
+    map, a field map that does not name the harness actually being run — and one
+    of them is a true limit of the harness: `copilot-cli` has no JSON output
+    mode, so no usage envelope is ever written and no configuration will conjure
+    one. Telling those apart is the whole value of the block when it is empty.
+    """
+    note = reader_note(run_dir)
+    if note:
+        return note["text"], note["detail"]
+    rows = (usage or {}).get("rows") or []
+    unmapped = sorted({str(r["note"])[len("no field map ("):-1]
+                       for r in rows if str(r.get("note", "")).startswith("no field map (")})
+    if unmapped:
+        return (
+            "This page does not know how to read usage figures for "
+            f"{', '.join(unmapped)}, so what each step cost is BLANK — not zero. "
+            "Ask the assistant to add a section for it to contrib/cost-fields.toml.",
+            "the section name is argv[0]'s basename, lowercased, with .exe/.cmd/.bat removed",
+        )
+    if any(r.get("note") == "no envelope" for r in rows):
+        return (
+            "The assistant used for this run does not report what it spent, so "
+            "what each step cost cannot be shown. This is a limit of that "
+            "assistant, not a setup problem — the timings above are unaffected.",
+            "no usage envelope in stdout.log (e.g. copilot-cli has no JSON output mode)",
+        )
+    return "No usage was reported for this run.", ""
+
+
 def _cost_card(run_dir: Path, stack: list[dict], usage: dict | None = None) -> str:
     out = ['<div class="card"><h2>what it has cost</h2>']
     if stack:
@@ -1033,7 +1156,8 @@ def _cost_card(run_dir: Path, stack: list[dict], usage: dict | None = None) -> s
                        f'{e(s["name"])} {s["value"]:,}</span>')
         out.append("</div>")
     else:
-        out.append('<p class="meter-foot">No usage was reported for this run.</p>')
+        sentence, detail = cost_absence(run_dir, usage)
+        out.append(f'<p class="meter-foot" title="{e(detail)}">{e(sentence)}</p>')
     for mode, title in (("history", "per step, every attempt counted"),
                         ("head", "per step, kept attempts only")):
         body = "\n".join(mv.cost_lines(run_dir, mode=mode, usage=usage))

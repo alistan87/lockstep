@@ -142,3 +142,42 @@ def test_the_gate_is_deterministic(tmp_path):
     a = run_gate(tmp_path, GOOD.replace("0.005", "0.5"))
     b = run_gate(tmp_path, GOOD.replace("0.005", "0.5"))
     assert a == b
+
+
+# ------------------------------------------- the boundary, not the correctness
+
+def test_extract_code_recovers_the_shapes_that_cost_heal_rounds(tmp_path):
+    """Two of one webapp-local run's four heal rounds went on FORMATTING: a 24B
+    wrapped its module in prose plus a ```python block, and then echoed
+    lockstep's own `begin data` fence marker into its answer. Both produced a
+    SyntaxError on line 1 — a round spent on nothing to do with the task.
+
+    `--strip-fence` is right to leave those alone (it only unwraps a fence
+    around the WHOLE result, and a partial unwrap is a corruption). This is the
+    greedy sibling for nodes whose result is source code.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "save_result", Path(__file__).resolve().parents[1] / "contrib" / "save_result.py")
+    sr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sr)
+
+    bare = "def balances(e):\n    return {}\n"
+    cases = {
+        "prose around a fence": f"Here is the module:\n\n```python\n{bare}```\n\nHope that helps!",
+        "echoed driver markers": f"begin data\n{bare}end data",
+        "bare code untouched": bare,
+        "unterminated fence": f"```python\n{bare}",
+    }
+    for name, raw in cases.items():
+        out, note = sr.extract_code(raw)
+        compile(out, "<candidate>", "exec")          # raises if we corrupted it
+        assert "balances" in out, name
+        assert note, f"{name}: the normalisation must say what it did"
+
+    # Biggest block wins: a model that shows its work puts the answer in the
+    # largest one, and taking the first would take the illustration.
+    two = "```\nshort\n```\ntext\n```python\ndef balances(e):\n    return {}\n\n\ndef settle(b):\n    return []\n```"
+    out, _ = sr.extract_code(two)
+    assert "settle" in out and "short" not in out

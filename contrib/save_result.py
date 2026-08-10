@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -41,6 +42,44 @@ def strip_fence(text: str) -> tuple[str, bool]:
     return text, False
 
 
+_FENCE_BLOCK = re.compile(r"```[a-zA-Z0-9_+-]*\s*\n(.*?)(?:\n[ \t]*```|\Z)", re.DOTALL)
+_DRIVER_MARKERS = ("begin data", "end data")
+
+
+def extract_code(text: str) -> tuple[str, str]:
+    """Pull the code out of a chatty answer. Returns (text, what-it-did).
+
+    The greedy sibling of `strip_fence`, and it exists because of two heal
+    rounds that were spent on formatting rather than on correctness
+    (`webapp-local`, 2026-08-09): a 24B wrapped its module in prose plus a
+    ```python block — which `strip_fence` leaves alone, correctly, because the
+    fence does not enclose the whole result — and on the next round echoed
+    lockstep's own `begin data` fence marker into its answer. Both produced a
+    SyntaxError on line 1 and burned a round that had nothing to do with the
+    task.
+
+    So: if there are fenced blocks, take the LARGEST — a model that shows its
+    work puts the answer in the biggest block, and picking by size beats
+    picking the first. Otherwise drop the driver's own markers and any stray
+    fence lines. Use this for nodes whose result is SOURCE CODE; `--strip-fence`
+    stays the conservative choice everywhere else, because for a result that is
+    prose or JSON this would happily throw away most of it.
+    """
+    blocks = _FENCE_BLOCK.findall(text)
+    if blocks:
+        best = max(blocks, key=len).strip()
+        return best + "\n", f"took the largest of {len(blocks)} fenced block(s)"
+    kept, dropped = [], 0
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s in _DRIVER_MARKERS or s.startswith("```"):
+            dropped += 1
+            continue
+        kept.append(ln)
+    body = "\n".join(kept).strip() + "\n"
+    return body, (f"dropped {dropped} marker line(s)" if dropped else "no fence found")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--node", required=True, help="node id whose result to publish")
@@ -49,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="if the result is a JSON array, drop entries whose KEY is falsy")
     ap.add_argument("--strip-fence", action="store_true",
                     help="unwrap a ``` fence around the WHOLE result (see the module docstring)")
+    ap.add_argument("--extract-code", action="store_true",
+                    help="greedier: take the LARGEST fenced block, or drop the driver's own "
+                         "markers. For nodes whose result is source code (see extract_code)")
     ns = ap.parse_args(argv)
     phase = os.environ.get("LOCKSTEP_PHASE_DIR", "")
     if not phase:
@@ -62,7 +104,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     text = src.read_text(encoding="utf-8")
     unfenced = False
-    if ns.strip_fence:
+    extracted = ""
+    if ns.extract_code:
+        text, extracted = extract_code(text)
+    elif ns.strip_fence:
         text, unfenced = strip_fence(text)
     dropped = 0
     if ns.drop_empty:
@@ -80,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
     note = f" ({dropped} empty entr{'y' if dropped == 1 else 'ies'} dropped)" if dropped else ""
     if unfenced:
         note += " (unwrapped a ``` fence)"
+    if extracted:
+        # Say what was thrown away. A normalisation that edits the model's
+        # answer in silence is one nobody can debug from the run dir.
+        note += f" ({extracted})"
     print(f"published {ns.node} -> {ns.out}{note}")
     return 0
 

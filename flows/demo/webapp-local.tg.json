@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "webapp-local",
-  "description": "Build a working expense splitter - settlement logic, a stdlib HTTP API and a frontend - entirely on LOCAL models: no network, no credential, no token cost. Every harness node is TOOL-LESS, because a 7B given a read tool was measured emitting a hallucinated tool call AS ITS ANSWER; the models only write text and shell nodes do all file I/O. Three deterministic gates heal their own author: split_check runs the settlement against its own reference implementation and hands back a runnable counterexample, api_check drives the real server over HTTP in a child process, and ui_check runs the frontend logic under Node and refuses a page that loads anything from the network. REQUIRES two stanzas in lockstep.toml, `local-fast` and `local-smart` - see flows/demo/README-webapp.md. NOTE the frontend branch depends on `logic-gate` even though it needs nothing from it. That is deliberate and was learned from a run: two healing gates with `rollback: true` whose snapshots overlap in time WILL clobber each other. A rollback's scope is every path changed since ITS baseline (SPEC \u00a79.4.4), not just the paths its own target wrote - so logic-gate's restore discarded the frontend files three times over, and ui-gate then blocked on a module the other branch's rollback had just removed. Serialising the branches is the fix; `heal-target-overlap` does not catch this because the TARGETS are disjoint.",
+  "description": "Build a working expense splitter - settlement logic, a stdlib HTTP API and a frontend - entirely on LOCAL models: no network, no credential, no token cost. Every harness node is TOOL-LESS, because a 7B given a read tool was measured emitting a hallucinated tool call AS ITS ANSWER; the models only write text and shell nodes do all file I/O. Three deterministic gates heal their own author: split_check runs the settlement against its own reference implementation and hands back a runnable counterexample, api_check drives the real server over HTTP in a child process, and ui_check runs the frontend logic under Node and refuses a page that loads anything from the network. REQUIRES two stanzas in lockstep.toml, `local-fast` and `local-smart` - see flows/demo/README-webapp.md. NOTE the frontend branch depends on `logic-gate` even though it needs nothing from it. That is deliberate and was learned from a run: two healing gates with `rollback: true` whose snapshots overlap in time WILL clobber each other. A rollback's scope is every path changed since ITS baseline (SPEC \u00a79.4.4), not just the paths its own target wrote - so logic-gate's restore discarded the frontend files three times over, and ui-gate then blocked on a module the other branch's rollback had just removed. Serialising the branches is the fix; `heal-target-overlap` does not catch this because the TARGETS are disjoint. The save nodes use `--extract-code`, not `--strip-fence`: measured, two of one run's four heal rounds went on formatting rather than correctness (a model wrapped its module in prose plus a fence, then echoed the driver's own `begin data` marker), and neither is something a correctness gate should be spending rounds on. The final node is a GATE, not a report: the first version printed a per-file table and then a success sentence, and on one run it printed `MISS frontend/split.js` and the run still exited 0 \u2014 every gate HAD passed, and a later gate's rollback then removed files an earlier gate had approved. A work node has no verdict for the driver to branch on, so the check that the deliverable exists has to be a gate. A false green is worse than a red.",
   "max_interp_chars": 60000,
   "budget": {
     "max_agent_spawns": 40,
@@ -14,11 +14,11 @@
       "kind": "harness",
       "spec": {
         "task": "The project is an expense splitter: a group shares costs and the app works out who owes whom.\n\n`backend/split.py` is a PURE module - no I/O, no server, no work at import time - exposing exactly:\n\n    balances(expenses) -> {name: net}\n        expenses is a list of {\"payer\": str, \"amount\": float, \"participants\": [str, ...]}\n        Each expense splits `amount` EQUALLY among its participants.\n        The payer is credited the full amount; each participant is debited amount/len(participants).\n        A payer who is also a participant gets both. net > 0 means that person is owed money.\n\n    settle(balances) -> [{\"from\": str, \"to\": str, \"amount\": float}, ...]\n        Transfers that bring every balance to zero.\n        Match the largest creditor with the largest debtor, move the SMALLER of the two\n        magnitudes, and repeat. That gives at most n-1 transfers for n people.\n        No self-transfers, and no zero or negative amounts.\n\nWrite backend/split.py: exactly those two functions, nothing else.\n\nYou have NO TOOLS: no shell, no file access, no search. Everything you need is in this prompt. Output ONLY the file content - no markdown fence, no explanation, no leading or trailing prose.",
-        "executor": "local-strong",
+        "executor": "local-best",
         "readonly": true
       },
       "output": "text",
-      "timeout_s": 1800,
+      "timeout_s": 1200,
       "retry": {
         "max": 0
       }
@@ -35,7 +35,7 @@
           "write-logic",
           "--out",
           "backend/split.py",
-          "--strip-fence"
+          "--extract-code"
         ],
         "writes": [
           "backend/split.py"
@@ -102,7 +102,7 @@
           "write-server",
           "--out",
           "backend/server.py",
-          "--strip-fence"
+          "--extract-code"
         ],
         "writes": [
           "backend/server.py"
@@ -154,7 +154,7 @@
         "max": 0
       },
       "depends_on": [
-        "logic-gate"
+        "api-gate"
       ]
     },
     {
@@ -169,7 +169,7 @@
           "write-ui",
           "--out",
           "frontend/split.js",
-          "--strip-fence"
+          "--extract-code"
         ],
         "writes": [
           "frontend/split.js"
@@ -196,7 +196,7 @@
         "max": 0
       },
       "depends_on": [
-        "logic-gate"
+        "api-gate"
       ]
     },
     {
@@ -211,7 +211,7 @@
           "write-page",
           "--out",
           "frontend/index.html",
-          "--strip-fence"
+          "--extract-code"
         ],
         "writes": [
           "frontend/index.html"
@@ -294,21 +294,25 @@
     },
     {
       "id": "report",
-      "role": "work",
+      "role": "gate",
       "kind": "shell",
       "spec": {
         "cmd": [
           "python",
-          "-c",
-          "import pathlib\nfiles = ['backend/split.py', 'backend/server.py', 'frontend/split.js', 'frontend/index.html']\nfor f in files:\n    p = pathlib.Path(f)\n    size = ('  %d bytes' % p.stat().st_size) if p.is_file() else ''\n    print(('  ok   ' if p.is_file() else '  MISS ') + f + size)\nprint('expense splitter built and gated: settlement logic, HTTP API and frontend all passed')"
+          "contrib/demo/deliverable_check.py",
+          "backend/split.py",
+          "backend/server.py",
+          "frontend/split.js",
+          "frontend/index.html"
         ]
       },
-      "output": "text",
+      "output": "json",
       "timeout_s": 300,
       "depends_on": [
         "review"
       ],
-      "final": true
+      "final": true,
+      "contract": "Verdict"
     }
   ]
 }

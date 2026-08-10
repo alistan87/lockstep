@@ -908,6 +908,20 @@ def _usage(run_dir: Path) -> dict | None:
         return None
 
 
+def _reader_missing() -> bool:
+    """Is `cost_report` importable at all? Distinguished from every other way
+    `_usage` returns None because it is the only one the reader can act on: a
+    mid-replace `state.json` fixes itself within the second, a missing sibling
+    file or a Python below 3.11 (no `tomllib`) never does. The panel used to
+    print both possibilities in one line and leave the choosing to a reader who
+    was chosen for not being a programmer."""
+    try:
+        import cost_report  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return True
+    return False
+
+
 def _mode_cost(row: dict, mode: str) -> float | None:
     if mode == "head" and row.get("status") != "running":
         return (row.get("head") or {}).get("cost")
@@ -977,7 +991,10 @@ def cost_lines(run_dir: Path, mode: str = "history",
         return ["(reading state...)"]
     run = usage if usage is not None else _usage(run_dir)
     if run is None:
-        return ["(cost data unavailable - state mid-replace or cost_report missing)"]
+        if _reader_missing():
+            return ["(the part that reads timings and cost is not installed here -",
+                    " contrib/cost_report.py, which needs Python 3.11 or newer)"]
+        return ["(cost data unavailable - state mid-replace)"]
     flow = read_json(run_dir / "flow.tg.json")
     rows = {r["node"]: r for r in run["rows"]}
     node_ids = list(rows)
