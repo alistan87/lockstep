@@ -72,9 +72,19 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
 the next checkpoint (node spawn, heal round, map item at concurrency 1) and
 rendered as a `--- steering ---` block that folds into the hash — steering a
 `done` node re-marks it pending on the next resume. `cancel <run_dir> <node>`
-kills the recorded process tree (`phases/<node>/pid.txt`); the node fails as
+kills the recorded process tree (`phases/<node>/pid.txt`, plus the Windows Job
+Object named in `phases/<node>/job_name.txt`); the node fails as
 `cancelled` with NO retries and restarts from a known input on resume. Latest
 per-node progress (advisory `progress.jsonl`) shows in `status`.
+
+On Windows, `phases/<node>/job-unavailable.txt` means that node got NO job
+object and its teardown fell back to `taskkill /T /F` alone — the mechanism
+that is unreliable against a `pi.cmd` → `cmd.exe` → `node.exe` chain when a
+security product denies the termination call. If a node's descendants survived
+a kill, look for that file first: it says the guarantee was never in force,
+which is otherwise indistinguishable from it having failed. Its contents are
+the `GetLastError` from whichever call was refused. See DEVIATIONS.md
+(2026-08-10).
 
 ## Resume vs run vs run --fresh
 

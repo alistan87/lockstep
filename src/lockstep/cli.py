@@ -533,7 +533,11 @@ def cmd_cancel(ns) -> int:
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(utcnow(), encoding="utf-8")
     pid = int(pid_file.read_text(encoding="utf-8").strip())
-    if not kill_pid_tree(pid):
+    # The Job Object name, when the spawn got one, is the reliable handle on the
+    # tree; the pid is the fallback. Both are recorded by the executor.
+    job_file = phase / "job_name.txt"
+    jn = job_file.read_text(encoding="utf-8").strip() if job_file.exists() else None
+    if not kill_pid_tree(pid, jn or None):
         marker.unlink(missing_ok=True)  # nothing was killed; don't poison the next spawn
         return _fail(f"no live process tree at pid {pid} (node already finished?)", EXIT_CONFIG)
     print(f"cancelled {ns.node_id} (pid {pid}); it restarts from a known input, not mid-thought")

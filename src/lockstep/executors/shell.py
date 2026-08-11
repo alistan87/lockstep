@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from ..interpolate import ResolveCtx, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..taskgraph import Node
-from .proc import resolve_inside, spawn, wait_or_kill
+from .proc import record_spawn_handles, resolve_inside, spawn, wait_or_kill
 
 
 def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
@@ -170,8 +170,9 @@ class ShellExecutor:
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")
-        # r6 C3: record the child pid so `lockstep cancel` can kill the tree.
-        (phase_dir / "pid.txt").write_text(str(proc.pid), encoding="utf-8")
+        # r6 C3: record the child pid so `lockstep cancel` can kill the tree,
+        # and the Job Object name (Windows) so it can do so without a pid walk.
+        record_spawn_handles(phase_dir, proc)
         exit_code, timed_out = wait_or_kill(proc, timeout_s)
         # Result channel (SPEC §8.3): file first, stdout fallback.
         result_text: str | None = None

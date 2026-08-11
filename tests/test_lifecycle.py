@@ -229,6 +229,301 @@ def test_kill_tree_reaps_grandchild_on_timeout(tmp_path):
     assert size1 == size2, "grandchild still writing => not reaped"
 
 
+def test_job_object_reaps_tree_when_only_the_top_pid_dies(tmp_path):
+    """The reported Windows failure (DEVIATIONS 2026-08-10): kill ONLY the
+    top-level pid and the descendants survive, because a `cmd.exe`-style shim
+    exits as soon as it has launched its child and the PPID walk loses it.
+
+    No taskkill and no kill_tree here on purpose — nothing walks the tree. On
+    Windows the only thing that can reap the grandchild is KILL_ON_JOB_CLOSE
+    firing when the driver's job handle closes (so the Windows branch issues no
+    kill at all — closing the handle IS the mechanism under test); on POSIX it
+    is the process group. Both assert the same observable outcome.
+    """
+    import os
+    import signal as _signal
+    import sys as _sys
+
+    from lockstep.executors.proc import _close_job, job_unavailable_reason, spawn
+
+    heartbeat = tmp_path / "hb.txt"
+    grandchild = (
+        "import time, sys\n"
+        "while True:\n"
+        "    open(sys.argv[1], 'a').write('x')\n"
+        "    time.sleep(0.05)\n"
+    )
+    # The shim shape: spawn the grandchild, then EXIT immediately, orphaning it.
+    shim = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}, sys.argv[1]])\n"
+    )
+    proc = spawn(
+        [PY, "-c", shim, str(heartbeat)],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "out.log",
+        stderr_path=tmp_path / "err.log",
+    )
+    try:
+        if _sys.platform == "win32" and not getattr(proc, "_lockstep_job", None):
+            # Nested job without breakaway, container, locked-down policy: the
+            # taskkill fallback is correct there and this guarantee simply does
+            # not apply. Skip rather than fail — but say WHY, so a machine that
+            # silently lost the guarantee is not mistaken for a passing one.
+            pytest.skip(f"no job object available here: {job_unavailable_reason(proc)}")
+        # Let the shim exit on its own and the grandchild get going.
+        proc.wait(timeout=30)
+        deadline = time.time() + 20
+        while time.time() < deadline and not heartbeat.exists():
+            time.sleep(0.05)
+        assert heartbeat.exists(), "grandchild never started"
+
+        if _sys.platform == "win32":
+            _close_job(proc)  # what driver death does implicitly
+        else:
+            # NOT getpgid(proc.pid): proc.wait() above already reaped the shim,
+            # so that lookup raises. The group outlives it, and is named by the
+            # leader's pid because spawn() uses start_new_session.
+            os.killpg(proc.pid, _signal.SIGKILL)
+
+        time.sleep(1.0)
+        size1 = heartbeat.stat().st_size
+        time.sleep(1.0)
+        assert heartbeat.stat().st_size == size1, "orphaned grandchild still writing"
+    finally:
+        # wait_or_kill is bypassed here, so nothing else closes these.
+        for fh in getattr(proc, "_lockstep_files", ()):
+            fh.close()
+        _close_job(proc)
+
+
+def test_a_backgrounded_process_survives_its_node_and_dies_with_the_driver(tmp_path):
+    """A node may deliberately leave a process running for LATER nodes — a
+    DuckDB connection holder is the motivating case, and DuckDB's single-writer
+    file lock makes both halves of this expensive to get wrong.
+
+    Both halves are asserted here, because each is a different failure:
+      - killing it at the node's clean exit breaks the flow (and diverges from
+        POSIX, where kill_tree fires only on timeout);
+      - letting it outlive the RUN recreates the reported bug — an orphan
+        holding the database lock, which no later run can take.
+    """
+    import sys as _sys
+
+    from lockstep.executors.proc import _close_job, spawn, wait_or_kill
+
+    heartbeat = tmp_path / "hb.txt"
+    child = (
+        "import time, sys\n"
+        "while True:\n"
+        "    open(sys.argv[1], 'a').write('x')\n"
+        "    time.sleep(0.05)\n"
+    )
+    node = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}, sys.argv[1]])\n"
+    )
+    proc = spawn(
+        [PY, "-c", node, str(heartbeat)],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "o.log",
+        stderr_path=tmp_path / "e.log",
+    )
+    try:
+        exit_code, timed_out = wait_or_kill(proc, timeout_s=30)
+        assert (exit_code, timed_out) == (0, False)
+
+        deadline = time.time() + 20
+        while time.time() < deadline and not heartbeat.exists():
+            time.sleep(0.05)
+        assert heartbeat.exists(), "backgrounded process never started"
+
+        # Half one: it outlived the node's clean exit.
+        size1 = heartbeat.stat().st_size
+        time.sleep(1.0)
+        assert heartbeat.stat().st_size > size1, "backgrounded process was killed at node exit"
+
+        if _sys.platform != "win32" or not getattr(proc, "_lockstep_job", None):
+            pytest.skip("driver-exit reap is the Windows job object's half")
+
+        # Half two: and dies when the driver does.
+        _close_job(proc)
+        time.sleep(1.0)
+        size2 = heartbeat.stat().st_size
+        time.sleep(1.0)
+        assert heartbeat.stat().st_size == size2, "survivor outlived the run"
+    finally:
+        for fh in getattr(proc, "_lockstep_files", ()):
+            fh.close()
+        _close_job(proc)
+
+
+def test_empty_job_is_not_reported_as_a_kill(tmp_path):
+    """`lockstep cancel` keys its CANCELLED marker off kill_pid_tree's return,
+    and a marker left behind rewrites a node that SUCCEEDED as failed(cancelled).
+
+    TerminateJobObject returns TRUE against a job with no live members, so
+    "the job existed" must not be reported as "a kill was issued". The pid path
+    could never do this — taskkill on a dead pid fails — which is what
+    cmd_cancel's marker-unlink has always relied on.
+    """
+    import sys as _sys
+
+    from lockstep.executors.proc import (
+        _close_job,
+        _create_job,
+        _terminate_job_by_name,
+        job_name_of,
+        kill_pid_tree,
+        spawn,
+    )
+
+    if _sys.platform != "win32":
+        pytest.skip("job objects are Windows-only")
+
+    job, why = _create_job()
+    assert job is not None, f"could not create a job object at all: {why}"
+    try:
+        # A live, openable, EMPTY job — the state a node's job is in for the
+        # window between the child exiting and the driver closing its handle.
+        assert _terminate_job_by_name(job[1]) is False
+    finally:
+        from lockstep.executors.proc import _kernel32
+
+        import ctypes as _ct
+
+        _kernel32().CloseHandle(_ct.c_void_p(job[0]))
+
+    # End to end: a finished node's recorded handles must not yield a success.
+    proc = spawn(
+        [PY, "-c", "pass"],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "o.log",
+        stderr_path=tmp_path / "e.log",
+    )
+    jn = job_name_of(proc)
+    try:
+        proc.wait(timeout=30)
+        assert kill_pid_tree(proc.pid, jn) is False, "reported a kill of a dead node"
+    finally:
+        for fh in getattr(proc, "_lockstep_files", ()):
+            fh.close()
+        _close_job(proc)
+
+
+def test_spawn_handles_are_recorded_and_stale_job_names_cleared(tmp_path):
+    """cancel reads pid.txt and prefers job_name.txt; a stale name from a
+    previous attempt would send it at a different object than the live pid."""
+    import sys as _sys
+
+    from lockstep.executors.proc import _close_job, job_name_of, record_spawn_handles, spawn
+
+    phase = tmp_path / "phase"
+    phase.mkdir()
+    proc = spawn(
+        [PY, "-c", "pass"],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "o.log",
+        stderr_path=tmp_path / "e.log",
+    )
+    try:
+        record_spawn_handles(phase, proc)
+        assert (phase / "pid.txt").read_text(encoding="utf-8").strip() == str(proc.pid)
+        jn = job_name_of(proc)
+        if jn:
+            assert (phase / "job_name.txt").read_text(encoding="utf-8").strip() == jn
+            assert not (phase / "job-unavailable.txt").exists()
+        elif _sys.platform == "win32":
+            # The fallback must be visible in the run dir, not silent.
+            assert (phase / "job-unavailable.txt").read_text(encoding="utf-8").strip()
+        proc.wait(timeout=30)
+    finally:
+        for fh in getattr(proc, "_lockstep_files", ()):
+            fh.close()
+        _close_job(proc)
+
+    # A later spawn that gets no job must REMOVE the earlier name, not leave it.
+    (phase / "job_name.txt").write_text("Local\\lockstep-stale", encoding="utf-8")
+
+    class _NoJob:
+        pid = 4242
+
+    record_spawn_handles(phase, _NoJob())  # type: ignore[arg-type]
+    assert not (phase / "job_name.txt").exists(), "stale job name survived a jobless spawn"
+    assert (phase / "pid.txt").read_text(encoding="utf-8").strip() == "4242"
+
+
+def test_spawn_leaks_no_job_handle_when_popen_rejects_the_argv(tmp_path):
+    """`except OSError` around Popen was too narrow: a NUL anywhere in argv —
+    reachable from any interpolated value — raises ValueError, which escaped
+    with the job handle unreferenced. Each leak pins a KILL_ON_JOB_CLOSE kernel
+    object for the driver's lifetime."""
+    import sys as _sys
+
+    from lockstep.executors.proc import spawn
+
+    if _sys.platform != "win32":
+        pytest.skip("job objects are Windows-only")
+
+    import ctypes as _ct
+
+    def handles() -> int:
+        n = _ct.c_uint32(0)
+        _ct.WinDLL("kernel32").GetProcessHandleCount(
+            _ct.WinDLL("kernel32").GetCurrentProcess(), _ct.byref(n)
+        )
+        return int(n.value)
+
+    for _ in range(5):  # warm the interpreter's own handle churn
+        with pytest.raises((ValueError, OSError)):
+            spawn([PY, "-c", "pass\x00"], cwd=tmp_path,
+                  stdout_path=tmp_path / "o.log", stderr_path=tmp_path / "e.log")
+    before = handles()
+    for _ in range(60):
+        with pytest.raises((ValueError, OSError)):
+            spawn([PY, "-c", "pass\x00"], cwd=tmp_path,
+                  stdout_path=tmp_path / "o.log", stderr_path=tmp_path / "e.log")
+    grew = handles() - before
+    assert grew < 30, f"leaked ~{grew} handles over 60 rejected spawns"
+
+
+def test_job_unavailable_reason_is_per_spawn_not_global(tmp_path):
+    """The reason is written into a node's OWN phase dir, and nodes run
+    concurrently on a thread pool — a module global let one node's artifact
+    report another node's failure, which is worse than reporting none."""
+    from lockstep.executors.proc import _close_job, job_name_of, job_unavailable_reason, spawn
+
+    procs = []
+    try:
+        for _ in range(3):
+            p = spawn([PY, "-c", "pass"], cwd=tmp_path,
+                      stdout_path=tmp_path / "o.log", stderr_path=tmp_path / "e.log")
+            procs.append(p)
+        for p in procs:
+            # Each proc answers for itself: a job means no reason, and no job
+            # means a reason that is this proc's own.
+            assert bool(job_name_of(p)) is (not job_unavailable_reason(p))
+    finally:
+        for p in procs:
+            p.wait(timeout=30)
+            for fh in getattr(p, "_lockstep_files", ()):
+                fh.close()
+            _close_job(p)
+
+
+def test_record_spawn_handles_never_raises_into_a_live_child(tmp_path):
+    """It runs between spawn() and wait_or_kill(); an escaping OSError there
+    abandons a LIVE child unwaited, with its job handle held for the driver's
+    lifetime. This machine's AV throws transient PermissionError on writes."""
+    from lockstep.executors.proc import record_spawn_handles
+
+    class _Proc:
+        pid = 7
+
+    # A path that cannot be written: the phase dir does not exist.
+    record_spawn_handles(tmp_path / "missing" / "phase", _Proc())  # type: ignore[arg-type]
+
+
 def test_shell_timeout_auto_retry_then_failed(tmp_path, git_repo):
     f = {
         "name": "to",

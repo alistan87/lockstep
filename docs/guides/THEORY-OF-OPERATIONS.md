@@ -150,6 +150,35 @@ findings instead of re-deriving them.
 Both facts were discovered by running the thing against itself, and both are in
 `DEVIATIONS.md`. That is the intended way to learn this system.
 
+**A spawn is a tree, and the driver has to be able to end it.** A harness stanza
+is often a shim — `pi.cmd` is an npm batch file, so Windows interposes `cmd.exe`,
+which runs `node.exe`. POSIX gets `start_new_session` + `killpg`. Windows gets
+`CREATE_NEW_PROCESS_GROUP` plus a Job Object, with `taskkill /T /F` still running
+first and unconditionally.
+
+The job exists because a pid walk has two failure modes and the driver cannot
+detect either. Windows does not reparent orphans, so once a shim exits its
+children point at a dead and eventually recycled pid — the walk finds nothing,
+or walks a stranger's tree. And the walk's termination call can simply be
+denied; that is what was reported from a consumer repo, with `taskkill`
+enumerating the chain correctly and then failing `ERROR_ACCESS_DENIED` on
+`node.exe` while an interactive human kill worked every time. Job membership is
+recorded by the kernel at assignment, so it needs neither a live parent-pid
+table nor a permitted call per member.
+
+The guarantee is deliberately **nothing outlives the run**, not *nothing
+outlives its node*. A node's clean exit does not tear its job down: a process it
+deliberately backgrounded for later nodes survives, as it would on POSIX. The
+kernel reaps the remainder when the driver exits and the last handle closes.
+The first cut of this closed the job at node exit, which was tidier and wrong —
+it would have killed a database connection holder shared across nodes, and
+diverged from POSIX for no stated reason.
+
+That framing is also what keeps the mechanism honest by this repo's own rule
+(`ADDENDUM-A`): it may only ENFORCE, never enable. Deleting the job object does
+not change what a correct agent can accomplish on any executor — it only changes
+whether a leaked tree can be relied on to die.
+
 ---
 
 ## 6. Contracts and the corrective re-spawn

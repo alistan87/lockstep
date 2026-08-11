@@ -267,3 +267,101 @@ file records implementation-level departures below that bar.
   interpreter (`./py`, `python3.11`, `C:\Python\python.exe`) is spawned
   exactly as written. Pinned by
   `tests/test_gates.py::test_shell_resolves_bare_python_to_the_driver_interpreter`.
+
+- **2026-08-10 — the Windows kill path adds a Job Object alongside
+  `taskkill /T /F`.** Two documents name the mechanism, which is why this is
+  logged rather than done silently: SPEC §8.5 ("Windows
+  `CREATE_NEW_PROCESS_GROUP` + `taskkill /T /F`") and — later, so it wins —
+  AMENDMENTS-r6 C3, which says `cancel` kills the recorded tree "same platform
+  mechanics as §8.5 `kill_tree`, **by pid**". Neither is withdrawn: taskkill now
+  runs *unconditionally and first* on both paths, so every environment still
+  gets exactly what those texts describe, and r6 C3's "by pid" remains literally
+  true. The job is an addition on top, not a substitution — which is what keeps
+  this below the amendment bar.
+
+  Why: reported from a consumer repo (MIMIR) running lockstep as an editable
+  dependency, observed live across multiple sessions — killing the orchestrator
+  did not reliably kill the tree it spawned, and descendants survived
+  `ERROR_ACCESS_DENIED` on both `taskkill /T /F` and `Stop-Process -Force` while
+  an interactive human kill succeeded every time. `taskkill /T` needs two things
+  a job does not: a parent-pid table that still describes the tree, and a
+  permitted termination call per member. A harness node's
+  `pi.cmd` → `cmd.exe` → `node.exe` chain stresses the first — Windows does NOT
+  reparent orphans, so once a shim exits its children point at a dead and
+  eventually recycled pid, and the walk finds nothing (or walks a stranger's
+  tree). The reported incidents were the second: the walk enumerated the chain
+  correctly and then failed at the termination call, consistent with endpoint
+  protection denying `TerminateProcess` against `node.exe` for a
+  non-interactive caller. Keep the two halves distinct:
+  - **Structural.** `AssignProcessToJobObject` records membership in the kernel
+    at assignment, so it survives the parent's death. Assignment is not atomic
+    with `CreateProcess` (Popen closes the child's thread handle, so
+    `CREATE_SUSPENDED` + `ResumeThread` is out of reach without a Toolhelp
+    thread walk); measured at ~17 µs against Popen's own ~2 ms. A descendant
+    born inside that window is in no job — and since its parent dies with the
+    job, the pid walk cannot reach it either. It is **uncovered**, not covered
+    by the fallback; running taskkill first is what narrows it, not what closes
+    it.
+  - **The vetoed call.** `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` means driver death
+    reaps the tree in the KERNEL when the last handle closes — lockstep makes no
+    user-mode termination call on that path, so there is nothing there to deny.
+    This is the half that answers the report. `lockstep cancel` still goes
+    through `TerminateJobObject`, which *is* a user-mode call and could still be
+    intercepted; that path is unproven against an affected machine and the
+    operator guidance for it is unchanged (ask a human to end the tree
+    interactively).
+
+  **The success path stays symmetric with POSIX, deliberately.** A node's clean
+  exit does NOT tear its job down: `_release_job_if_empty` reclaims the handle
+  only when the job has no live member, and holds it when it does, so a process
+  a node deliberately backgrounded for LATER nodes survives exactly as it would
+  on POSIX (where `kill_tree` fires on timeout and never on clean exit). The
+  first cut closed unconditionally; a consumer repo (MIMIR) runs a DuckDB
+  connection holder across nodes, and DuckDB's single-writer file lock makes
+  both directions expensive — killing it at node exit breaks the flow, and
+  letting it outlive the run recreates the reported bug in its worst form,
+  since an unkillable orphan holds the database lock and every later node fails
+  to take it. What the job guarantees is that nothing outlives the RUN, not
+  that nothing outlives its node: the survivor is still a job member, so the
+  kernel reaps it when the driver exits. Cost is one held kernel handle per
+  node that leaves something behind — bounded away from run length by closing
+  the empty case immediately. A refused membership query counts as non-empty:
+  never kill something because we could not ask about it. Pinned by
+  `test_a_backgrounded_process_survives_its_node_and_dies_with_the_driver`,
+  which asserts both halves.
+
+  All seven kernel32 calls go through `ctypes`, so the Windows branch stays
+  dependency-free (pydantic remains the only runtime dependency). The job name —
+  not a handle, which cannot cross a process boundary — is recorded next to
+  `pid.txt` as `phases/<node>/job_name.txt`, and removed when a spawn gets no
+  job so a stale name never outlives the thing it names; the reason is written
+  to `phases/<node>/job-unavailable.txt`, because a silent fallback to the
+  mechanism that was reported broken is indistinguishable from the guarantee.
+  That reason travels on the `Popen`, not in module state — nodes and map items
+  run concurrently on a thread pool, and a global let one node's artifact report
+  another node's `GetLastError`, which is worse than reporting none for a file
+  whose only job is to stop an operator chasing the wrong cause.
+  `kill_pid_tree` returns True only when the job had a LIVE member
+  (`QueryInformationJobObject`): `TerminateJobObject` succeeds against an empty
+  job, and `cmd_cancel` reads that return as "a kill was issued" and keeps its
+  `CANCELLED` marker — which would rewrite a node that had just SUCCEEDED as
+  `failed(cancelled)` and discard its result. A job whose membership query is
+  itself REFUSED is terminated anyway rather than treated as empty: a denied
+  query is the signature of the machine this exists for, so forfeiting the kill
+  there would be exactly backwards. Nothing here touches `input_hash`: run-dir
+  artifacts are not fingerprinted. Pinned by
+  `tests/test_lifecycle.py::test_job_object_reaps_tree_when_only_the_top_pid_dies`
+  (whose Windows branch issues no kill at all — closing the handle *is* the
+  mechanism under test), plus `test_empty_job_is_not_reported_as_a_kill`,
+  `test_spawn_handles_are_recorded_and_stale_job_names_cleared`,
+  `test_record_spawn_handles_never_raises_into_a_live_child`,
+  `test_spawn_leaks_no_job_handle_when_popen_rejects_the_argv`, and
+  `test_job_unavailable_reason_is_per_spawn_not_global`.
+
+  Two caveats a future reader should not have to rediscover. The reaps test
+  SKIPS where no job is available, so it reports green-by-skip on the very
+  machines that silently lost the guarantee — `test_empty_job_is_not_reported_as_a_kill`
+  is the one that turns removal into a hard failure. And `cmd_cancel` reads only
+  `phases/<node>/pid.txt`, so a MAP node's per-item handles (written under
+  `phases/<node>/items/<i>/`) are unreachable from `cancel` at all — pre-existing,
+  not introduced here.

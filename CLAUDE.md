@@ -86,7 +86,7 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
 - `interpolate.py` — reference forms, data fencing, spill-to-file, `when` eval
 - `contracts.py` — built-in output contracts (Verdict, Finding, …) + resolver
 - `protocols.py`, `registry.py`, `policy.py` — seams (Executor/Workspace/Store/Policy; AllowAllPolicy is the v1 no-op); kind → executor
-- `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `proc.py` (spawn + kill_tree)
+- `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `proc.py` (spawn + kill_tree; Windows Job Object containment on top of taskkill)
 - `workspace.py` — GitWorkspace (temp-index write-tree snapshots AND restores; restore never deletes; `staged_paths`/`unstage` for quarantine), NullWorkspace
 - `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
 - `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine
@@ -115,6 +115,15 @@ a feature over adding a dependency. Full pytest after every change.
   standard footer would order them to write files their `readonly_argv` forbids.
 - Corrective re-spawns embed the original prompt + fenced invalid output —
   headless spawns are stateless; "output-only" constrains side effects, not context.
+- `wait_or_kill` does NOT close a node's Windows job handle when the job still
+  has live members (`_release_job_if_empty`). A node may deliberately background
+  a process for later nodes — closing there would kill it at node exit and
+  diverge from POSIX. The guarantee is nothing outlives the RUN, not the node;
+  the kernel reaps the rest when the driver exits (DEVIATIONS 2026-08-10).
+- `kill_tree`/`kill_pid_tree` run `taskkill /T /F` **first and unconditionally**,
+  then the job terminate. The walk is only useful while the top process lives,
+  and gating it on "the job failed" made it unreachable exactly when it was the
+  only thing that could reach an assign-window escapee.
 
 ## Ops notes
 

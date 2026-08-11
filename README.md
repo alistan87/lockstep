@@ -32,7 +32,7 @@ $ lockstep verify flows/gated-build.tg.json
 $ lockstep run flows/gated-build.tg.json --arg task="add a --version flag"
 $ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress
 $ lockstep steer runs/<run>/ implement "prefer the streaming writer"   # next checkpoint
-$ lockstep cancel runs/<run>/ implement         # kills the node's process tree
+$ lockstep cancel runs/<run>/ implement         # kills the node's process tree; no retries
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
 $ lockstep verify flows/x.tg.json --lint        # + advisory anti-pattern warnings
 $ lockstep explain runs/<run>/ implement        # which hash inputs moved; why it re-billed
@@ -349,6 +349,40 @@ The run directory is excluded from all of this. Keep `runs/` gitignored — the
 engine excludes it from the scope check and from heal rollback, but not from the
 lineage fingerprint, so an un-ignored run dir makes every resume warn about
 external edits to its own `state.json`.
+
+## Process containment, and what outlives what
+
+A spawn is a process tree, not a process: a harness stanza like `pi.cmd` is an
+npm shim, so Windows interposes `cmd.exe`, which runs `node.exe`. Timeouts and
+`lockstep cancel` have to reach all of it.
+
+POSIX uses `start_new_session` + `killpg`. Windows uses `CREATE_NEW_PROCESS_GROUP`
+plus a **Job Object**, with `taskkill /T /F` still running first and
+unconditionally. The job is what makes containment reliable: `taskkill /T` walks
+the live parent-pid table, and Windows does not reparent orphans — once a shim
+exits, its children point at a dead and eventually recycled pid, so the walk
+finds nothing or walks a stranger's tree. Job membership is recorded by the
+kernel at assignment and survives the parent's death.
+
+The rule is **nothing outlives the run** — not *nothing outlives its node*:
+
+- A node's clean exit does **not** tear its job down. A process a node
+  deliberately backgrounded for later nodes keeps running, exactly as it would
+  on POSIX. Flows that share a long-lived resource across nodes — a database
+  connection holder is the usual case — depend on this.
+- When the driver exits, crashes, or is killed, the last job handle closes and
+  the **kernel** reaps whatever is left. Nothing survives into the next run.
+  That second half matters most when the survivor holds a lock: an unkillable
+  orphan sitting on a database file is the failure this exists to prevent.
+
+One narrow gap, stated rather than papered over: assignment is not atomic with
+process creation (~17 µs), and a descendant born inside that window is in no job.
+Since its parent dies with the job, the pid walk cannot reach it either.
+
+If a node could not get a job at all — a nested job that forbids it, a policy
+denial — `phases/<node>/job-unavailable.txt` records why, because a silent
+fallback to the pid walk is otherwise indistinguishable from the guarantee.
+Background: `docs/spec/DEVIATIONS.md` (2026-08-10).
 
 ## Executors are config, not code
 

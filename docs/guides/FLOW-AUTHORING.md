@@ -520,6 +520,37 @@ registered in `sys.modules`, so postponed annotations leave pydantic unable to
 resolve `Literal`/`Optional` and every spawn fails validation. Use eager
 annotations and `Optional[str]` rather than `str | None`.
 
+## Sharing a long-lived process across nodes
+
+A node may start a process that outlives it — a database connection holder, a
+local service later nodes call. The lifetime is defined, and it is the same on
+both platforms:
+
+- **It survives its own node's clean exit.** The driver does not tear down what
+  a node backgrounded just because the node returned.
+- **It does not survive the run.** When the driver exits, crashes, or is killed,
+  the process is reaped (on Windows by the kernel, via the node's Job Object).
+
+Author to both halves. The first means you may share a resource across nodes;
+the second means you may not treat one run's leftovers as another run's setup —
+a later run must be able to start the holder itself, or the flow is not
+resumable. This matters most when the shared resource is **locked**: a
+single-writer database whose holder survives into the next run leaves a lock
+nothing can take, which is worse than no holder at all.
+
+Two things to get right when you do this:
+
+- **Declare every path the holder writes**, not just the obvious one. A database
+  usually has a sidecar — a WAL, a journal, a lock file. If `spec.writes` names
+  only `data/x.db`, the sidecar reads as an out-of-scope write and is quarantined:
+  moved aside, never deleted, but separated from the file it belongs to. Declare
+  the sidecar explicitly or scope to the directory.
+- **The holder is not a node, so no token governs it.** Write-capable nodes are
+  serialised against each other by the exclusive `tree` token, but a backgrounded
+  process runs alongside every later node by construction — including readonly
+  ones, which take no token at all. If the store is single-writer, that
+  concurrency is yours to design around; the scheduler cannot see it.
+
 ## Operational caveats
 
 Windows argv limits with large interpolations, encoding rules for embedded

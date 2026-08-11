@@ -79,7 +79,10 @@ the driver rather than wait for it. It starts the run, waits until `slow` has
 **actually begun** — on the node's own invocation record, never on a sleep,
 because a timing guess would make a crash-recovery test flaky in exactly the
 way it must not be — then `kill_tree`s the whole process group and runs a
-**plain `resume`**.
+**plain `resume`**. It drives the driver through a plain `Popen`, not
+`proc.spawn`, so no Job Object is involved and the Windows branch is the bare
+`taskkill /T /F` path; the job object's own guarantees are regressed in
+`tests/test_lifecycle.py`, not here.
 
 Plain is the point. The killed run leaves its lockfile behind, and
 `acquire_lock` clears it only because the recorded pid is dead *on this host*

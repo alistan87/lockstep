@@ -20,7 +20,7 @@ from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
 from ..state import part_digest
 from ..taskgraph import Node, RetrySpec
-from .proc import resolve_inside, spawn, wait_or_kill
+from .proc import record_spawn_handles, resolve_inside, spawn, wait_or_kill
 from .shell import node_env, resolve_ctx_of
 
 
@@ -327,8 +327,9 @@ class HarnessExecutor:
             )
         except OSError as e:
             return RawResult(exit_code=127, result_text=None, source="none", error=f"spawn failed: {e}")
-        # r6 C3: record the child pid so `lockstep cancel` can kill the tree.
-        (phase_dir / "pid.txt").write_text(str(proc.pid), encoding="utf-8")
+        # r6 C3: record the child pid so `lockstep cancel` can kill the tree,
+        # and the Job Object name (Windows) so it can do so without a pid walk.
+        record_spawn_handles(phase_dir, proc)
         exit_code, timed_out = wait_or_kill(proc, timeout_s, stdin_text=stdin_text)
 
         stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""

@@ -185,3 +185,10 @@ nodes, do not resume, and report what was spent.
   out-of-scope writes are blocked in-session and recorded to `verdicts.jsonl`
   (read by verdict-file gates). Extensions only enforce — never route control
   flow through them (`docs/spec/ADDENDUM-A-pi-hooks.md`).
+- A spawn is a process **tree** (`pi.cmd` → `cmd.exe` → `node.exe`). Timeouts and
+  `cancel` end all of it: POSIX by process group, Windows by `taskkill /T /F`
+  plus a Job Object. A node's clean exit does NOT kill something it deliberately
+  backgrounded — that survives for later nodes — but nothing survives the driver:
+  when it exits or is killed, the kernel reaps the rest. If descendants ever do
+  survive on Windows, check `phases/<node>/job-unavailable.txt` first; it means
+  that node never had the guarantee, which looks identical to it failing.
