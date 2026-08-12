@@ -183,12 +183,13 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
     stat cache in `dirty_paths()` (`git status --porcelain`), so the question
     is whether the ENFORCEMENT path deserves a stronger guarantee than the
     advisory one.
-  - **Stop taking two snapshots per rollback** — `diff_patch(baseline)` and
-    `changed_paths(baseline)` each compute `current` internally, so every heal
-    round walks the tree twice for one answer. Passing a shared `current` (or
-    memoizing it for the duration of the rollback) is a pure win with no
-    soundness change; it needs one optional parameter on two `Workspace`
-    methods.
+  - ~~**Stop taking two snapshots per rollback**~~ — DONE 2026-08-12. Both
+    methods take an optional `current: SnapshotRef`; the rollback path
+    snapshots once and passes it to both, halving a heal round's tree work.
+    It also tightened §9.4.4: the preserved patch and the restore scope now
+    describe the SAME tree, where two snapshots described two moments and a
+    file written between them would have been restored without appearing in
+    the evidence.
 
 **New r7 candidate (2026-08-12, adversarial review of the batch) — map items
 are the one unguardable mutator class.** A map node cannot declare

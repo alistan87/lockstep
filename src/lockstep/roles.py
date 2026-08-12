@@ -1338,15 +1338,21 @@ class Engine:
                 return
             # Preserve the attempt, THEN restore (§9.4.4): the failed work stays
             # inspectable; scope is git-derived, never StepResult.files_written.
+            # ONE snapshot for both answers (P1-perf). Each of these otherwise
+            # walks and hashes the whole tree for itself, and the two would
+            # describe two different moments: the preserved patch and the
+            # restore scope must be the same tree, or a file written between
+            # them is restored without appearing in the evidence.
+            current = self._timed_ws(gate.id, "heal-current", self.workspace.snapshot)
             patch = self._timed_ws(gate.id, "heal-patch",
-                                   lambda: self.workspace.diff_patch(baseline))
+                                   lambda: self.workspace.diff_patch(baseline, current))
             (gate_phase / f"attempt-{round_n}.patch").write_text(patch, encoding="utf-8")
             # Same exclusion as the scope check, for the same reason and with a
             # sharper edge: a rollback that reverts the run dir would restore
             # `state.json` from under the engine mid-heal.
             scope = self._outside_run_dir(
                 self._timed_ws(gate.id, "heal-diff",
-                               lambda: self.workspace.changed_paths(baseline))
+                               lambda: self.workspace.changed_paths(baseline, current))
             )
             discard = gate_phase / f"discarded-{round_n}"
             self._timed_ws(gate.id, "heal-restore",

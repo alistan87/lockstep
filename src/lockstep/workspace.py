@@ -141,19 +141,28 @@ class GitWorkspace:
             tree = self._git("write-tree", env=env).strip()
         return SnapshotRef(ref=tree)
 
-    def changed_paths(self, since: SnapshotRef) -> list[str]:
+    def changed_paths(self, since: SnapshotRef, current: SnapshotRef | None = None) -> list[str]:
         with self._lock:
-            return self._changed_paths_unlocked(since)
+            return self._changed_paths_unlocked(since, current)
 
-    def _changed_paths_unlocked(self, since: SnapshotRef) -> list[str]:
-        current = self.snapshot()
+    def _changed_paths_unlocked(self, since: SnapshotRef,
+                               current: SnapshotRef | None = None) -> list[str]:
+        current = current or self.snapshot()
         out = self._git("diff-tree", "-r", "--name-only", "--no-renames", since.ref, current.ref)
         return [line for line in out.splitlines() if line.strip()]
 
-    def diff_patch(self, since: SnapshotRef) -> str:
+    def diff_patch(self, since: SnapshotRef, current: SnapshotRef | None = None) -> str:
         """Unified diff of baseline tree vs current tree — the blocked attempt,
-        preserved before restore (SPEC §9.4.4)."""
-        current = self.snapshot()
+        preserved before restore (SPEC §9.4.4).
+
+        A caller that also wants `changed_paths` for the same tree should
+        snapshot ONCE and pass it to both: a snapshot walks and hashes the
+        whole working tree (P1-perf measured 1.4 s on a 47 MB tree), and two
+        of them describe two slightly different moments — sharing one makes the
+        preserved patch and the restore scope answers about the same tree,
+        which is what §9.4.4 means by both.
+        """
+        current = current or self.snapshot()
         return self._git("diff-tree", "-r", "-p", "--no-renames", since.ref, current.ref)
 
     def dirty_paths(self) -> list[str]:
@@ -268,10 +277,10 @@ class NullWorkspace:
     def snapshot(self) -> SnapshotRef:
         raise WorkspaceError("NullWorkspace cannot snapshot: heal.rollback requires a git-managed tree")
 
-    def changed_paths(self, since: SnapshotRef) -> list[str]:
+    def changed_paths(self, since: SnapshotRef, current: SnapshotRef | None = None) -> list[str]:
         raise WorkspaceError("NullWorkspace cannot diff")
 
-    def diff_patch(self, since: SnapshotRef) -> str:
+    def diff_patch(self, since: SnapshotRef, current: SnapshotRef | None = None) -> str:
         raise WorkspaceError("NullWorkspace cannot diff")
 
     def restore(self, ref: SnapshotRef, scope: list[str], discard_dir: Path) -> None:

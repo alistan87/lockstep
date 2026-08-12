@@ -471,3 +471,32 @@ def test_baseline_gate_when_referencing_steps_is_legal(tmp_path):
     })
     codes2 = {i.code for i in verify_flow(flow2, registry=reg, config=make_config())}
     assert "baseline-gate-references-steps" in codes2
+
+
+def test_rollback_walks_the_tree_once_for_both_answers(tmp_path, git_repo):
+    """P1-perf: `diff_patch` and `changed_paths` each snapshot internally, so a
+    rollback used to walk and hash the whole working tree TWICE for one
+    decision — the expensive operation in the engine, measured at 1.4s per walk
+    on a 47MB tree (contrib/snapshot_bench.py).
+
+    Sharing one snapshot is also the more correct reading of §9.4.4: the
+    preserved patch and the restore scope now describe the SAME tree, where two
+    snapshots described two moments and a file written between them would be
+    restored without appearing in the evidence.
+    """
+    import json
+
+    h = build(tmp_path, heal_flow([BLOCK, PASS]), git_repo)
+    assert h.engine.run() == 0
+    events = [json.loads(ln) for ln in
+              (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    ops = [e["op"] for e in events if e.get("kind") == "timing" and e.get("node") == "gate"]
+    # One baseline (proactive, before the target ran) + one shared current.
+    assert ops.count("heal-baseline") == 1, ops
+    assert ops.count("heal-current") == 1, ops
+    # The two consumers of that snapshot still run — they just don't take one.
+    assert ops.count("heal-patch") == 1 and ops.count("heal-diff") == 1, ops
+    # And the evidence still agrees with what was rolled back.
+    patch = (h.run_dir / "phases" / "gate" / "attempt-1.patch").read_text(encoding="utf-8")
+    assert "gen.txt" in patch
+    assert (h.run_dir / "phases" / "gate" / "discarded-1" / "gen.txt").exists()
