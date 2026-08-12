@@ -34,9 +34,12 @@ $ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress
 $ lockstep steer runs/<run>/ implement "prefer the streaming writer"   # next checkpoint
 $ lockstep cancel runs/<run>/ implement         # kills the node's process tree; no retries
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
+$ lockstep wait runs/<run>/ --timeout 600       # block until the driver exits; exits with the RUN's meaning
 $ lockstep verify flows/x.tg.json --lint        # + advisory anti-pattern warnings
+$ lockstep verify flows/x.tg.json --config c.toml     # the SAME config the run will use
 $ lockstep explain runs/<run>/ implement        # which hash inputs moved; why it re-billed
 $ lockstep run flows/x.tg.json --replay runs/<run>/   # recorded results; no spawns, no tokens
+$ lockstep run flows/x.tg.json --seed runs/<run>/     # edited flow, new lineage, inherit what did not change
 $ lockstep verify-trace runs/<run>/             # recompute the journal's hash chain
 $ lockstep gc                                   # runs/ retention plan; dry-run unless --apply
 ```
@@ -61,6 +64,17 @@ proactively-taken git baseline (untracked files included; created files are
 moved aside, never deleted), re-marks every completed descendant of the heal
 targets pending, appends the gate's findings (fenced as data) to the targets'
 prompts, and re-runs. Rounds exhausted ⇒ exit 2.
+
+A heal round is the expensive unit in this system — a rollback plus a full
+re-run of whatever produced the work — so two mechanisms exist to stop gates
+spending one on failures the run did not cause. `"baseline": true` on a gate
+runs its body once against the pre-run tree and subtracts those findings at
+evaluation, so a block whose findings all predate the run flips to pass; and
+`python -m lockstep.gates.scoped_checks --run "ruff check {files}"` checks only
+the files this run changed. A gate pointed at `ruff check .` otherwise owns the
+whole repository's debt. Between rounds, a target may leave durable notes in
+`attempt-notes.md` in its phase dir — the retry prompt includes them, so a
+second attempt does not re-derive what the first established.
 
 ## Starter flows
 
@@ -326,15 +340,45 @@ harness nodes are nondeterministic; re-running one legitimately yields
 different output and correctly invalidates its dependents. Shell nodes always
 re-run, deliberately. Map nodes resume per item.
 
+Editing the flow file is a different act: it changes `flow_hash` and starts a
+new lineage, so `resume` refuses it and every completed node would re-run.
+That refusal is the cache's whole basis, but the bill it implied taught people
+not to edit flows — so `run <flow> --seed <old_run_dir>` keeps the refusal and
+drops the cost. Every node whose `input_hash` the edit did not move is served
+from the old run; the edited node runs, and so does anything whose upstream
+produced a *different* result. A re-run ancestor that lands on the same output
+does not re-bill its readers: this is content-addressed, not lineage-addressed.
+Nothing is trusted but the hash, so shell nodes, map items and failures are
+never served, and `status` names every node it inherited and from where.
+
 ## Write scope, and what happens when an agent leaves it
 
-A node may declare `spec.writes` — the paths it is allowed to write. The driver
-never sees tool calls, so it **detects** rather than prevents, by diffing a
-baseline tree taken before the spawn. Detection runs *during* the node, inside
-the same lock that holds its exclusive tokens: outside that lock the diff
-measures whatever the next node has already written, and a node that stayed in
-scope gets accused of its peer's work. Every write-capable kind takes the `tree`
-token for the same reason, shell included.
+Every mutating node declares `spec.writes` — the paths it is allowed to write.
+A narrow prompt is advisory text a model can rationalize past under gate
+pressure; the scope is the mechanical control, and `verify --lint` warns when a
+write-capable node has none. There are three honest declarations: a list of
+paths, globs or directory prefixes; `[]`, which means *this node writes
+nothing* and is enforced as written; or `["**"]` with a required
+`spec.writes_rationale`, for a target genuinely decided at run time. A scope
+may interpolate `{args.NAME}` — but never `{steps...}`, which would let a
+node's own upstream output decide what it may write.
+
+The driver never sees tool calls, so it **detects** rather than prevents, by
+diffing a baseline tree taken before the spawn. Detection runs *during* the
+node, inside the same lock that holds its exclusive tokens: outside that lock
+the diff measures whatever the next node has already written, and a node that
+stayed in scope gets accused of its peer's work. Every write-capable kind takes
+the `tree` token for the same reason, shell included. The declared scope also
+reaches the spawn as `LOCKSTEP_WRITE_SCOPE`, so an in-harness extension can
+prevent what the driver can only detect.
+
+Three further things a declared scope buys. A heal re-run's prompt restates the
+target's own scope, because gate findings naming out-of-scope files otherwise
+read as authorization to go fix them. A fresh `run` refuses to start when
+uncommitted working-tree changes sit inside any declared scope, since an
+in-scope write would legally overwrite them (`--allow-dirty-scope` overrides).
+And a heal rollback names any path it restored that no target declared — the
+signal that an out-of-band edit made mid-run was just undone.
 
 A violation is **quarantined, not abandoned**. The blocked attempt is preserved
 as `phases/<node>/out-of-scope-<attempt>.patch` before anything is touched; each
@@ -421,8 +465,23 @@ output — sensitive, never committed.
 
 ```console
 $ .venv\Scripts\python.exe -m pytest      # offline suite; fake executor, no tokens
+$ python contrib/replay_suite.py          # zero-token FLOW regression from recorded fixtures
+$ python contrib/torture_suite.py         # zero-token ENGINE regression: heal, rollback, quarantine, timeout
+$ lockstep run flows/selftest-replay.tg.json    # zero-token doc self-check
+$ python contrib/snapshot_bench.py        # what a tree snapshot costs here, and why
 $ LOCKSTEP_LIVE=1 pytest tests/live       # live smoke (spends tokens)
 ```
+
+The three zero-token suites cover different things and none replaces another:
+the replay fixtures regress recorded flows, the torture flows regress the
+engine paths a recording never takes (a heal cascade, a quarantine, a timeout),
+and the self-check flow regresses the documentation this file is part of.
+
+Every git tree operation the engine performs journals its duration as an
+advisory `kind: "timing"` line in `events.jsonl` — a snapshot is
+`git add -A` into a fresh temp index, so it costs O(tree bytes) on every call
+and a run that slows down over its life can be read rather than guessed at.
+`contrib/snapshot_bench.py` reproduces the numbers on any repo.
 
 Build order and working agreement: SPEC §14. Deviations: `docs/spec/DEVIATIONS.md`.
 License: MIT.

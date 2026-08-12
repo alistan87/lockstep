@@ -45,6 +45,7 @@ not change what a correct agent can accomplish on any executor.
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
 python contrib\torture_suite.py                    # zero-token ENGINE regression: heal/rollback/cascade, corrective re-spawn, quarantine, timeout — the paths a recording never takes (flows\demo\torture\README.md)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
+python contrib\snapshot_bench.py                   # what a tree snapshot costs (O(tree bytes); fresh vs seeded index)
 pwsh -File contrib\attention.ps1 -RunDir <run>     # toast/webhook on decision-waiting / failed / stopped
 ```
 
@@ -86,14 +87,21 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
 ## Module map (src/lockstep/)
 
 - `taskgraph.py` — format models + the §6 static verifier (named error codes)
-- `interpolate.py` — reference forms, data fencing, spill-to-file, `when` eval
+- `interpolate.py` — reference forms, data fencing, spill-to-file, `when` eval,
+  `render_scope` (write scopes take `{args.NAME}` and nothing else)
 - `contracts.py` — built-in output contracts (Verdict, Finding, …) + resolver
 - `protocols.py`, `registry.py`, `policy.py` — seams (Executor/Workspace/Store/Policy; AllowAllPolicy is the v1 no-op); kind → executor
 - `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `proc.py` (spawn + kill_tree; Windows Job Object containment on top of taskkill)
 - `workspace.py` — GitWorkspace (temp-index write-tree snapshots AND restores; restore never deletes; `staged_paths`/`unstage` for quarantine), NullWorkspace
 - `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
-- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine
+- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine; `_writes_of` is the ONE reader of a
+  declared scope (quarantine, dirty preflight, heal text, rollback warning)
 - `cli.py`, `render.py`, `doctor.py` — frozen exit codes, Mermaid, executor probes
+- `replay.py`, `seed.py` — result-serving wrappers over the real executors:
+  replay serves EVERY node and errors on a miss (reproduce a run), a seed
+  serves what its input_hash matches and runs the rest (warm-start a new
+  lineage). The seed decision is made in `plan()` so a served node sets
+  `costs_tokens=False` and never spends spawn budget.
 
 ## Frozen surfaces — stop and ask before changing
 
@@ -116,6 +124,11 @@ a feature over adding a dependency. Full pytest after every change.
 - `NullWorkspace` disables external-edit detection (AMENDMENTS M6).
 - Readonly harness nodes get `FOOTER_READONLY` (stdout result channel) — the
   standard footer would order them to write files their `readonly_argv` forbids.
+- `--seed` never serves a shell node, a map ITEM, or a failure. Shell nodes
+  always re-run (§0.1.7) and a cache that skips what a resume would re-run is a
+  footgun with a nicer name; a map item's hash appends `index:i` AFTER the
+  executor plans, so a plan-time decision cannot see it and an execute-time one
+  would spend budget for a spawn that never happened.
 - Corrective re-spawns embed the original prompt + fenced invalid output —
   headless spawns are stateless; "output-only" constrains side effects, not context.
 - `wait_or_kill` does NOT close a node's Windows job handle when the job still

@@ -27,8 +27,12 @@ Two things are being installed, and they go to different places:
 
 ```powershell
 .venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
-.venv\Scripts\python.exe contrib\build_bundle.py --version 0.5.0
+.venv\Scripts\python.exe contrib\build_bundle.py --version 0.8.0
 ```
+
+Use the version in `pyproject.toml`, not the one written here — the wheel is
+looked up by exact filename, so a stale number here fails loudly rather than
+shipping the wrong build.
 
 That produces `dist\lockstep-cockpit-<version>.zip` — wheel, `contrib/`,
 `flows/`, `personas/`, `docs/`, the skills, and this guide. It refuses to build
@@ -44,11 +48,18 @@ machine ends up on documentation that no longer matches the code.
 ```powershell
 cd <your-work-repo>
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install lockstep-0.5.0-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install lockstep-0.8.0-py3-none-any.whl
 .venv\Scripts\lockstep.exe --help
 ```
 
 Python 3.11+. The only runtime dependency is `pydantic`.
+
+**Upgrading an existing install?** `lockstep status <run_dir>` prints the driver
+version that created the run and flags a mismatch with the installed one, and
+`resume` says the same. Behaviour genuinely differs across versions, so check
+that line before acting on a symptom you remember from an older bundle — a
+surprising number of long-held beliefs about this tool turn out to describe a
+driver that no longer exists.
 
 **3.11 is a floor for the cockpit too, not just the driver.**
 `contrib/cost_report.py` needs `tomllib`, and every timing and cost figure on

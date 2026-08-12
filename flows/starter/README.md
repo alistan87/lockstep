@@ -11,6 +11,17 @@ prompts, check commands, and budgets to fit the target repo, then re-verify.
 Authoring grammar: `docs/guides/FLOW-AUTHORING.md`. Drive protocol for agents (exit
 codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
 
+Every mutating node here declares `spec.writes`, and the declarations are part
+of what makes these templates worth copying: `evidence-approval`'s producer is
+scoped to `{args.deliverable}` (a scope may interpolate an arg), the shell
+nodes that only read declare `[]` — "writes nothing", enforced — and
+`implement-heal`'s implementer keeps `["**"]` with a written
+`writes_rationale`, because a generic implementer told which files to touch by
+`--arg task` genuinely cannot be scoped ahead of time. That last one is the
+escape hatch working as intended, not an omission. Editing a template changes
+its `flow_hash` and so starts a new lineage; `run --seed <old_run_dir>` keeps
+whatever the edit did not move.
+
 ## The flows
 
 | Flow | Spends tokens | What it does |

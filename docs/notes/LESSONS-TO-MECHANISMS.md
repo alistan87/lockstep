@@ -1,3 +1,8 @@
+---
+type: notes
+title: Lessons to mechanisms
+resource: docs/notes/LESSONS-TO-MECHANISMS.md
+---
 # Lessons → mechanisms: retiring the work-repo authoring skill into engine guarantees
 
 **Provenance.** The work-repo mirror's `lockstep-authoring` skill accumulated 24

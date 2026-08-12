@@ -456,7 +456,12 @@ Four things about it that are decisions, not accidents:
 
 **The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick parses only
 the journal lines past the cursor and carries one extra bit (`live` — whether
-anything is running); the expensive render is fetched only when the journal
+anything is running). Not every journal line is something that HAPPENED to the
+work: the engine also writes advisory diagnostics (`kind: "timing"`, how long a
+tree snapshot took) which carry no status and are dropped before the feed
+window rather than inside it — filtered late, they would consume the last-N
+slots and push real events out of a reader's view with lines that render to
+nothing. The cursor still counts every line, because it indexes the file; the expensive render is fetched only when the journal
 moved, the token changed, or every fifth tick while something runs. A quiet
 second costs 0.4 ms and 80 bytes instead of 40–128 ms and a whole page. That is
 not only a cost question: a swap destroys the reader's text selection, open

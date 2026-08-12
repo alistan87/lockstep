@@ -113,7 +113,16 @@ Two implications worth internalising, because both surprise people:
 
 - **Editing a flow file starts a new lineage.** The flow hash changes, every
   completed node re-runs, and it all re-bills. Finalise budgets and retries
-  *before* the first run; prefer `steer` over editing mid-flight.
+  *before* the first run; prefer `steer` over editing mid-flight. When an edit
+  is genuinely needed, `run <flow> --seed <old_run_dir>` warm-starts the new
+  lineage: any node whose `input_hash` the edit did not move is served from the
+  old run's recorded result. That is the same content-addressing as everything
+  above, applied across lineages instead of within one — which is why a re-run
+  ancestor that produces an identical result does not re-bill its readers, and
+  why shell nodes (they always re-run), map items (their per-item hash is
+  composed after the executor plans) and failures are never served. `status`
+  names what was inherited and from where; a served node spends no spawn
+  budget, because no spawn happened.
 - **Caching does not promise the same answer twice.** Models are
   non-deterministic. The promise is narrower and more useful: *if nothing you
   control changed, we will not spend again.*
@@ -219,7 +228,19 @@ specific pathology:
 
 **The heal text is engine-owned.** It is composed from the gate's Verdict, not by
 a human or an orchestrator. That is why "answers to questions" travel by `steer`
-and not by heal.
+and not by heal. Being engine-owned is also what lets it carry two things no
+flow author can be relied on to add: the target's **own declared write scope**,
+restated, because findings that name out-of-scope files otherwise read as
+authorization to go and fix them; and the target's `attempt-notes.md`, so a
+retry inherits what the previous attempt established instead of re-deriving it.
+
+A heal round is the most expensive thing this engine does — a rollback plus a
+full re-run — so a gate that blocks on failures the run did not cause is not
+merely noisy, it is the single largest waste available. Two mechanisms answer
+that: `spec.baseline` runs the gate body once against the pre-run tree and
+subtracts those findings at evaluation, and `gates.scoped_checks` restricts a
+check to the files this run changed. Both encode the same idea — a gate should
+measure the change, not the repository's history.
 
 ---
 
@@ -239,11 +260,23 @@ unexpected aside into a discard directory. The driver will not remove a file it
 did not create, because the cost of being wrong is unbounded and the cost of
 leaving a stray file is a puzzled human.
 
+A snapshot costs **O(bytes in the working tree)**, every time. The temporary
+index is fresh, so git has no stat cache and hashes every file — measured here
+at 1.4 s for a 47 MB tree, and a run's own output grows the tree it pays for.
+That is why the engine journals each tree operation's duration (`kind:
+"timing"` lines) and why a rollback takes one snapshot and uses it for both the
+preserved patch and the restore scope, which is also the more correct reading:
+both answers are then about the same tree.
+
 **Write scope** (`spec.writes`) is checked by diffing that same baseline against
 the tree when the node finishes — *while the node still holds the `tree` token*.
 Outside the token the diff measures whatever the next node has already written,
 which is why §3 gives every write-capable kind the token rather than only the
-model-driven ones.
+model-driven ones. The declaration is **presence-keyed**: an absent key is
+unconstrained, a declared `[]` means "writes nothing" and is enforced as such.
+Getting that backwards — reading `[]` as falsy, therefore unconstrained — meant
+the tightest possible declaration silently disabled the check, which is the
+shape of bug worth naming in a document about why things are the way they are.
 
 The driver also compares a **lineage-head fingerprint** on resume, so an external
 edit between runs is reported by path rather than silently absorbed. It warns; it
@@ -294,6 +327,15 @@ because everything above sits on them:
 - `done` with unconsumed steer mail → `pending`
 - `done` otherwise → hash revalidation; re-runs only if inputs changed
 - `skipped` → `pending`, and its `when` re-evaluates
+
+**A node awaiting revalidation is not settled**, and that distinction is load-
+bearing rather than pedantic. A `done` node behind an invalidated upstream
+cannot revalidate until that upstream finishes, so it sits `done` *and* pending
+a check. Treating it as settled — which the scheduler did until the resume
+dispatch was fixed — let its dependents start in the same wave as the
+invalidated root and consume the previous attempt's cached output, which
+nothing then re-checked: a run that exits 0 on stale evidence. Dispatch and
+`when` evaluation both require settled AND not-awaiting-revalidation.
 
 A run directory is single-writer, guarded by a lockfile carrying pid and
 hostname. A **same-host dead pid is auto-cleared** on a plain resume, which makes
