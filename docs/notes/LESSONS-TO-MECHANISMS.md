@@ -179,3 +179,16 @@ adversarial runs), 9 (declare hand-patches), 10 (evidence-path discipline),
 21 (identify before killing), GD4 (context files reviewed like code),
 GD5-residue (feed reviewers primary evidence, not producer narrative) — plus
 the standing rule: corrected claims are deleted, not annotated.
+
+**Docs propagation (2026-08-12).** `docs/guides/FLOW-AUTHORING.md` — the
+PORTABLE reference, and the one the bundle ships — carried none of the batch;
+the skill pointed at it for gate argv it did not have, and three of its
+statements had gone stale (write scope as optional, the gate-timeout terminal
+message, "state the exact output the contract expects"). Now updated: the
+three new lints, `scoped_checks`, baseline gates, the absolute-target debt
+rule, presence-keyed/`["**"]` scopes, the map-item gap, `attempt-notes.md`,
+`verify --config`, and the residue above minus lesson 21. Still outstanding:
+lessons 12/21/22 belong in `/debug-run` (git-checkout-mid-diagnostic
+forensics, identify a process before killing it, `git fsck` blob recovery from
+`snapshot()`), and `lockstep wait` / `driver_version` drift want a line in
+DRIVING-LOCKSTEP.md.
