@@ -156,6 +156,32 @@ class GitWorkspace:
         current = self.snapshot()
         return self._git("diff-tree", "-r", "-p", "--no-renames", since.ref, current.ref)
 
+    def dirty_paths(self) -> list[str]:
+        """Working-tree paths differing from HEAD — tracked modifications plus
+        untracked (non-ignored) files. The E9 preflight input: an in-scope
+        write legally OVERWRITES a file the operator already edited, and only
+        knowing the overlap before the run closes that gap.
+
+        `-z` (NUL-separated), NOT line-splitting: porcelain v1 C-quotes any
+        path with a non-ASCII byte or a quote character, and stripping quotes
+        without unescaping mangles them ("café.md" became "caf/303/251.md" —
+        adversarial-review finding 6, repro'd live). With `-z` paths arrive
+        verbatim; a rename's ORIGINAL path follows as its own NUL record."""
+        out = self._git("status", "--porcelain", "-z", "--untracked-files=all")
+        paths: list[str] = []
+        records = out.split("\0")
+        i = 0
+        while i < len(records):
+            rec = records[i]
+            i += 1
+            if len(rec) < 4:
+                continue
+            xy, path = rec[:2], rec[3:]
+            if xy[0] in ("R", "C"):
+                i += 1  # the next record is the rename/copy SOURCE, not dirt
+            paths.append(path)
+        return paths
+
     def staged_paths(self) -> set[str]:
         """Paths whose INDEX entry differs from HEAD — work someone staged and
         has not committed.

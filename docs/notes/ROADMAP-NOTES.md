@@ -140,3 +140,47 @@ What that settles, and what it does not:
 The practical consequence for now is a tie-breaker rather than a roadmap item:
 where a design choice trades build-loop ergonomics against domain-runtime
 generality, **take the ergonomics** and record the seam.
+
+**New r7 candidates (2026-08-11) — from the LESSONS-TO-MECHANISMS batch**
+(docs/notes/LESSONS-TO-MECHANISMS.md; the P1/P2 items there are implemented,
+see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
+
+- **E7 — cross-lineage warm start.** `resume` correctly refuses an edited flow
+  (new lineage), but a one-word prompt fix then re-bills every already-done
+  node. Proposal: `run --fresh --seed <old_run_dir>` serves any node whose
+  input_hash matches a recorded result in the seed run — hash-keyed, so sound;
+  the replay machinery already proves result-serving works. Spec text needed:
+  a seeded result's provenance must be visible in the journal.
+- **E8-full — narrow heal rollback to declared scopes.** §9.4.4 restores every
+  path changed since the gate's baseline; with `spec.writes` now on every
+  committed flow (V1), rollback could restore changed ∩ (targets' declared
+  writes) and leave operator out-of-band edits standing. Needs an amendment
+  (the current behavior is stated spec); the interim loud warning
+  (`restored-undeclared` events) ships now. Watch for the warning firing in
+  practice as the evidence for the amendment.
+- **Interpolated write scopes.** `spec.writes` is read raw, never rendered, so
+  a parameterized flow cannot scope to `{args.deliverable}` and falls back to
+  `["**"] + writes_rationale` (see evidence-approval, implement-heal). Either
+  render scopes through args at plan time (hash implications: args already
+  fold into the hash) or say clearly it stays static. The `["**"]` escape
+  hatch makes the gap visible and greppable meanwhile.
+- **V1 promotion.** `lint-missing-write-scope` becomes a verify ERROR at
+  format_version 1.1 (a mutating node must declare its scope; `[]` and
+  `["**"]+rationale` are the honest outs). All committed flows already comply.
+- **Gate-duration drift under orchestration (lesson 20, unconfirmed).** The
+  work repo observed a gate command growing 13→32 min across resumes of one
+  long-lived run while manual runs stayed fast; leading suspects are AV
+  interference after large fresh writes and `snapshot()` (`git add -A` +
+  write-tree) object churn. Before any fix: measure — record per-snapshot
+  duration in events.jsonl on long runs. Relates to gc/retention.
+
+**New r7 candidate (2026-08-12, adversarial review of the batch) — map items
+are the one unguardable mutator class.** A map node cannot declare
+`spec.writes` (`write-scope-on-map`: the items share one tree and one diff),
+gets no quarantine, and neither V1 nor L1 names it — the exact class V1 exists
+to catch, and the work repo's codemod-apply map is a live instance. Per-item
+scopes need per-item baselines (concurrency-1 maps could take them between
+items); until then the honest guidance is the factory pattern: readonly items
+that EMIT orders + one serialized, scoped applier. A lint was considered and
+rejected — it would fire on the canonical codemod-apply flow (the W2 rule:
+a warning that is wrong on the flow it teaches is one people learn to skip).

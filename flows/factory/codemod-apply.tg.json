@@ -38,7 +38,8 @@
           "contrib/collectors.py",
           "cat",
           "codemod-orders.json"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "ChangeOrder[]",
@@ -92,7 +93,8 @@
       ],
       "spec": {
         "persona": "reviewer",
-        "task": "You are an adversarial reviewer of a bulk code transformation. The working tree contains uncommitted changes that apply the orders in codemod-orders.json (read it), and lint+tests already pass. Run `git status` and `git diff`.\n\nHunt for REAL defects only: an applied change diverging from its order, collateral edits outside any order's file, behavior changes the orders did not authorize, silently weakened tests. Ignore style.\n\nReport each defect as a Finding object with EXACTLY these fields: severity (\"blocker\" | \"major\" | \"minor\" | \"nit\"), category, file, line (integer or null), claim (one sentence), evidence, fix_hint.\n\nYour result MUST be ONLY a JSON array of Finding objects - an empty array if the diff is faithful to the orders."
+        "task": "You are an adversarial reviewer of a bulk code transformation. The working tree contains uncommitted changes that apply the orders in codemod-orders.json (read it), and lint+tests already pass. Run `git status` and `git diff`.\n\nHunt for REAL defects only: an applied change diverging from its order, collateral edits outside any order's file, behavior changes the orders did not authorize, silently weakened tests. Ignore style.\n\nReport each defect as a Finding object with EXACTLY these fields: severity (\"blocker\" | \"major\" | \"minor\" | \"nit\"), category, file, line (integer or null), claim (one sentence), evidence, fix_hint.\n\nYour result MUST be ONLY a JSON array of Finding objects - an empty array if the diff is faithful to the orders.",
+        "writes": []
       },
       "output": "json",
       "contract": "Finding[]",
@@ -132,7 +134,8 @@
           "git",
           "status",
           "--short"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 60,

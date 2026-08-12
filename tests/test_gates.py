@@ -468,3 +468,31 @@ def test_the_spawn_env_forces_utf8_on_children():
         meta = {"repo_root": ".", "node_id": "n", "role": "work", "cwd": ".", "writes": []}
 
     assert node_env(_W(), Path(".")).get("PYTHONIOENCODING") == "utf-8"
+
+
+# ------------------------------------------------------------- scoped_checks
+
+
+def test_scoped_checks_runs_only_on_changed_files(git_repo, capsys, monkeypatch):
+    import sys as _sys
+
+    from lockstep.gates import scoped_checks
+
+    monkeypatch.chdir(git_repo)
+    py = Path(_sys.executable).as_posix()
+    ok_cmd = f'"{py}" -c "raise SystemExit(0)" {{files}}'
+    fail_cmd = f'"{py}" -c "raise SystemExit(2)" {{files}}'
+    # clean tree: nothing changed -> the check is skipped, pass
+    v = run_gate(scoped_checks, ["--run", fail_cmd], capsys)
+    assert v["verdict"] == "pass"
+    assert "skipped" in v["reason"]
+    # one changed file: pass command passes, fail command blocks and names it
+    (git_repo / "x.py").write_text("x = 1\n", encoding="utf-8")
+    v = run_gate(scoped_checks, ["--run", ok_cmd, "--suffix", ".py"], capsys)
+    assert v["verdict"] == "pass"
+    v = run_gate(scoped_checks, ["--run", fail_cmd], capsys)
+    assert v["verdict"] == "block"
+    assert "x.py" in v["findings"][0]["file"]
+    # the suffix filter takes it back out of scope -> skipped, pass
+    v = run_gate(scoped_checks, ["--run", fail_cmd, "--suffix", ".md"], capsys)
+    assert v["verdict"] == "pass"

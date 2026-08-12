@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "torture-heal",
-  "description": "HEAL, ROLLBACK AND CASCADE, driven deterministically. `build` writes a BAD artifact twice and a GOOD one on its third invocation; the shell gate blocks until then and heals `build`. `sibling` sits BETWEEN them precisely so it has already completed when the gate blocks \u2014 it is the cascade-invalidation probe, and it must run once per round. Expected: exit 0, build x3, sibling x3, and `build`'s re-prompts carrying the gate's findings (the agent asserts that itself and exits 9 if they are missing). Every scripted node sets retry.max 0: the harness default (2 tries, 60s backoff) is sized for transient provider 429/529s, and a scripted agent has no provider \u2014 its failures are deterministic, so retrying is pure latency. Found by a mutation test that took four minutes to fail.",
+  "description": "HEAL, ROLLBACK AND CASCADE, driven deterministically. `build` writes a BAD artifact twice and a GOOD one on its third invocation; the shell gate blocks until then and heals `build`. `sibling` sits BETWEEN them precisely so it has already completed when the gate blocks — it is the cascade-invalidation probe, and it must run once per round. Expected: exit 0, build x3, sibling x3, and `build`'s re-prompts carrying the gate's findings (the agent asserts that itself and exits 9 if they are missing). Every scripted node sets retry.max 0: the harness default (2 tries, 60s backoff) is sized for transient provider 429/529s, and a scripted agent has no provider — its failures are deterministic, so retrying is pure latency. Found by a mutation test that took four minutes to fail.",
   "budget": {
     "max_agent_spawns": 12,
     "max_run_minutes": 10
@@ -76,7 +76,8 @@
           "python",
           "-c",
           "print('torture flow reached its final node')"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120,

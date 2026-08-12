@@ -43,16 +43,44 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   `CheckResult`, `StepResult`, `Finding`, `Verdict`, `PathManifest`,
   `ProgressEvent`, `SteerMessage` — the last two live since r6 adopted
   progress and steering; `"X[]"` = array of; `module:Name`; or a bare name
-  resolved via the flow-level `contracts_module` field).
+  resolved via the flow-level `contracts_module` field). **Do not hand-copy the
+  contract's field names into the task text**: the engine states the resolved
+  schema (fields, enum literals, optionality) in the prompt itself, generated
+  from the same model the driver validates against, so prompt and validator
+  cannot drift. Task text should say what the CONTENT must establish, not what
+  the JSON looks like.
 - **Gates**: `role: "gate"` requires `output: "json"` + a contract resolving to
   `Verdict`. Prefer `kind: "shell"` gates (deterministic) whenever the check is
   machine-decidable — see `flows/gated-build.tg.json`. Reach for the **gate
   library** before writing an inline `python -c`: `python -m
   lockstep.gates.<name>` — `pytest_verdict`, `block_on_severity`,
   `required_sections`, `version_sync`, `citation_check`, `numbers_check`,
-  `coverage_delta`, `fingerprint_check`, `pi_guard_smoke` (FLOW-AUTHORING has
-  the argv for each). An embedded one-liner is untested, unreadable in the run
-  dir, and re-quoted wrong on the first edit.
+  `coverage_delta`, `fingerprint_check`, `pi_guard_smoke`, `scoped_checks`
+  (FLOW-AUTHORING has the argv for each). An embedded one-liner is untested,
+  unreadable in the run dir, and re-quoted wrong on the first edit.
+- **A gate wired to an ABSOLUTE target owns the repository's debt.**
+  `ruff check .` or a named test file blocks on pre-existing failures in files
+  the run never touched, and each false block costs a full heal round
+  (rollback + re-run of the implementer). Two mechanisms, pick one:
+  `python -m lockstep.gates.scoped_checks --run "ruff check {files}"` checks
+  only the worktree's own changed files; or set **`"baseline": true` in the
+  gate's `spec`** — its body runs once against the pre-run tree, and at
+  evaluation the engine subtracts baseline findings (exact `(file, claim)`
+  match), flipping a block to pass when every finding predates the run (the
+  stored result is the adjudicated verdict, so downstream references agree).
+  A baseline gate's cmd may not reference `{steps...}`
+  (`baseline-gate-references-steps`) — it measures the tree before any step
+  exists.
+- **A gate that times out cannot heal** (a timeout is not a valid block,
+  §9.4.3) — the run terminal-blocks with "timed out after Ns" naming the
+  remedy. Size `timeout_s` from a measured run and put `retry` on the gate if
+  the command's duration varies.
+- **A heal target can leave notes for its own retry.** The footer invites every
+  harness node to append durable findings ("failure X pre-dates this change,
+  confirmed") to `attempt-notes.md` in its phase dir; a heal re-run's prompt
+  includes them, so the retry does not re-spend what the first attempt already
+  established. For expensive verification work, SAY in the task text what is
+  worth noting there.
 - **Heal**: only on gates; `max_rounds > 0` requires explicit `targets` that
   are harness-kind ANCESTORS of the gate; a node may not be a target of two
   gates; a healing gate (`max_rounds > 0`) with `rollback: true` — the
@@ -185,10 +213,26 @@ mixing them in one graph is the design, not a workaround.
 
 ## Write scope (`spec.writes`)
 
-`"writes": ["CHANGELOG.draft.md"]` declares the repo-root-relative paths a node
-may write. It reaches the spawn as `LOCKSTEP_WRITE_SCOPE` so an in-harness
-extension can prevent a stray write; the driver detects one by diffing a
-baseline tree, inside the node's own lock.
+**Every mutating work node declares one.** A narrow prompt is advisory text a
+model can rationalize past under gate pressure; `spec.writes` is the mechanical
+control. `verify --lint` warns on a write-capable work node without one
+(`lint-missing-write-scope`; a verify ERROR at format_version 1.1). The three
+honest declarations:
+
+- `"writes": ["docs/plan.md", "src/x/"]` — the paths/globs it may write.
+- `"writes": []` — **this node writes nothing** (a probe, a collector, a
+  printer). Presence-keyed and ENFORCED: any write quarantines. An absent key
+  is the old unconstrained behavior; declared-empty is a real constraint.
+- `"writes": ["**"]` + `"writes_rationale": "…"` — deliberate whole-tree
+  access for genuinely run-time-parameterized targets (a generic implementer,
+  a manifest-driven apply). The rationale is required
+  (`lint-unscoped-writes`) so a reviewer can see the omission of a real scope
+  was a decision. Scopes are read raw, never interpolated — `{args.x}` in a
+  scope will not match anything; this escape hatch is the current answer.
+
+It reaches the spawn as `LOCKSTEP_WRITE_SCOPE` so an in-harness extension can
+prevent a stray write; the driver detects one by diffing a baseline tree,
+inside the node's own lock.
 
 A violation is **quarantined**, so a scope is a decision about what may be
 reverted rather than only flagged: the blocked attempt is kept as
@@ -197,12 +241,22 @@ its baseline or moved into `out-of-scope-<attempt>/` (never deleted), and the
 node fails naming every path and its outcome. On success the in-scope changed
 paths land in `touched-<attempt>.txt`.
 
+Two engine behaviours the scope feeds beyond quarantine: a heal re-run's prompt
+RESTATES the target's own scope (gate findings naming out-of-scope files
+otherwise read as authorization to edit them), and a fresh `run` refuses when
+uncommitted working-tree changes sit inside any declared scope — an in-scope
+write would legally overwrite the operator's edit (`--allow-dirty-scope`
+overrides; resumes are exempt).
+
 Verification: absolute or escaping entries are `bad-write-scope`; a map node
 declaring one is the hard error `write-scope-on-map` (the items share one tree
 and one diff); a `readonly` node gets the advisory `write-scope-unenforced`,
 because it holds no `tree` token and the diff would be unsound. Every other
 write-capable kind, shell included, takes the token. The matcher is `fnmatch`,
-so `*` crosses `/`.
+so `*` crosses `/`. A mutation with no gate or approval on either side of it
+draws `lint-ungated-mutation` — nothing authorized it and nothing can block
+it; if a human reads the output directly by design, say "ungated" in the flow
+description.
 
 ## Gates: the ways one goes wrong
 

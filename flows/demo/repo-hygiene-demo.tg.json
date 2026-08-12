@@ -25,7 +25,8 @@
           "{args.area}",
           "--max-ambiguous",
           "{args.max_ambiguous}"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "PathManifest",
@@ -121,7 +122,8 @@
           "{steps.classify.json}",
           "--verdict",
           "{steps.review-sample.json}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -146,6 +148,9 @@
           "contrib/deliver.py",
           "approval-evidence.txt",
           "--to",
+          "Deliverables"
+        ],
+        "writes": [
           "Deliverables"
         ]
       },

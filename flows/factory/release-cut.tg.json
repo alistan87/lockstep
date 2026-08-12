@@ -20,7 +20,8 @@
           "contrib/collectors.py",
           "git-log",
           "--since-last-tag"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -100,7 +101,8 @@
           "a local tag is deletable (git tag -d) until you push it; nothing is published by this flow",
           "--title",
           "cut release {args.tag}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -124,7 +126,8 @@
           "git",
           "tag",
           "{args.tag}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 60,

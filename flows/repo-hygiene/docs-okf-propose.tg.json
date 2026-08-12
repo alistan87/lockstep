@@ -23,6 +23,9 @@
           "{args.root}",
           "--out",
           "docs-manifest.json"
+        ],
+        "writes": [
+          "docs-manifest.json"
         ]
       },
       "output": "json",
@@ -78,7 +81,8 @@
           "docs-manifest.json",
           "--verdict",
           "{steps.review-structure.json}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -103,6 +107,9 @@
           "contrib/deliver.py",
           "approval-evidence.txt",
           "--to",
+          "Deliverables"
+        ],
+        "writes": [
           "Deliverables"
         ]
       },

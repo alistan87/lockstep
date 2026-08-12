@@ -11,8 +11,9 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import types
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
@@ -141,6 +142,72 @@ def resolve_contract(name: str, contracts_module: str | None = None) -> Contract
     if model is None or not (isinstance(model, type) and issubclass(model, BaseModel)):
         raise ContractError(f"contract {name!r} does not resolve to a pydantic model")
     return ContractRef(name=name, model=model, is_array=is_array)
+
+
+def _literal(a: Any) -> str:
+    """One Literal arm, safely: enum members and bytes are legal typing but
+    not JSON-serializable — pydantic validates them, so describing them must
+    not raise where validating would not (adversarial-review finding 4)."""
+    try:
+        return json.dumps(a)
+    except TypeError:
+        return json.dumps(str(getattr(a, "value", a)))
+
+
+def _json_type(ann: Any, seen: frozenset) -> str:
+    """A compact, prompt-facing name for a field's JSON shape."""
+    if ann is None or ann is type(None):
+        return "null"
+    origin = get_origin(ann)
+    if origin is Literal:
+        return " | ".join(_literal(a) for a in get_args(ann))
+    if origin is list:
+        args = get_args(ann)
+        return f"array of {_json_type(args[0], seen) if args else 'any'}"
+    if origin is dict:
+        return "object"
+    if origin is tuple:
+        return "array"
+    if origin in (Union, types.UnionType):
+        return " or ".join(_json_type(a, seen) for a in get_args(ann))
+    if isinstance(ann, type) and issubclass(ann, BaseModel):
+        if ann.__name__ in seen:
+            return ann.__name__  # cycle guard: name only
+        return f"object {{{_fields_desc(ann, seen | {ann.__name__})}}}"
+    return {str: "string", int: "integer", float: "number", bool: "boolean", dict: "object"}.get(
+        ann, getattr(ann, "__name__", "value")
+    )
+
+
+def _fields_desc(model: type[BaseModel], seen: frozenset) -> str:
+    parts = []
+    for name, f in model.model_fields.items():
+        opt = "" if f.is_required() else " (optional)"
+        parts.append(f'"{name}": {_json_type(f.annotation, seen)}{opt}')
+    return ", ".join(parts)
+
+
+def describe_contract(ref: ContractRef) -> str:
+    """Machine-generated statement of the contract's JSON shape, for inclusion
+    in a harness prompt (LESSONS-TO-MECHANISMS E1). The driver already resolved
+    the model it will validate against — telling the node nothing about it made
+    every author hand-copy field names into prose, and models that guessed
+    (`approved` for `verdict`, findings wrapped in fences) burned their retry
+    budget on purely cosmetic mismatches. Generated from the SAME model
+    `validate_result` uses, so prompt and validator cannot drift apart."""
+    seen = frozenset({ref.model.__name__})
+    body = _fields_desc(ref.model, seen)
+    shape = (
+        f"a JSON ARRAY of {ref.model.__name__} objects, each"
+        if ref.is_array
+        else f"ONE JSON object ({ref.model.__name__})"
+    )
+    return (
+        f"Output contract {ref.name}: the result must be {shape} with fields "
+        f"{{{body}}}. Use exactly these field names — never invent, rename, or wrap "
+        f"them in an envelope; where a field lists quoted literals, the value must be "
+        f"one of them verbatim. No markdown fences, no prose before or after the JSON."
+    )
 
 
 def validate_result(text: str, ref: ContractRef) -> Any:

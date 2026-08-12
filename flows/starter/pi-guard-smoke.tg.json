@@ -16,7 +16,8 @@
           "python",
           "-c",
           "import os, json; print(json.dumps({k: os.environ.get(k, '') for k in ('LOCKSTEP_NODE_ID', 'LOCKSTEP_ROLE', 'LOCKSTEP_WORKSPACE_SCOPE', 'LOCKSTEP_WRITE_SCOPE', 'LOCKSTEP_REPO_ROOT', 'LOCKSTEP_VERDICT_FILE', 'LOCKSTEP_PHASE_DIR', 'LOCKSTEP_CONTRACT')}, indent=2))"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -61,7 +62,8 @@
         "guard-gate"
       ],
       "spec": {
-        "task": "This is a smoke test of contract-keyed structured output.\n\nIf a tool named submit_result is available to you, call it with this exact object: {\"schema_version\": \"1.0\", \"findings\": [], \"verdict\": \"pass\", \"reason\": \"submit_result tool available\"}.\n\nIf NO such tool exists, instead print exactly this JSON as your final output and nothing else: {\"schema_version\": \"1.0\", \"findings\": [], \"verdict\": \"pass\", \"reason\": \"no submit_result tool\"}"
+        "task": "This is a smoke test of contract-keyed structured output.\n\nIf a tool named submit_result is available to you, call it with this exact object: {\"schema_version\": \"1.0\", \"findings\": [], \"verdict\": \"pass\", \"reason\": \"submit_result tool available\"}.\n\nIf NO such tool exists, instead print exactly this JSON as your final output and nothing else: {\"schema_version\": \"1.0\", \"findings\": [], \"verdict\": \"pass\", \"reason\": \"no submit_result tool\"}",
+        "writes": []
       },
       "output": "json",
       "contract": "Verdict",
@@ -79,7 +81,8 @@
           "python",
           "-c",
           "print('pi-guard smoke PASSED: scope guard blocked and recorded; contract channel validated')"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120,

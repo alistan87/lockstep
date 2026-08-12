@@ -37,16 +37,15 @@ def _codes(flow: dict) -> list[str]:
 
 
 def _flow(writes, *, write_files, node_id="w"):
+    """`writes=None` omits the key entirely (the v1 unconstrained behavior);
+    a list — INCLUDING [] — declares an enforced scope (V1 presence-keying,
+    DEVIATIONS 2026-08-11)."""
+    spec = {"outputs": ["ok"], "write_files": write_files}
+    if writes is not None:
+        spec["writes"] = writes
     return {
         "name": "scope",
-        "nodes": [
-            {
-                "id": node_id,
-                "kind": "fake",
-                "final": True,
-                "spec": {"outputs": ["ok"], "writes": writes, "write_files": write_files},
-            }
-        ],
+        "nodes": [{"id": node_id, "kind": "fake", "final": True, "spec": spec}],
     }
 
 
@@ -151,9 +150,22 @@ def test_an_exact_file_scope_matches_only_that_file(tmp_path, git_repo):
 
 
 def test_no_declaration_means_no_check(tmp_path, git_repo):
-    """Backward compatible: an undeclared node writes wherever it likes."""
-    h = build(tmp_path, _flow([], write_files={"anywhere.txt": "x"}), git_repo)
+    """Backward compatible: an ABSENT key writes wherever it likes."""
+    h = build(tmp_path, _flow(None, write_files={"anywhere.txt": "x"}), git_repo)
     assert h.engine.run() == 0
+
+
+def test_declared_empty_scope_blocks_every_write(tmp_path, git_repo):
+    """Presence-keyed (V1): `writes: []` declares "this node writes nothing"
+    and is enforced — the old truthiness reading silently disabled the check
+    for exactly the node that declared the tightest possible scope."""
+    h = build(tmp_path, _flow([], write_files={"anywhere.txt": "x"}), git_repo)
+    assert h.engine.run() == 3
+    rec = load_state(h.run_dir).nodes["w"]
+    assert rec.status == "failed"
+    assert "nothing (declared writes: [])" in (rec.error or "")
+    # The violating write was quarantined out of the tree.
+    assert not (h.engine.repo_root / "anywhere.txt").exists()
 
 
 def test_multiple_scopes_are_a_union(tmp_path, git_repo):
@@ -438,7 +450,7 @@ def test_a_failed_node_leaves_no_touched_list(tmp_path, git_repo):
 
 
 def test_a_node_without_a_scope_records_no_touched_list(tmp_path, git_repo):
-    h = build(tmp_path, _flow([], write_files={"anywhere.txt": "x"}), git_repo)
+    h = build(tmp_path, _flow(None, write_files={"anywhere.txt": "x"}), git_repo)
     assert h.engine.run() == 0
     rec = load_state(h.run_dir).nodes["w"]
     assert rec.touched_count is None and rec.touched_path is None
@@ -548,3 +560,83 @@ def test_verify_rejects_writes_on_a_map_node():
         ],
     }
     assert "write-scope-on-map" in _codes(flow)
+
+
+def test_dirty_scope_preflight_refuses_overlap(tmp_path, git_repo):
+    # E9 (LESSONS-TO-MECHANISMS): an in-scope write legally OVERWRITES a file
+    # the operator edited before the run; the preflight makes the overlap a
+    # refusal instead of a checklist item.
+    import pytest as _pytest
+
+    from lockstep.roles import RunRefusal
+
+    (git_repo / "src").mkdir(exist_ok=True)
+    (git_repo / "src" / "a.py").write_text("operator edit, uncommitted\n", encoding="utf-8")
+    h = build(tmp_path, _flow(["src"], write_files={"src/a.py": "x"}), git_repo)
+    h.engine.check_dirty_scope = True
+    with _pytest.raises(RunRefusal) as ei:
+        h.engine.run()
+    assert "src/a.py" in str(ei.value)
+    assert "--allow-dirty-scope" in str(ei.value)
+
+
+def test_dirty_scope_preflight_ignores_out_of_scope_dirt(tmp_path, git_repo):
+    (git_repo / "notes.md").write_text("unrelated dirt\n", encoding="utf-8")
+    h = build(tmp_path, _flow(["src"], write_files={"src/a.py": "x"}), git_repo)
+    h.engine.check_dirty_scope = True
+    assert h.engine.run() == 0
+
+
+def test_declared_empty_scope_reaches_the_spawn_env(tmp_path):
+    # Adversarial-review finding 2: `writes: []` must reach the in-harness
+    # guard as "[]" (block everything), not "" (no scope) — truthiness at the
+    # env boundary disarmed the preventive layer for exactly the tightest
+    # declaration. Absent key stays "".
+    from lockstep.executors.shell import ShellExecutor, node_env
+    from lockstep.protocols import RenderCtx
+    from lockstep.taskgraph import Node
+
+    ex = ShellExecutor(repo_root=tmp_path)
+    ctx = RenderCtx(
+        args={}, outputs={}, json_results={}, skipped=set(), deps=[],
+        repo_root=tmp_path, personas_dir=tmp_path / "p", phase_dir=tmp_path / "ph",
+        max_interp_chars=20000, config_digest="d",
+    )
+    declared_empty = Node(id="a", kind="shell", spec={"cmd": ["git", "status"], "writes": []})
+    env = node_env(ex.plan(declared_empty, ctx), tmp_path / "ph")
+    assert env["LOCKSTEP_WRITE_SCOPE"] == "[]"
+    absent = Node(id="b", kind="shell", spec={"cmd": ["git", "status"]})
+    env = node_env(ex.plan(absent, ctx), tmp_path / "ph")
+    assert env["LOCKSTEP_WRITE_SCOPE"] == ""
+    scoped = Node(id="c", kind="shell", spec={"cmd": ["git", "status"], "writes": ["docs"]})
+    env = node_env(ex.plan(scoped, ctx), tmp_path / "ph")
+    assert env["LOCKSTEP_WRITE_SCOPE"] == '["docs"]'
+
+
+def test_dirty_paths_survive_non_ascii_names(git_repo):
+    # Adversarial-review finding 6: porcelain line output C-quotes non-ASCII
+    # paths and naive unquoting mangled them; -z hands them over verbatim.
+    from lockstep.workspace import GitWorkspace
+
+    (git_repo / "café.md").write_text("x\n", encoding="utf-8")
+    dirty = GitWorkspace(git_repo).dirty_paths()
+    assert "café.md" in dirty, dirty
+
+
+def test_dirty_scope_preflight_ignores_the_runs_own_dir(tmp_path, git_repo):
+    # Adversarial-review finding 1 (repro'd live): with the run dir inside an
+    # un-ignored work tree, the driver's own just-written state.json is
+    # "dirty" and a ["**"] scope refused every fresh run on its own
+    # bookkeeping. The preflight applies the same exclusion quarantine does.
+    import shutil
+
+    from lockstep.state import write_state
+
+    h = build(tmp_path, _flow(["**"], write_files={"src/a.py": "x"}), git_repo)
+    # Relocate the run dir INSIDE the repo (un-ignored) and point the store at it.
+    inner = git_repo / "runs" / h.run_dir.name
+    shutil.copytree(h.run_dir, inner)
+    h2 = build(tmp_path, _flow(["**"], write_files={"src/a.py": "x"}), git_repo,
+               run_dir=inner)
+    h2.engine.check_dirty_scope = True
+    assert h2.engine.run() == 0, "must not refuse on its own state.json"

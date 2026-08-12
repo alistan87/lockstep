@@ -7,11 +7,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from . import (
+    EXIT_APPROVAL_REJECTED,
+    EXIT_BUDGET,
     EXIT_CONFIG,
+    EXIT_GATE_BLOCK,
     EXIT_LOCKED,
+    EXIT_NODE_FAILED,
     EXIT_OK,
     EXIT_VERIFY,
     FORMAT_VERSION,
@@ -114,6 +119,10 @@ def _fresh_state(tg: TaskGraph, flow_hash: str, args: dict[str, str], workspace_
         },
         started_at=utcnow(),
         workspace_kind=workspace_kind,
+        # V3 provenance: which driver created this run. A resume with a
+        # different installed version warns — a drifted mirror otherwise
+        # generates folklore about already-fixed behaviour.
+        driver_version=__version__,
     )
 
 
@@ -153,7 +162,7 @@ def _print_plan(tg: TaskGraph, config: LockstepConfig) -> None:
 def _run_engine(
     tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path,
     max_workers: int, resume: bool, replay: str | None = None, replay_any: bool = False,
-    otel_file: str | None = None, cockpit: bool = False,
+    otel_file: str | None = None, cockpit: bool = False, check_dirty_scope: bool = False,
 ) -> int:
     if otel_file is not None:
         # Bare flag ⇒ alongside the run's other artifacts; a path ⇒ a shared
@@ -174,6 +183,7 @@ def _run_engine(
         repo_root=repo_root,
         max_workers=max_workers,
         cockpit=cockpit,
+        check_dirty_scope=check_dirty_scope,
     )
     if replay:
         from .replay import ReplayIndex, wrap_registry
@@ -184,6 +194,10 @@ def _run_engine(
             strict=not replay_any,
             log=engine.log,
         )
+        # Baseline-gate bodies must not execute under replay: the wrapper
+        # would serve the gate's recorded (post-run, adjudicated) verdict as
+        # the "pre-run" baseline. Recorded results are already adjudicated.
+        engine.replaying = True
         print(f"replay: serving recorded results from {replay} — no spawns, no tokens")
         if replay_any:
             print("replay: --replay-any is set; stale recordings are served with a warning")
@@ -245,20 +259,27 @@ def cmd_run(ns) -> int:
     else:
         run_dir = new_run_dir(runs_dir, tg.name)
         state = _fresh_state(tg, flow_hash, args, workspace_kind)
-        write_state(run_dir, state)
-        # A copy of the flow file travels with the run so `lockstep resume
-        # <run_dir>` needs no other argument (SPEC §3); hash-identical by
-        # construction, so the lineage check still holds.
-        (run_dir / "flow.tg.json").write_bytes(Path(ns.flow).read_bytes())
         resume = False
     try:
         acquire_lock(run_dir)
     except LockHeld as e:
         return _fail(f"run dir {run_dir} is locked by {e.holder} (exit 8)", EXIT_LOCKED)
+    if not resume:
+        # AFTER the lock: `wait` reads state-without-lock as "settled", so a
+        # fresh run must never be observable in that order
+        # (adversarial-review finding 8).
+        write_state(run_dir, state)
+        # A copy of the flow file travels with the run so `lockstep resume
+        # <run_dir>` needs no other argument (SPEC §3); hash-identical by
+        # construction, so the lineage check still holds.
+        (run_dir / "flow.tg.json").write_bytes(Path(ns.flow).read_bytes())
     try:
         return _run_engine(
             tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers, resume,
             replay=ns.replay, replay_any=ns.replay_any, otel_file=ns.otel_file,
+            # E9: fresh runs only — a resumed tree is expected dirty with the
+            # run's own prior work; replays write nothing.
+            check_dirty_scope=not resume and not ns.replay and not ns.allow_dirty_scope,
         )
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
@@ -271,6 +292,13 @@ def cmd_resume(ns) -> int:
     if not (run_dir / "state.json").exists():
         return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
     state = load_state(run_dir)
+    if state.driver_version and state.driver_version != __version__:
+        # V3: name the drift; do not block on it. Cached hashes may
+        # legitimately differ across versions and `explain` will say why.
+        print(
+            f"note: run created by lockstep {state.driver_version}, resuming with "
+            f"{__version__} — behaviour and hash composition may differ"
+        )
     # Resume requires the identical flow definition: run-attach compares
     # flow_hash; editing the flow file starts a new lineage by design (§9.2).
     flow_path = ns.flow or (run_dir / "flow.tg.json")
@@ -315,8 +343,13 @@ def cmd_verify(ns) -> int:
         return _fail(str(e), EXIT_VERIFY)
     try:
         # Static only; runtime flags never consulted (SPEC §6) — but personas/
-        # and lockstep.toml are part of the static surface.
-        config = load_config(repo_root / "lockstep.toml")
+        # and the executor config are part of the static surface. --config
+        # matches run/resume (C1): without it, a flow whose stanzas live only
+        # in a shared config always reported no-executor-stanza here while
+        # resolving fine at run time.
+        config = load_config(
+            Path(ns.config) if getattr(ns, "config", None) else repo_root / "lockstep.toml"
+        )
     except ConfigError as e:
         return _fail(str(e), EXIT_CONFIG)  # §3: 7 = executor/config error, not 5
     code, _ = _do_verify(tg, config, repo_root)
@@ -375,6 +408,73 @@ def cmd_render(ns) -> int:
     return EXIT_OK
 
 
+def cmd_wait(ns) -> int:
+    """C2 (LESSONS-TO-MECHANISMS, lesson 23): block until the run's driver
+    exits, then exit with the run's meaning — replaces the fragile
+    `sleep N && lockstep status` loop and the platform-specific
+    `tail -F events.jsonl | grep -m1` incantation.
+
+    Exit: 0 all required nodes done; 2 something blocked; 3 something failed;
+    6 an approval was rejected; 4 stopped with runnable work remaining
+    (budget/limit/kill — a plain resume continues); 1 --timeout expired with
+    the lock still held."""
+    run_dir = Path(ns.run_dir)
+    # A locked dir without state.json is a run whose driver holds the lock but
+    # has not written its first state yet — wait, don't fail (cmd_run acquires
+    # the lock BEFORE writing state so this window reads as "running").
+    if not (run_dir / "state.json").exists() and not (run_dir / "lock").exists():
+        return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
+    deadline = time.monotonic() + ns.timeout if ns.timeout else None
+    while (run_dir / "lock").exists():
+        if deadline is not None and time.monotonic() > deadline:
+            print(f"wait: lock still held after {ns.timeout:g}s (a crashed driver leaves "
+                  f"a stale lock — check `lockstep status` and the lock file)")
+            return 1
+        time.sleep(ns.poll)
+    if not (run_dir / "state.json").exists():
+        return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
+    state = load_state(run_dir)
+    recs = list(state.nodes.values())
+    statuses = [r.status for r in recs]
+    counts = {s: statuses.count(s) for s in sorted(set(statuses))}
+    # Mirror the engine's own precedence (gate_block > approval_rejected >
+    # failed). The engine records EVERY rejection as the approval node
+    # `blocked` with "reject" in the error; rejection.txt is only the
+    # cockpit's evidence artifact — and it is STICKY (nothing deletes it, gc
+    # protects it), so it may only count while some approval is still not
+    # done. Otherwise a rejected-then-resumed-and-approved run reports 6
+    # forever (adversarial-review finding 3).
+    rejected = any(
+        r.role == "approval" and r.status == "blocked" and "reject" in (r.error or "")
+        for r in recs
+    ) or (
+        (run_dir / "rejection.txt").exists()
+        and any(r.role == "approval" and r.status != "done" for r in recs)
+    )
+    # A gate blocked by PROPAGATION (an upstream failure/rejection, or another
+    # gate) is not the origin — the origin gate carries its own verdict reason,
+    # while propagation errors are "upstream failed or blocked" / "gate X
+    # blocked: ...". Without the filter, a gate downstream of a rejected
+    # approval would mask the rejection as exit 2.
+    gate_blocked = any(
+        r.role == "gate" and r.status == "blocked"
+        and not (r.error or "").startswith(("upstream ", "gate "))
+        for r in recs
+    )
+    if gate_blocked:
+        code = EXIT_GATE_BLOCK
+    elif rejected:
+        code = EXIT_APPROVAL_REJECTED
+    elif any(s == "failed" for s in statuses):
+        code = EXIT_NODE_FAILED
+    elif all(s in ("done", "skipped") for s in statuses):
+        code = EXIT_OK
+    else:
+        code = EXIT_BUDGET  # stopped mid-run: budget, provider limit, or kill
+    print(f"wait: run settled — {counts} (exit {code})")
+    return code
+
+
 def cmd_status(ns) -> int:
     run_dir = Path(ns.run_dir)
     try:
@@ -382,6 +482,9 @@ def cmd_status(ns) -> int:
     except (OSError, ValueError) as e:
         return _fail(f"cannot read state: {e}", EXIT_CONFIG)
     print(f"flow: {state.flow_name}   started: {state.started_at}   token spawns: {state.token_spawns}")
+    if state.driver_version:
+        drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
+        print(f"driver: {state.driver_version}{drift}")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
     try:
@@ -585,6 +688,9 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                     help="write OTLP/JSON spans (GenAI semantic conventions); "
                          "bare flag writes <run_dir>/spans.jsonl")
+    pr.add_argument("--allow-dirty-scope", action="store_true",
+                    help="start even when uncommitted working-tree changes fall inside a "
+                         "node's declared spec.writes (they may be legally overwritten)")
     pr.set_defaults(fn=cmd_run)
 
     pres = sub.add_parser("resume", help="resume a run dir")
@@ -604,6 +710,10 @@ def main(argv: list[str] | None = None) -> int:
     pv = sub.add_parser("verify", help="static verification only")
     pv.add_argument("flow")
     pv.add_argument("--repo-root", default=".")
+    pv.add_argument("--config", default=None,
+                    help="executor config to verify against (default: <repo-root>/lockstep.toml); "
+                         "without it a flow whose stanzas live in a shared config file "
+                         "false-positives no-executor-stanza (C1)")
     pv.add_argument("--lint", action="store_true",
                     help="also print advisory anti-pattern warnings; never changes the exit code")
     pv.set_defaults(fn=cmd_verify)
@@ -615,6 +725,19 @@ def main(argv: list[str] | None = None) -> int:
     pst = sub.add_parser("status", help="run status")
     pst.add_argument("run_dir")
     pst.set_defaults(fn=cmd_status)
+
+    pw = sub.add_parser(
+        "wait",
+        help="block until the run's driver exits, then exit with the run's meaning "
+             "(0 done / 2 blocked / 3 failed / 6 rejected / 4 stopped-resumable / "
+             "1 --timeout expired)",
+    )
+    pw.add_argument("run_dir")
+    pw.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
+                    help="give up after SECONDS with exit 1 (default: wait forever)")
+    pw.add_argument("--poll", type=float, default=2.0, metavar="SECONDS",
+                    help="lock-check interval (default 2s)")
+    pw.set_defaults(fn=cmd_wait)
 
     pvt = sub.add_parser("verify-trace", help="recompute the run journal's hash chain")
     pvt.add_argument("run_dir")

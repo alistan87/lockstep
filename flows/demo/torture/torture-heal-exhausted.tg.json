@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "torture-heal-exhausted",
-  "description": "HEAL BUDGET EXHAUSTION. Same shape, but `build` never produces a GOOD artifact and the gate allows one round. Expected: exit 2 (gate BLOCK), build x2, and a recorded heal-round event \u2014 a healing gate that gives up must terminate the run, not loop. Every scripted node sets retry.max 0: the harness default (2 tries, 60s backoff) is sized for transient provider 429/529s, and a scripted agent has no provider \u2014 its failures are deterministic, so retrying is pure latency. Found by a mutation test that took four minutes to fail.",
+  "description": "HEAL BUDGET EXHAUSTION. Same shape, but `build` never produces a GOOD artifact and the gate allows one round. Expected: exit 2 (gate BLOCK), build x2, and a recorded heal-round event — a healing gate that gives up must terminate the run, not loop. Every scripted node sets retry.max 0: the harness default (2 tries, 60s backoff) is sized for transient provider 429/529s, and a scripted agent has no provider — its failures are deterministic, so retrying is pure latency. Found by a mutation test that took four minutes to fail.",
   "budget": {
     "max_agent_spawns": 12,
     "max_run_minutes": 10
@@ -57,7 +57,8 @@
           "python",
           "-c",
           "print('torture flow reached its final node')"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120,

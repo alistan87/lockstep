@@ -23,7 +23,8 @@
           "contrib/collectors.py",
           "sources",
           "{args.sources_dir}"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "SourceManifest",
@@ -210,7 +211,8 @@
           "rejecting leaves report.md as a draft in the working tree; nothing is published",
           "--title",
           "the research report for: {args.brief}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -234,6 +236,9 @@
           "python",
           "contrib/deliver.py",
           "report.md"
+        ],
+        "writes": [
+          "Deliverables"
         ]
       },
       "output": "text",

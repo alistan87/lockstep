@@ -12,7 +12,8 @@
           "python",
           "-c",
           "import json,glob; print(json.dumps({'files': sorted(glob.glob('src/lockstep/*.py'))[:3], 'notes': ''}))"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "PathManifest"
@@ -21,9 +22,14 @@
       "id": "summarize",
       "role": "map",
       "kind": "harness",
-      "depends_on": ["discover"],
+      "depends_on": [
+        "discover"
+      ],
       "over": "{steps.discover.json.files}",
-      "spec": { "task": "Summarize the purpose of the file {item} in two sentences.", "readonly": false },
+      "spec": {
+        "task": "Summarize the purpose of the file {item} in two sentences.",
+        "readonly": false
+      },
       "output": "text",
       "concurrency": 1
     },
@@ -31,8 +37,13 @@
       "id": "digest",
       "role": "work",
       "kind": "harness",
-      "depends_on": ["summarize"],
-      "spec": { "task": "Write a one-paragraph digest of these file summaries:\n{steps.summarize.json}" },
+      "depends_on": [
+        "summarize"
+      ],
+      "spec": {
+        "task": "Write a one-paragraph digest of these file summaries:\n{steps.summarize.json}",
+        "writes": []
+      },
       "output": "text",
       "final": true
     }

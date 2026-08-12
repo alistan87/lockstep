@@ -15,6 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from ..contracts import ContractError, describe_contract, resolve_contract
 from ..interpolate import fence_context_file, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
@@ -32,10 +33,17 @@ class HarnessSpec(BaseModel):
     context: list[str] = []
     cwd: str = "."
     readonly: bool = False
-    # Declared write scope, repo-root-relative. Empty = unconstrained (v1
-    # behavior). Detected by the driver, preventable in-harness via
-    # LOCKSTEP_WRITE_SCOPE.
+    # Declared write scope, repo-root-relative. Key ABSENT = unconstrained (v1
+    # behavior); PRESENT — even [] — is enforced, so a declared-empty scope
+    # means "writes nothing" rather than silently meaning nothing at all
+    # (LESSONS-TO-MECHANISMS V1; DEVIATIONS 2026-08-11). Detected by the
+    # driver, preventable in-harness via LOCKSTEP_WRITE_SCOPE.
     writes: list[str] = []
+    # Required by `verify --lint` when writes is ["**"]: whole-tree access must
+    # be a stated decision, not an omission.
+    writes_rationale: str = ""
+    # role=gate only (E4): baseline gate — see ShellSpec.baseline.
+    baseline: bool = False
 
 
 class HarnessError(Exception):
@@ -55,6 +63,10 @@ FOOTER = (
     "Optionally, you MAY append ProgressEvent JSON lines "
     '({{"step": "...", "pct": 0-100, "note": "..."}}) to `progress.jsonl` in the '
     "phase directory; progress is advisory and never affects scheduling.\n"
+    "If a quality gate may re-run you, you MAY record what you verified along the "
+    "way (e.g. \"failure X pre-dates this change, confirmed via stash\") in "
+    "`attempt-notes.md` in the phase directory; a retry prompt includes those notes "
+    "so the next attempt does not re-derive them.\n"
 )
 
 # Readonly nodes have write tools disabled by readonly_argv — instructing them
@@ -225,6 +237,28 @@ class HarnessExecutor:
             prompt_parts.append(ctx.steer_text)
             hash_parts.append(ctx.steer_text)
             hash_detail["prompt.steer"] = part_digest(ctx.steer_text)
+        if node.output == "json" and node.contract:
+            # E1 (LESSONS-TO-MECHANISMS): the driver resolved the contract it
+            # will validate against — say so in the prompt, generated from the
+            # same model, instead of making every flow author hand-copy field
+            # names into prose and burn a corrective re-spawn on a guess.
+            contract_text = None
+            try:
+                contract_text = describe_contract(
+                    resolve_contract(node.contract, ctx.contracts_module)
+                )
+            except ContractError:
+                pass  # verify reports unresolvable contracts; not plan's job
+            except Exception:
+                # The description is an AID: an exotic custom model that
+                # pydantic validates fine but the renderer chokes on must not
+                # fail a plan that worked before this feature existed — the
+                # node simply gets no contract block.
+                pass
+            if contract_text is not None:
+                prompt_parts.append(contract_text)
+                hash_parts.append(contract_text)
+                hash_detail["prompt.contract"] = part_digest(contract_text)
         result_file = "result.json" if node.output == "json" else "result.txt"
         footer = FOOTER_READONLY if spec.readonly else FOOTER
         prompt_parts.append(
@@ -261,7 +295,9 @@ class HarnessExecutor:
             meta={
                 "hash_detail": hash_detail,
                 "argv_template": argv_template,
-                "writes": list(spec.writes),
+                # None = absent (unconstrained); [] = declared-empty, enforced
+                # (see ShellSpec/node_env — the distinction reaches the guard).
+                "writes": list(spec.writes) if "writes" in node.spec else None,
                 "prompt_via": stanza.prompt_via,
                 "json_field": stanza.json_field,
                 "output": node.output,
@@ -345,9 +381,19 @@ class HarnessExecutor:
         for name in ("result.json", "result.txt"):
             p = phase_dir / name
             if p.exists():
+                text = p.read_text(encoding="utf-8")
+                if work.meta["output"] == "json" and not _is_json(text):
+                    # E2: the same fence salvage the stdout fallback gets. A
+                    # model that wrote its (valid) JSON wrapped in a markdown
+                    # fence into result.json otherwise burns the corrective
+                    # re-spawn on a purely cosmetic unwrap. The raw file stays
+                    # on disk untouched; only the result channel is salvaged.
+                    embedded = extract_last_json(text)
+                    if embedded is not None:
+                        text = embedded
                 return RawResult(
                     exit_code=exit_code,
-                    result_text=p.read_text(encoding="utf-8"),
+                    result_text=text,
                     source="file",
                     stdout_path=str(stdout_path),
                     stderr_path=str(stderr_path),

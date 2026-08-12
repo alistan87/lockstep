@@ -159,6 +159,18 @@ class RunState(BaseModel):
     # the gate passes: clearing it would change the hash of a result it helped
     # produce. Latest round wins.
     heal_texts: dict[str, str] = {}
+    # E4 (LESSONS-TO-MECHANISMS): pre-run findings per baseline gate id. A gate
+    # with `baseline: true` runs its body once before any node executes; at
+    # evaluation the engine subtracts these (matched on (file, claim)) so the
+    # gate blocks only on findings the RUN introduced — a gate wired to an
+    # absolute target (`ruff check .`) otherwise discards a 40-minute
+    # implementer over pre-existing debt, once per heal round. PERSISTED so a
+    # resume filters against the same baseline the run started from.
+    baseline_findings: dict[str, list] = {}
+    # V3: the driver version that created this run (mirror-drift provenance —
+    # four work-repo lessons were folklore about an already-fixed driver).
+    # A resume with a different installed version warns; empty on legacy runs.
+    driver_version: str = ""
 
 
 # --- events.jsonl --------------------------------------------------------------

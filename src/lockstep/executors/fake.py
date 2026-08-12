@@ -47,6 +47,8 @@ class FakeSpec(BaseModel):
     write_phase_files: dict[str, str] = {}  # rel path -> content, written into the
     # PHASE dir on execute — e.g. a verdicts.jsonl, simulating an in-harness
     # enforcement layer's deterministic BLOCK records (ADDENDUM-A A.7.5)
+    writes_rationale: str = ""  # see ShellSpec.writes_rationale
+    baseline: bool = False  # role=gate only (E4); see ShellSpec.baseline
 
 
 @dataclass

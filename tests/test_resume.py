@@ -115,6 +115,46 @@ def test_external_edit_reruns_leaf_even_when_all_done(tmp_path, git_repo):
     assert [c.node_id for c in h2.fake.calls] == ["b"], "leaf re-runs; consumed upstream does not"
 
 
+def test_resume_defers_dispatch_until_upstream_revalidation_settles(tmp_path, git_repo):
+    # B1 (docs/notes/LESSONS-TO-MECHANISMS.md): on resume, a pending node must
+    # not dispatch while one of its dependencies is done-but-awaiting-hash-
+    # revalidation behind an invalidated upstream. Dispatching there consumes
+    # the previous attempt's cached output — and nothing ever re-checks the
+    # downstream node afterwards, so the run exits 0 with a stale result.
+    def flow(task_a, out_a, out_b, out_c):
+        return {
+            "name": "stale",
+            "nodes": [
+                {"id": "a", "kind": "fake", "spec": {"task": task_a, "outputs": [out_a]}},
+                {"id": "b", "kind": "fake", "depends_on": ["a"],
+                 "spec": {"task": "consume {steps.a.output}", "outputs": [out_b]}},
+                {"id": "c", "kind": "fake", "depends_on": ["b"],
+                 "spec": {"task": "consume {steps.b.output}", "outputs": [out_c]}, "final": True},
+            ],
+        }
+
+    h1 = build(tmp_path, flow("produce", "A1", "B1", "C1"), git_repo)
+    assert h1.engine.run() == 0
+    # Crash while c was running; a's task then changed (its hash will differ).
+    # b's cached completion must revalidate against a's FRESH output before c
+    # may start. `outputs` is not part of the fingerprint, so changing b's
+    # output alone invalidates nothing — only the a->b->c cascade reaches it.
+    st = load_state(h1.run_dir)
+    st.nodes["c"].status = "running"
+    from lockstep.state import write_state
+
+    write_state(h1.run_dir, st)
+    h2 = rebuild(tmp_path, flow("produce v2", "A2", "B2", "C2"), git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    c_calls = calls_of(h2, "c")
+    assert len(c_calls) == 1, "c must run exactly once, after b settles"
+    assert "B2" in c_calls[0].prompt and "B1" not in c_calls[0].prompt, (
+        "c consumed b's stale cached output — dispatched before b revalidated"
+    )
+    assert [x.node_id for x in h2.fake.calls] == ["a", "b", "c"]
+
+
 def test_match_means_no_warning(tmp_path, git_repo):
     f = chain_flow()
     h1 = build(tmp_path, f, git_repo)

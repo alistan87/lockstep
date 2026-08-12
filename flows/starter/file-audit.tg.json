@@ -24,7 +24,8 @@
           "import sys, json, hashlib, subprocess, fnmatch, pathlib\npattern = sys.argv[1]\ncap = int(sys.argv[2])\nout = subprocess.run(['git', '-c', 'core.quotepath=off', 'ls-files', '-z'], capture_output=True, encoding='utf-8', errors='replace')\nif out.returncode != 0:\n    sys.stderr.write('git ls-files failed: ' + (out.stderr or ''))\n    sys.exit(1)\nmatched = [f for f in out.stdout.split('\\x00') if f.strip() and fnmatch.fnmatch(f, pattern)]\nfiles = matched[:cap]\nentries = []\nfor f in files:\n    try:\n        h = hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest()[:16]\n    except OSError as e:\n        h = 'unreadable'\n    entries.append(f + '|' + h)\nnotes = '%d of %d matching files' % (len(files), len(matched))\nif len(matched) > cap:\n    notes += ' (TRUNCATED - raise --arg max_files to widen)'\nprint(json.dumps({'schema_version': '1.0', 'files': entries, 'notes': notes}))",
           "{args.glob}",
           "{args.max_files}"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "PathManifest",
@@ -79,7 +80,8 @@
           "-c",
           "import sys, json\nv = sys.argv[1]\ntry:\n    v = json.loads(v)\nexcept ValueError:\n    pass\nprint('file-audit verdict: ' + str(v))",
           "{steps.arbiter.json.reason}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 60,

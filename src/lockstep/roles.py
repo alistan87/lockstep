@@ -46,9 +46,8 @@ from .state import (
     utcnow,
 )
 from .store import FileStore
-from .workspace import WorkspaceError, path_in_scope
 from .taskgraph import Node, TaskGraph
-from .workspace import GitWorkspace, WorkspaceError
+from .workspace import GitWorkspace, WorkspaceError, path_in_scope
 
 SETTLED = {"done", "skipped"}
 TERMINAL_BAD = {"failed", "blocked"}
@@ -158,6 +157,7 @@ class Engine:
         max_workers: int = 2,
         log=print,
         cockpit: bool = False,
+        check_dirty_scope: bool = False,
     ):
         self.tg = tg
         self.registry = registry
@@ -171,6 +171,18 @@ class Engine:
         # Cockpit mode (proposal T1.3). Off by default and SPEC §9.3 behaviour is
         # byte-identical without it; see DEVIATIONS.
         self.cockpit = cockpit
+        # E9: refuse a FRESH run whose pre-run dirty paths overlap a declared
+        # write scope — an in-scope write legally overwrites the operator's
+        # uncommitted edit. CLI sets this for real fresh runs only (a resumed
+        # tree is EXPECTED dirty with the run's own prior work).
+        self.check_dirty_scope = check_dirty_scope
+        # Set by the CLI under --replay: baseline-gate bodies must NOT run
+        # there — the replay wrapper would serve the gate's single per-node
+        # recording (the post-run ADJUDICATED verdict) as the "pre-run"
+        # baseline (adversarial-review finding 5). The recorded gate results
+        # are already adjudicated, so replay needs no baseline machinery at
+        # all: skipping preserves the recording's own verdicts exactly.
+        self.replaying = False
 
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
@@ -318,6 +330,7 @@ class Engine:
             # correctly invalidates. Re-built per plan, so map items at
             # concurrency 1 re-read the mailbox between items.
             steer_text=render_steering(read_mailbox(self.store.run_dir, node.id)),
+            contracts_module=self.tg.contracts_module,
         )
 
     def _body_referenced_deps(self, node: Node) -> set[str]:
@@ -411,6 +424,16 @@ class Engine:
 
     # ------------------------------------------------------------------ settle
 
+    def _dep_settled(self, dep_id: str) -> bool:
+        """A dependency licenses downstream work only when it is settled AND
+        any pending resume-time hash revalidation has actually happened.
+        `done` alone is not enough: on resume a node stays `done` in
+        `needs_check` while its own upstream is still re-running, and treating
+        that as settled dispatched dependents against the previous attempt's
+        cached output (LESSONS-TO-MECHANISMS B1; the work-repo run needed three
+        resume cycles before a reviewer ever saw fresh evidence)."""
+        return self._rec(dep_id).status in SETTLED and dep_id not in self.needs_check
+
     def _settle(self) -> bool:
         """Resolve skips, upstream-failure blocks, and cache revalidation until
         a fixed point. Returns True if anything changed."""
@@ -426,7 +449,7 @@ class Engine:
                         self._set_status(node.id, "blocked", error="upstream failed or blocked")
                         changed = progressed = True
                         continue
-                    if not all(r.status in SETTLED for r in dep_recs.values()):
+                    if not all(self._dep_settled(d) for d in node.depends_on):
                         continue
                     skipped_deps = {d for d, r in dep_recs.items() if r.status == "skipped"}
                     # A2: `when` evaluates FIRST and is exempt from transitive skip.
@@ -447,7 +470,11 @@ class Engine:
                             changed = progressed = True
                             continue
                 elif rec.status == "done" and node.id in self.needs_check:
-                    if not all(r.status in SETTLED for r in dep_recs.values()):
+                    # Revalidate in topological order: a dep still awaiting its
+                    # OWN revalidation could be invalidated after we hash-match
+                    # against its stale recorded output — and nothing would
+                    # ever re-check this node (B1).
+                    if not all(self._dep_settled(d) for d in node.depends_on):
                         continue
                     executor = self.registry.get(node.kind)
                     invalidate = executor is None or not getattr(executor, "cacheable", False)
@@ -529,7 +556,11 @@ class Engine:
                         f"gate {n.id!r} has heal.rollback: true but the workspace is not "
                         "git-managed; NullWorkspace cannot roll back"
                     )
+        self._preflight_dirty_scope()
         self._start_monotonic = time.monotonic()
+        # E4: baseline-gate bodies run inside the wall-clock budget window —
+        # a pytest baseline is real work, not free bookkeeping.
+        self._record_gate_baselines()
         token_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="lockstep-tok")
         other_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lockstep-oth")
         tailer = _ProgressTailer(self.store.run_dir)
@@ -546,7 +577,11 @@ class Engine:
                     n
                     for n in self.tg.nodes
                     if self._rec(n.id).status == "pending"
-                    and all(self._rec(d).status in SETTLED for d in n.depends_on)
+                    # _dep_settled, not bare SETTLED: a done dep still in
+                    # needs_check may yet be invalidated by its own upstream's
+                    # re-run — dispatching past it hands this node stale
+                    # cached output (B1).
+                    and all(self._dep_settled(d) for d in n.depends_on)
                 ]
                 if not wave:
                     break
@@ -563,6 +598,128 @@ class Engine:
             tailer.stop()
             self.store.mutate(lambda s: None)
         return self._exit_code()
+
+    def _preflight_dirty_scope(self) -> None:
+        """E9 (LESSONS-TO-MECHANISMS): scope enforcement leaves IN-scope writes
+        alone — including overwriting a file the operator edited before the
+        run. "Preserve user-owned changes" and "a node may overwrite an
+        in-scope file" were two different guarantees with a human checklist as
+        the only bridge; this is the mechanical one."""
+        if not self.check_dirty_scope or not isinstance(self.workspace, GitWorkspace):
+            return
+        try:
+            # Same exclusion as quarantine and heal, for the same reason: where
+            # the run dir sits inside an un-ignored work tree, the driver's own
+            # just-written state.json/flow copy is "dirty" — and a `["**"]`
+            # scope would make every fresh run refuse on its own bookkeeping
+            # (adversarial-review finding 1, repro'd live).
+            dirty = self._outside_run_dir(self.workspace.dirty_paths())
+        except WorkspaceError:
+            return
+        if not dirty:
+            return
+        overlaps = []
+        for n in self.tg.nodes:
+            if "writes" not in n.spec:
+                continue
+            scope = [str(w) for w in (n.spec.get("writes") or [])]
+            hits = sorted(p for p in dirty if path_in_scope(p, scope))
+            if hits:
+                overlaps.append(f"{n.id}: {', '.join(hits)}")
+        if overlaps:
+            raise RunRefusal(
+                "uncommitted working-tree changes fall inside declared write scopes and "
+                "would be legally overwritten by the run:\n  "
+                + "\n  ".join(overlaps)
+                + "\ncommit or stash them first, narrow the scopes, or pass --allow-dirty-scope"
+            )
+
+    def _record_gate_baselines(self) -> None:
+        """E4: run each `baseline: true` gate's body once against the PRE-RUN
+        tree and persist its findings. `_apply_baseline` subtracts them at
+        evaluation, so the gate blocks only on findings the run introduced.
+        Persisted in RunState: a resume filters against the same baseline the
+        run started from, never a re-measured one."""
+        if self.replaying:
+            return  # recorded gate results are already adjudicated (finding 5)
+        for node in self.tg.nodes:
+            if node.role != "gate" or not node.spec.get("baseline"):
+                continue
+            if node.id in self.store.state.baseline_findings:
+                continue
+            executor = self.registry.get(node.kind)
+            base_dir = self.store.phase_dir(node.id) / "baseline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            findings: list = []
+            try:
+                ctx = self._render_ctx(node, base_dir)
+                work = executor.plan(node, ctx)
+                self._spend_spawn(work)
+                raw = executor.execute(work, base_dir, node.timeout_s)
+                # The baseline spawn is a real attempt: keep attempts and
+                # token_spawns telling one story in `status`.
+                rec = self._rec(node.id)
+                rec.attempts += 1
+                self.store.record(rec)
+                ref = resolve_contract(node.contract, self.tg.contracts_module)
+                value = validate_result(raw.result_text or "", ref)
+                findings = list(value.get("findings", []))
+            except BudgetTripped:
+                # §9.5: a trip must exit 4, not escape as a traceback.
+                # _spend_spawn already set flags["budget"], so returning lets
+                # the main loop break and exit cleanly. NOTHING has executed
+                # yet (baselines precede every wave), so a resume with
+                # headroom re-records the missing baselines against a tree
+                # that is still genuinely pre-run.
+                self.log(
+                    f"baseline gate {node.id!r}: spawn budget tripped before its baseline "
+                    f"could be recorded — resume with headroom to record it"
+                )
+                return
+            except Exception as e:
+                # Fail-open to an EMPTY baseline, loudly: a broken baseline
+                # body must not bless future findings, and pre-existing
+                # failures will then surface as new — visible, not silent.
+                self.log(
+                    f"baseline gate {node.id!r}: body failed at baseline time "
+                    f"({type(e).__name__}: {e}) — recording an EMPTY baseline; "
+                    f"pre-existing failures will surface as new findings"
+                )
+            self.store.mutate(
+                lambda st, n=node.id, f=findings: st.baseline_findings.__setitem__(n, f)
+            )
+            append_event(
+                self.store.run_dir,
+                {"node": node.id, "status": "baseline", "findings": len(findings)},
+            )
+
+    def _apply_baseline(self, gate: Node, verdict: Verdict) -> Verdict:
+        """E4 subtraction: drop findings recorded in the gate's pre-run
+        baseline, matched on (file, claim) — exact, not fuzzy, so a message
+        that changed is a new finding. A block whose findings ALL match the
+        baseline flips to pass: the debt predates the run and is not the
+        change's to answer for. Heal prompts then carry only NEW findings."""
+        base = self.store.state.baseline_findings.get(gate.id)
+        if not base:
+            return verdict
+        keys = {(f.get("file"), f.get("claim")) for f in base if isinstance(f, dict)}
+        kept = [f for f in verdict.findings if (f.file, f.claim) not in keys]
+        dropped = len(verdict.findings) - len(kept)
+        if dropped == 0:
+            return verdict
+        if verdict.verdict == "block" and not kept:
+            return Verdict(
+                findings=[],
+                verdict="pass",
+                reason=f"all {dropped} finding(s) match the pre-run baseline (was: {verdict.reason})",
+            )
+        return verdict.model_copy(
+            update={
+                "findings": kept,
+                "reason": verdict.reason
+                + f" [{dropped} pre-existing finding(s) suppressed by the pre-run baseline]",
+            }
+        )
 
     def _exit_code(self) -> int:
         if self.flags["budget"]:
@@ -618,13 +775,18 @@ class Engine:
             pass  # prompt.txt written by the executor at execute time
         tokens = sorted(set(node.exclusive) | set(work.exclusive))
         locks = self._acquire(tokens)
+        # Presence-keyed, not truthiness-keyed (V1): a DECLARED-empty scope
+        # (`writes: []`) means "this node writes nothing" and is enforced —
+        # every change is a violation. Only an ABSENT key is the v1
+        # unconstrained behavior (DEVIATIONS 2026-08-11).
+        has_scope = "writes" in node.spec
         scope = [str(w) for w in (node.spec.get("writes") or [])]
         scope_ref = None
         scope_error: str | None = None
         try:
             self._maybe_snapshot(node)
             staged_before: set[str] = set()
-            if scope and "tree" in tokens:
+            if has_scope and "tree" in tokens:
                 # Only while serialized on the tree: otherwise a concurrent
                 # node's writes would be attributed to this one, and a false
                 # accusation is worse than no check. `verify` warns when a
@@ -795,7 +957,8 @@ class Engine:
             pass
 
         lines = [
-            f"write scope violated: this step may only write {', '.join(scope)} "
+            f"write scope violated: this step may only write "
+            f"{', '.join(scope) if scope else 'nothing (declared writes: [])'} "
             f"but wrote {', '.join(violations)}",
             f"the blocked attempt is preserved at phases/{node.id}/{patch_name}",
         ]
@@ -979,7 +1142,19 @@ class Engine:
                 return
             if node.role == "gate":
                 # Fail-closed for termination, never a healing trigger (§9.4.3).
-                self._queue_gate_outcome(node, None, "no valid verdict emitted")
+                # E6: NAME a timeout — "no valid verdict emitted" sent operators
+                # hunting a schema bug in a command that simply ran out of
+                # window, and heal's silence looked like a driver defect.
+                if raw.timed_out:
+                    reason = (
+                        f"gate command timed out after {node.timeout_s}s — a timeout is "
+                        f"not a verdict, so heal cannot fire (§9.4.3); raise timeout_s or "
+                        f"add `retry` to the gate, and re-run the command by hand before "
+                        f"blaming the change under review"
+                    )
+                else:
+                    reason = "no valid verdict emitted"
+                self._queue_gate_outcome(node, None, reason)
                 return
             self._set_status(node.id, "failed", error=reason)
             return
@@ -996,13 +1171,24 @@ class Engine:
             value, text = validated
         else:
             value, text = None, raw.result_text
+        if node.role == "gate":
+            verdict = Verdict.model_validate(value)
+            if self.store.state.baseline_findings.get(node.id):
+                # E4: downstream {steps.<gate>.json...} references and `when`
+                # conditions must read the ADJUDICATED verdict — a block→pass
+                # flip that only reached state.verdicts would leave a
+                # dependent's `== "pass"` check reading the raw "block". The
+                # spawn's own raw output stays in the phase dir.
+                verdict = self._apply_baseline(node, verdict)
+                text = json.dumps(verdict.model_dump(), ensure_ascii=False)
+            result_path = self.store.write_result(node.id, text, json_output=True)
+            rec.result_path = str(result_path)
+            self._record_fingerprint(rec)
+            self._queue_gate_outcome(node, verdict, verdict.reason)
+            return
         result_path = self.store.write_result(node.id, text, json_output=node.output == "json")
         rec.result_path = str(result_path)
         self._record_fingerprint(rec)
-        if node.role == "gate":
-            verdict = Verdict.model_validate(value)
-            self._queue_gate_outcome(node, verdict, verdict.reason)
-            return
         self._set_status(node.id, "done")
 
     def _record_fingerprint(self, rec) -> None:
@@ -1068,6 +1254,44 @@ class Engine:
                     self._set_status(dep_id, "blocked", error=f"gate {gate.id} blocked: {reason}")
                 frontier.append(dep_id)
 
+    _ATTEMPT_NOTES_CAP = 4000  # tail-capped: the latest notes win
+
+    def _heal_scope_line(self, nid: str) -> str:
+        """The E5 boundary restatement for a heal target that declares a write
+        scope. Empty when it declares none (nothing to restate)."""
+        target = self.tg.node(nid)
+        if "writes" not in target.spec:
+            return ""
+        scope = [str(w) for w in (target.spec.get("writes") or [])]
+        allowed = ", ".join(scope) if scope else "nothing (this step declares writes: [])"
+        return (
+            "\nYour write scope is UNCHANGED by these findings: you may modify only "
+            f"{allowed}. If a finding names a file outside that scope, do not edit it — "
+            "state in your result that it is out of scope, whatever the finding says."
+        )
+
+    def _heal_carry_notes(self, nid: str) -> str:
+        """E3: fold the target's own `attempt-notes.md` (phase dir, node-written)
+        into its heal re-run prompt. A retried node otherwise re-derives from
+        zero what a prior attempt spent real evidence establishing — heal
+        rollback deliberately preserves the phase dir, but nothing fed it back."""
+        notes = self.store.phase_dir(nid) / "attempt-notes.md"
+        try:
+            if not notes.exists():
+                return ""
+            text = notes.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return ""
+        if not text:
+            return ""
+        if len(text) > self._ATTEMPT_NOTES_CAP:
+            text = text[-self._ATTEMPT_NOTES_CAP:]
+        return (
+            "\nYour own previous attempt left these notes — use them instead of "
+            "re-deriving what it already established:\n"
+            + fence_block("prior.attempt.notes", text)
+        )
+
     def _heal(self, gate: Node, rec, verdict: Verdict) -> None:
         round_n = rec.heal_round + 1
         gate_phase = self.store.phase_dir(gate.id)
@@ -1097,6 +1321,39 @@ class Engine:
                 # aside, not restored (audit r5 finding).
                 label = "discarded" if (discard / p).exists() else "restored"
                 append_event(self.store.run_dir, {"node": gate.id, "status": label, "path": p})
+            # E8-interim (LESSONS-TO-MECHANISMS): rollback scope is everything
+            # changed since the gate's baseline (§9.4.4) — including an
+            # operator's out-of-band edit, silently undone on EVERY round. When
+            # every target declares spec.writes, a restored path OUTSIDE their
+            # union is exactly that case: say so loudly. (Narrowing the scope
+            # itself is the r7 proposal; this is the warning until then.)
+            all_declared = all(
+                "writes" in self.tg.node(t).spec for t in gate.heal.targets
+            )
+            if all_declared:
+                # Compare against EVERY node's declared scope, not only the
+                # targets': the rollback window legitimately contains a
+                # non-target sibling's in-scope writes (diamond graphs at
+                # max_workers > 1), and naming those "an out-of-band edit"
+                # accuses the operator of the graph's own work
+                # (adversarial-review finding 7).
+                any_scope: list[str] = []
+                for n in self.tg.nodes:
+                    if "writes" in n.spec:
+                        any_scope.extend(str(w) for w in (n.spec.get("writes") or []))
+                undeclared = [p for p in scope if not path_in_scope(p, any_scope)]
+                for p in undeclared:
+                    append_event(
+                        self.store.run_dir,
+                        {"node": gate.id, "status": "restored-undeclared", "path": p},
+                    )
+                if undeclared:
+                    self.log(
+                        f"WARNING: heal rollback of gate {gate.id!r} restored path(s) no "
+                        f"target declares in spec.writes: {', '.join(undeclared)} — an "
+                        f"out-of-band edit made mid-run was just undone (rollback restores "
+                        f"everything changed since the gate's baseline, SPEC §9.4.4)"
+                    )
             # Refresh the lineage head AFTER the restore mutated the tree, so a
             # crash-then-resume here doesn't misread the rollback as external
             # edits (audit r6.2: fail-safe but noisy).
@@ -1114,17 +1371,27 @@ class Engine:
                     invalid.add(dep_id)
                     frontier.append(dep_id)
         findings_json = json.dumps([f.model_dump() for f in verdict.findings], ensure_ascii=False)
-        heal_text = (
+        base_heal = (
             f"A quality gate blocked with: {verdict.reason}. Address this precisely.\n"
             + fence_block("gate.findings", findings_json)
         )
         for nid in sorted(invalid):
             nrec = self._rec(nid)
             if nid in gate.heal.targets:
+                # E5 (LESSONS-TO-MECHANISMS): gate findings appended with
+                # "address this precisely" read as authorization — a node whose
+                # scope was two templates edited five core modules chasing a
+                # gate-surfaced pre-existing failure. Restate the target's own
+                # declared scope INSIDE the heal text, engine-composed so no
+                # flow author has to remember a defensive clause. E3: carry the
+                # target's own attempt notes forward for the same reason.
+                heal_text = base_heal + self._heal_scope_line(nid) + self._heal_carry_notes(nid)
                 # Folds into the prompt AND the hash, so it is persisted with the
                 # run state rather than held in this process (r7 candidate,
                 # ROADMAP-NOTES 2026-07-27).
-                self.store.mutate(lambda st, n=nid: st.heal_texts.__setitem__(n, heal_text))
+                self.store.mutate(
+                    lambda st, n=nid, t=heal_text: st.heal_texts.__setitem__(n, t)
+                )
             if nrec.status in ("done", "skipped", "failed", "blocked") or nid in gate.heal.targets:
                 nrec.status = "pending"
                 nrec.error = None

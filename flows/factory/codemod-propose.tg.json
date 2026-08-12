@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "codemod-propose",
-  "description": "Segment 1 of 2 (D2) - the docs-okf pattern generalised to code. Discover sites by content grep (fingerprinted, so re-runs re-analyse only changed files) -> one readonly analyst per site emitting a structured ChangeOrder -> publish the orders to codemod-orders.json (no-op orders dropped mechanically) -> write CODEMOD-PROPOSAL.md for the human. NOTHING IS EDITED: the human reads the proposal, and their consent is running codemod-apply, whose staleness gate hard-blocks if the tree moved after they read it. The merge-or-commit is theirs; this pair never performs it.",
+  "description": "Segment 1 of 2 (D2) - the docs-okf pattern generalised to code. Deliberately ungated: emit-orders and proposal-doc write inert proposal artifacts a human reads directly; consent is launching codemod-apply with the proposal in hand, and ITS staleness gate re-verifies every order fingerprint before anything executes. Discover sites by content grep (fingerprinted, so re-runs re-analyse only changed files) -> one readonly analyst per site emitting a structured ChangeOrder -> publish the orders to codemod-orders.json (no-op orders dropped mechanically) -> write CODEMOD-PROPOSAL.md for the human. NOTHING IS EDITED: the human reads the proposal, and their consent is running codemod-apply, whose staleness gate hard-blocks if the tree moved after they read it. The merge-or-commit is theirs; this pair never performs it.",
   "contracts_module": "flows/factory_contracts.py",
   "max_interp_chars": 60000,
   "budget": {
@@ -26,7 +26,8 @@
           "{args.pattern}",
           "--suffixes",
           "{args.suffixes}"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "SourceManifest",
@@ -66,6 +67,9 @@
           "codemod-orders.json",
           "--drop-empty",
           "change"
+        ],
+        "writes": [
+          "codemod-orders.json"
         ]
       },
       "output": "text",

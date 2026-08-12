@@ -54,9 +54,15 @@ def node_env(work: PlannedWork, phase_dir: Path) -> dict[str, str]:
         # WORKSPACE_SCOPE: that one is documented as a single directory
         # (ADDENDUM-A preamble note 2) and lockstep-guard.ts prefix-matches
         # against it, so repurposing it would silently break the extension.
+        # Presence-keyed like the driver's own check (V1): meta["writes"] is
+        # None when the flow declared nothing, and a LIST — including [] —
+        # when it declared a scope. `writes: []` must reach the guard as "[]"
+        # (block every write), not as "" (no scope): truthiness here silently
+        # disarmed the in-harness layer for exactly the tightest declaration
+        # (adversarial-review finding 2).
         "LOCKSTEP_WRITE_SCOPE": (
             json.dumps(work.meta["writes"], ensure_ascii=False)
-            if work.meta.get("writes")
+            if work.meta.get("writes") is not None
             else ""
         ),
         "LOCKSTEP_VERDICT_FILE": str((phase_dir / "verdicts.jsonl").resolve()),
@@ -68,10 +74,21 @@ class ShellSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cmd: list[str]
     cwd: str = "."  # relative to the invocation directory / --repo-root (SPEC §4)
-    # Declared write scope, repo-root-relative. Empty = unconstrained (the v1
-    # behavior). The driver DETECTS violations after the fact; an in-harness
-    # extension can PREVENT them from LOCKSTEP_WRITE_SCOPE.
+    # Declared write scope, repo-root-relative. Key ABSENT = unconstrained (the
+    # v1 behavior); PRESENT — even [] — is enforced, so `writes: []` declares
+    # "this command writes nothing" (a read-only probe) rather than silently
+    # meaning nothing at all (LESSONS-TO-MECHANISMS V1; DEVIATIONS 2026-08-11).
+    # The driver DETECTS violations after the fact; an in-harness extension can
+    # PREVENT them from LOCKSTEP_WRITE_SCOPE.
     writes: list[str] = []
+    # Required by `verify --lint` when writes is ["**"] (whole-tree access must
+    # be a stated decision, not an omission).
+    writes_rationale: str = ""
+    # role=gate only (E4): run this gate's body once against the PRE-RUN tree;
+    # the engine subtracts the recorded findings at evaluation. A spec key,
+    # not a first-class Node field — §15 keeps format_version 1.0 (same
+    # reasoning as `writes`).
+    baseline: bool = False
 
 
 def resolve_ctx_of(ctx: RenderCtx) -> ResolveCtx:
@@ -126,7 +143,10 @@ class ShellExecutor:
             # at --max-workers 3).
             exclusive=["tree"],
             meta={"cwd": str(cwd), "output": node.output, "node_id": node.id, "role": node.role,
-                  "contract": node.contract or "", "writes": list(spec.writes),
+                  "contract": node.contract or "",
+                  # None = key absent (unconstrained); [] = declared-empty,
+                  # enforced. The distinction must survive to LOCKSTEP_WRITE_SCOPE.
+                  "writes": list(spec.writes) if "writes" in node.spec else None,
                   "repo_root": str(Path(self.repo_root).resolve())},
         )
 

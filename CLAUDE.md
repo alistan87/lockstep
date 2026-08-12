@@ -33,6 +33,8 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe run <flow> --estimate   # cost floor from prior runs; spends nothing
 .venv\Scripts\lockstep.exe run <flow> --replay <run_dir>  # serve recorded results; no spawns, no tokens
 .venv\Scripts\lockstep.exe verify-trace <run_dir>  # recompute the journal's hash chain (exit 5 if broken)
+.venv\Scripts\lockstep.exe wait <run_dir> [--timeout s]  # block until the driver exits; exits with the run's meaning
+.venv\Scripts\lockstep.exe verify <flow> --config <toml>  # verify against a shared config, matching run --config
 .venv\Scripts\lockstep.exe doctor                  # probes harness stanzas; spends small model calls; leaves runs\doctor-record.json
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
 .venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged

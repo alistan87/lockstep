@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "triage-intake",
-  "description": "The intake side of the factory (D3): load a batch of bug reports from a JSON file ({\"reports\": [\"...\", ...]}) -> one triager per report attempts reproduction and emits a TriageRecord (reproduced yes/no/blocked, the exact repro command as evidence, severity, component) -> publish the records to triage-records.json -> a readonly digest for humans. Serialized (concurrency 1): reproduction runs code in the shared tree. Each record's outflow is the existing bugfix-heal flow, one report at a time.",
+  "description": "The intake side of the factory (D3), deliberately ungated: emit-records publishes inert triage records a human reads directly before deciding anything. Load a batch of bug reports from a JSON file ({\"reports\": [\"...\", ...]}) -> one triager per report attempts reproduction and emits a TriageRecord (reproduced yes/no/blocked, the exact repro command as evidence, severity, component) -> publish the records to triage-records.json -> a readonly digest for humans. Serialized (concurrency 1): reproduction runs code in the shared tree. Each record's outflow is the existing bugfix-heal flow, one report at a time.",
   "contracts_module": "flows/factory_contracts.py",
   "max_interp_chars": 60000,
   "budget": {
@@ -22,7 +22,8 @@
           "contrib/collectors.py",
           "cat",
           "{args.reports}"
-        ]
+        ],
+        "writes": []
       },
       "output": "json",
       "contract": "ReportBatch",
@@ -58,6 +59,9 @@
           "--node",
           "triage",
           "--out",
+          "triage-records.json"
+        ],
+        "writes": [
           "triage-records.json"
         ]
       },

@@ -44,7 +44,11 @@
           "{args.manifest}",
           "--branch",
           "{args.branch}"
-        ]
+        ],
+        "writes": [
+          "**"
+        ],
+        "writes_rationale": "applies the human-approved manifest; target paths are manifest data, not statically known"
       },
       "output": "text",
       "timeout_s": 600,

@@ -216,3 +216,30 @@ def test_a_text_node_on_an_envelope_harness_still_unwraps(tmp_path, git_repo):
     assert h.engine.run() == 0
     result = (h.run_dir / "phases" / "n" / "result.txt").read_text(encoding="utf-8")
     assert result == "the answer text, with a [] in it"
+
+
+FENCED_RESULT_FILE = (
+    "import os, json, pathlib; d = os.environ['LOCKSTEP_PHASE_DIR']; "
+    "pathlib.Path(d, 'result.json').write_text('```json\\n' + json.dumps({'step_id': 'fenced', "
+    "'status': 'done', 'files_written': []}) + '\\n```\\n')"
+)
+
+
+def fenced_flow() -> dict:
+    f = harness_flow(FENCED_RESULT_FILE)
+    f["nodes"][0]["retry"] = {"max": 0}  # keep a regression fast, not minute-backoff slow
+    return f
+
+
+def test_result_file_markdown_fence_salvaged(tmp_path, git_repo):
+    # E2 (LESSONS-TO-MECHANISMS): the stdout fallback already strips markdown
+    # fences; the file channel did not, so a model that wrote valid JSON inside
+    # a ```json fence into result.json burned its corrective re-spawn on a
+    # purely cosmetic unwrap.
+    config = make_config(x=ExecutorStanza(argv=[PY, "-c", FENCED_RESULT_FILE]))
+    h = build(tmp_path, fenced_flow(), git_repo, config=config)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    result = json.loads(open(st.nodes["n"].result_path, encoding="utf-8").read())
+    assert result["step_id"] == "fenced"
+    assert st.nodes["n"].attempts == 1, "no corrective re-spawn burned on a fence"

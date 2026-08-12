@@ -365,3 +365,98 @@ file records implementation-level departures below that bar.
   `phases/<node>/pid.txt`, so a MAP node's per-item handles (written under
   `phases/<node>/items/<i>/`) are unreachable from `cancel` at all — pre-existing,
   not introduced here.
+
+- **2026-08-11 — the LESSONS-TO-MECHANISMS batch** (docs/notes/LESSONS-TO-MECHANISMS.md,
+  distilled from the work-repo mirror's live-run lessons and re-verified against
+  this source). One bug fix, several additive mechanisms; the departures that
+  touch stated spec text are logged individually:
+
+  - **Resume dispatch race (B1) fixed.** A pending node could dispatch while a
+    dependency was `done` but still awaiting resume-time hash revalidation
+    behind an invalidated upstream — it consumed the previous attempt's cached
+    output, and nothing ever re-checked it (exit 0 with a stale result;
+    observed live at the work repo as reviewers evaluating stale evidence for
+    3 resume cycles). Dispatch, `when`-eval, and revalidation ordering now
+    treat `done ∧ needs_check` as unsettled (`roles.py::_dep_settled`). We read
+    §9.2/§9.3 as PROMISING this ("skipped when nothing changed" implies checked
+    before consumed); recorded here in case the reading is disputed.
+  - **§7 footer extended, twice.** (a) For `output: "json"` nodes the prompt
+    now states the resolved contract's field names and enum values, generated
+    from the same pydantic model the driver validates against
+    (`contracts.py::describe_contract`) — models guessed field names
+    (`approved` for `verdict`) and burned corrective re-spawns on cosmetic
+    mismatches. (b) One footer line advertises `attempt-notes.md` (below) —
+    in `FOOTER` only, not `FOOTER_READONLY` (a readonly node's argv forbids
+    the write; same reasoning as r5 A1). Both are additive prompt text after
+    the frozen §7 sentence; both fold into `input_hash`, so json-emitting and
+    write-capable harness nodes respectively re-bill once on upgrade —
+    deliberate (the prompt genuinely changed). The shell-only replay fixture
+    is unaffected (shell fingerprints are argv only).
+  - **File-channel results get the same fence salvage as stdout (§8.3).** The
+    stdout fallback strips markdown fences; the file channel returned raw
+    bytes, so valid JSON inside a ```json fence in `result.json` failed
+    contract validation and burned the corrective re-spawn. The §8.3 file-first
+    ORDER is unchanged; only the salvage is now symmetric.
+  - **`spec.writes` is presence-keyed, not truthiness-keyed.** A DECLARED-empty
+    scope (`writes: []`) now means "this node writes nothing" and is enforced —
+    every change quarantines. Previously `[]` silently meant "unconstrained",
+    i.e. the tightest possible declaration disabled the check. Key ABSENT keeps
+    the v1 unconstrained behavior. New lints: `lint-missing-write-scope` (a
+    write-capable work node with no declared scope; becomes a verify ERROR at
+    format_version 1.1), `lint-unscoped-writes` (`["**"]` without
+    `spec.writes_rationale`), `lint-ungated-mutation` (mutation with no gate or
+    approval on either side; silenced by "ungated" in the flow description).
+    All committed flows now declare scopes.
+  - **Heal text is per-target and richer (§9.4.6).** The engine-composed heal
+    prompt now restates the target's own declared write scope (gate findings
+    naming out-of-scope files read as authorization to edit them — observed
+    live) and folds in the target's own `attempt-notes.md` (tail-capped 4000
+    chars) so a retry does not re-derive what a prior attempt established. Both
+    fold into the persisted heal text, same resume-stability reasoning as the
+    2026-07-27 entry.
+  - **Baseline gates (`spec.baseline: true`, gate role only).** The gate body
+    runs once against the PRE-RUN tree (inside the wall budget, spends per
+    §9.5 if token-costing — a trip there sets the flag and exits 4, never a
+    traceback); recorded findings are subtracted at evaluation (exact
+    (file, claim) match) and a block whose findings ALL predate the run flips
+    to pass. The STORED result for a baseline gate is the adjudicated verdict
+    (the raw spawn output stays in the phase dir), so downstream
+    `{steps.<gate>.json...}` references and `when` conditions read the same
+    verdict `state.verdicts` records. Declared as a SPEC key, not a
+    first-class Node field — §15 freezes format_version 1.x against new
+    first-class fields, and the spec-key route is the same one `spec.writes`
+    took (2026-08-08): an older verifier rejects it with a named spec-invalid
+    §6 error instead of parsing it silently. New verify errors:
+    `baseline-not-gate`, `baseline-gate-references-steps`. Why: a gate wired
+    to an absolute target (`ruff check .`) discarded a 40-minute implementer
+    per heal round over pre-existing debt. Sibling:
+    `lockstep.gates.scoped_checks` runs checks only over the worktree's own
+    changed files.
+  - **Gate timeouts are named (§9.4.3 unchanged).** A timed-out gate still
+    cannot heal (a timeout is not a valid block) but the terminal reason now
+    says "timed out after Ns" with the remedy, instead of "no valid verdict
+    emitted" — which sent operators hunting schema bugs in commands that ran
+    out of window.
+  - **Dirty-scope preflight (fresh runs only).** `run` refuses when uncommitted
+    working-tree paths fall inside a declared write scope (they would be
+    legally overwritten); `--allow-dirty-scope` overrides; resumes and replays
+    are exempt (a resumed tree is expectedly dirty with the run's own work).
+  - **Heal rollback warns on undeclared restores (E8-interim).** When every
+    heal target declares a scope, a restored path outside their union is named
+    loudly (`restored-undeclared` event) — an operator's out-of-band mid-run
+    edit was silently reverted twice at the work repo. Narrowing the §9.4.4
+    rollback scope itself is an r7 proposal, not done here.
+  - **`lockstep wait <run_dir>`** blocks until the lock releases and exits with
+    the run's meaning (0/2/3/6, 4 = stopped-resumable, 1 = --timeout). New
+    command; no frozen exit code is repurposed. Meaning is derived from the
+    persisted records with the engine's own precedence (gate-block >
+    approval-rejected > failed): a rejection is the approval node `blocked`
+    with "reject" in its error; rejection.txt (the cockpit's evidence
+    artifact, which nothing ever deletes) counts only while some approval is
+    still not done, and propagation blocks ("upstream failed or blocked",
+    "gate X blocked: …") never count as the origin.
+  - **Run provenance (V3).** `state.json` records the creating driver version;
+    `resume` and `status` name a mismatch. Why: four work-repo lessons were
+    folklore about orphan processes a newer driver already contains.
+  - **`verify --config`** matches run/resume; without it a flow whose stanzas
+    live in a shared config file always false-positived `no-executor-stanza`.

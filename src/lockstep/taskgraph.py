@@ -53,6 +53,11 @@ class Node(BaseModel):
     exclusive: list[str] = []  # resources held while running (SPEC §9.1)
     retry: RetrySpec = RetrySpec()
     heal: HealSpec = HealSpec()  # role=gate only
+    # NOTE: baseline gates (E4) are declared as `spec.baseline`, not a
+    # first-class field — same §15 reasoning as `spec.writes` (a first-class
+    # field bumps format_version 1.0 → 1.1; a spec key is validated by the
+    # executor's SpecModel, and an older verifier rejects it with a named
+    # spec-invalid §6 error rather than a pydantic traceback).
     timeout_s: int = 900
     concurrency: int | None = None  # role=map fan-out cap
     optional: bool = False
@@ -354,6 +359,23 @@ def verify_flow(
                     "gate-contract",
                     f"gate node {n.id!r} requires output \"json\" with a contract resolving to Verdict",
                 )
+        if n.spec.get("baseline"):
+            # E4: the baseline body runs BEFORE any node executes, so it may
+            # not read another step's output — it measures the pre-run tree.
+            if n.role != "gate":
+                err("baseline-not-gate", f"node {n.id!r} sets `spec.baseline` but role is {n.role!r}")
+            else:
+                for where, template in _node_templates(n):
+                    if where == "when":
+                        continue  # `when` gates the EVALUATION (post-deps), never the baseline body
+                    refs = [r for r in extract_refs(template)
+                            if r.split(".")[0] in ("steps", "previous")]
+                    if refs:
+                        err(
+                            "baseline-gate-references-steps",
+                            f"baseline gate {n.id!r} {where} references {refs}; its body runs "
+                            f"once before any node executes, so step outputs do not exist yet",
+                        )
 
     # 6. kind registry, SpecModel, executor stanza, persona
     personas_dir = (repo_root or Path(".")) / "personas"
@@ -405,11 +427,15 @@ def verify_flow(
         if n.over is not None and not _OVER_RE.match(n.over):
             err("over-not-json", f"node {n.id!r}: `over` must be a {{steps.X.json...}} reference, got {n.over!r}")
 
-    # 7b. write-scope permits (spec.writes)
+    # 7b. write-scope permits (spec.writes). Presence-keyed: a DECLARED-empty
+    # scope (writes: []) is enforced by the engine ("this node writes
+    # nothing"), so it gets the same map/serialization checks as a non-empty
+    # one — skipping it would leave a declaration the engine honours invisible
+    # to verification (V1; DEVIATIONS 2026-08-11).
     for n in tg.nodes:
-        writes = n.spec.get("writes")
-        if not writes:
+        if "writes" not in n.spec:
             continue
+        writes = n.spec.get("writes")
         if not isinstance(writes, list):
             err("bad-write-scope", f"node {n.id!r}: spec.writes must be a list of paths")
             continue
@@ -558,6 +584,78 @@ def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
                     "the human's own resume — keep it to seconds-long shell nodes (fine for "
                     "a deliberately ATTENDED flow like sdlc-e2e; the cockpit's detached "
                     "pattern wants the approval last)",
+                )
+
+    # V1 (LESSONS-TO-MECHANISMS) — a mutating node with NO declared write
+    # scope: driver-side quarantine and the in-harness guard are both OFF for
+    # it, and a well-written prompt is then only as safe as the model's
+    # judgement under gate pressure. The work-repo audit found the guardrail
+    # everyone believed verify provided here did not exist. Lint now; becomes
+    # a verify ERROR at format_version 1.1.
+    for n in tg.nodes:
+        if n.role != "work" or n.kind not in ("harness", "shell"):
+            continue
+        if n.spec.get("readonly"):
+            continue
+        if "writes" not in n.spec:
+            warn(
+                "lint-missing-write-scope",
+                f"node {n.id!r} ({n.kind}) can write but declares no spec.writes — scope "
+                f"quarantine is OFF for it; declare the paths it may touch ([] for a node "
+                f"that writes nothing, [\"**\"] plus spec.writes_rationale for deliberate "
+                f"whole-tree access)",
+            )
+        elif any(str(w).strip() == "**" for w in (n.spec.get("writes") or [])) and not str(
+            n.spec.get("writes_rationale") or ""
+        ).strip():
+            warn(
+                "lint-unscoped-writes",
+                f"node {n.id!r} declares writes: [\"**\"] (whole tree) without "
+                f"spec.writes_rationale — state why unrestricted writes are needed, so a "
+                f"reviewer can see the omission of a real scope was deliberate",
+            )
+
+    # L1 (LESSONS-TO-MECHANISMS) — a mutating node with no gate or approval on
+    # EITHER side of it: nothing downstream can block its result and nothing
+    # upstream authorized it, so "use an independent reviewer" is
+    # unenforceable prose for it. An upstream approval counts (the
+    # evidence-approval pattern: `deliver` after an approval IS the approved
+    # act); a downstream gate counts (review closure). Legitimate for an
+    # investigatory/demo flow whose final output a human reads directly — say
+    # so with the word "ungated" in the flow description and this stays quiet.
+    if "ungated" not in (tg.description or "").lower():
+        blockers = {n.id for n in tg.nodes if n.role in ("gate", "approval")}
+        dependents_of: dict[str, list[str]] = {n.id: [] for n in tg.nodes}
+        for n in tg.nodes:
+            for d in n.depends_on:
+                if d in dependents_of:
+                    dependents_of[d].append(n.id)
+
+        def _descendants(nid: str) -> set[str]:
+            out: set[str] = set()
+            frontier = [nid]
+            while frontier:
+                for y in dependents_of.get(frontier.pop(), []):
+                    if y not in out:
+                        out.add(y)
+                        frontier.append(y)
+            return out
+
+        for n in tg.nodes:
+            if n.role != "work" or n.kind not in ("harness", "shell"):
+                continue
+            if n.spec.get("readonly"):
+                continue
+            writes = n.spec.get("writes") if "writes" in n.spec else None
+            if writes == []:  # declared "writes nothing": not a mutation
+                continue
+            if not ((_descendants(n.id) | _ancestors(tg, n.id)) & blockers):
+                warn(
+                    "lint-ungated-mutation",
+                    f"node {n.id!r} mutates the tree with no gate or approval upstream or "
+                    f"downstream — nothing authorized it and nothing can block it. Add a "
+                    f"reviewer + deterministic gate, an approval, or the word 'ungated' to "
+                    f"the flow description if a human reads the output directly by design",
                 )
 
     for n in tg.nodes:

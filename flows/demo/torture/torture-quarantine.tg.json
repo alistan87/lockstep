@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "torture-quarantine",
-  "description": "WRITE-SCOPE QUARANTINE. `stray` declares one path and writes two. The driver must detect the out-of-scope write inside the node's own lock, preserve the attempt as a patch, restore or move the offending path aside (never delete it), and fail the node naming every path. Expected: exit 3, and out-of-scope artifacts in the phase dir.",
+  "description": "Deliberately ungated engine-torture fixture; contrib/torture_suite.py reads the outcome directly. WRITE-SCOPE QUARANTINE. `stray` declares one path and writes two. The driver must detect the out-of-scope write inside the node's own lock, preserve the attempt as a patch, restore or move the offending path aside (never delete it), and fail the node naming every path. Expected: exit 3, and out-of-scope artifacts in the phase dir.",
   "budget": {
     "max_agent_spawns": 8,
     "max_run_minutes": 10
@@ -32,7 +32,8 @@
           "python",
           "-c",
           "print('torture flow reached its final node')"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120,

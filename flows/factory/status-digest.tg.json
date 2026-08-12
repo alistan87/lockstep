@@ -21,7 +21,8 @@
           "git-log",
           "--days",
           "{args.days}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -35,7 +36,8 @@
           "python",
           "contrib/collectors.py",
           "runs"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -49,7 +51,8 @@
           "python",
           "contrib/collectors.py",
           "pytest"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 900
@@ -128,7 +131,8 @@
           "rejecting leaves digest.md as a draft; nothing is published",
           "--title",
           "the status digest for the last {args.days} days"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 120
@@ -152,6 +156,9 @@
           "python",
           "contrib/deliver.py",
           "digest.md"
+        ],
+        "writes": [
+          "Deliverables"
         ]
       },
       "output": "text",

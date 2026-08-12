@@ -20,7 +20,8 @@
           "contrib/collectors.py",
           "run-facts",
           "{args.run_dir}"
-        ]
+        ],
+        "writes": []
       },
       "output": "text",
       "timeout_s": 300
@@ -81,6 +82,9 @@
           "python",
           "contrib/deliver.py",
           "POSTMORTEM.md"
+        ],
+        "writes": [
+          "Deliverables"
         ]
       },
       "output": "text",

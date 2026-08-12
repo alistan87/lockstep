@@ -79,3 +79,29 @@ def test_shell_gate_invalid_verdict_zero_respawns(tmp_path, git_repo):
     st = load_state(h.run_dir)
     assert st.verdicts["gate"] == "block: no valid verdict emitted"
     assert st.nodes["gate"].attempts == 1, "zero re-spawns for a shell gate"
+
+
+def test_gate_timeout_is_named_not_no_valid_verdict(tmp_path, git_repo):
+    # E6 (LESSONS-TO-MECHANISMS, lesson 20): "no valid verdict emitted" on a
+    # timeout sent operators hunting a schema bug in a command that ran out of
+    # window; heal correctly cannot fire (SPEC 9.4.3) but the reason must say
+    # what actually happened and what to change.
+    from conftest import PY
+
+    f = {
+        "name": "gt",
+        "nodes": [
+            {"id": "work", "kind": "fake", "spec": {"outputs": ["w"], "writes": []}},
+            {"id": "gate", "role": "gate", "kind": "shell", "depends_on": ["work"],
+             "timeout_s": 1, "retry": {"max": 0},
+             "spec": {"cmd": [PY, "-c", "import time; time.sleep(15)"], "writes": []},
+             "output": "json", "contract": "Verdict"},
+            {"id": "after", "kind": "fake", "depends_on": ["gate"],
+             "spec": {"outputs": ["ok"], "readonly": True}, "final": True},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 2
+    st = load_state(h.run_dir)
+    assert "timed out after 1s" in st.verdicts["gate"]
+    assert "raise timeout_s" in st.verdicts["gate"]

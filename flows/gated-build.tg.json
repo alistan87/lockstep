@@ -2,25 +2,42 @@
   "format_version": "1.0",
   "name": "gated-build",
   "description": "harness implement -> shell pytest -> shell gate emitting Verdict (a fully deterministic gate) -> harness report. Machine checks before model judgment; explicit heal scope; safe self-healing.",
-  "args": { "task": null },
+  "args": {
+    "task": null
+  },
   "nodes": [
     {
       "id": "implement",
       "role": "work",
       "kind": "harness",
-      "spec": { "task": "Implement the following in this repository:\n{args.task}", "persona": "implementer" },
+      "spec": {
+        "task": "Implement the following in this repository:\n{args.task}",
+        "persona": "implementer",
+        "writes": [
+          "**"
+        ],
+        "writes_rationale": "generic implementer; the files to change are named by --arg task at run time"
+      },
       "output": "text"
     },
     {
       "id": "test",
       "role": "work",
       "kind": "shell",
-      "depends_on": ["implement"],
+      "depends_on": [
+        "implement"
+      ],
       "spec": {
         "cmd": [
           "python",
           "-c",
           "import json,subprocess; p=subprocess.run(['python','-m','pytest','-q'],capture_output=True,text=True); tail=[l for l in (p.stdout+p.stderr).splitlines() if l.strip()][-1:] or ['no output']; print(json.dumps({'command':'pytest -q','exit_code':p.returncode,'summary':tail[0]}))"
+        ],
+        "writes": [
+          ".pytest_cache",
+          "*__pycache__*",
+          "*.pyc",
+          ".coverage*"
         ]
       },
       "output": "json",
@@ -30,7 +47,9 @@
       "id": "quality",
       "role": "gate",
       "kind": "shell",
-      "depends_on": ["test"],
+      "depends_on": [
+        "test"
+      ],
       "spec": {
         "cmd": [
           "python",
@@ -40,14 +59,25 @@
       },
       "output": "json",
       "contract": "Verdict",
-      "heal": { "max_rounds": 1, "targets": ["implement"], "rollback": true }
+      "heal": {
+        "max_rounds": 1,
+        "targets": [
+          "implement"
+        ],
+        "rollback": true
+      }
     },
     {
       "id": "report",
       "role": "work",
       "kind": "harness",
-      "depends_on": ["quality"],
-      "spec": { "task": "Summarize what was implemented and the test outcome in five bullet points.", "readonly": true },
+      "depends_on": [
+        "quality"
+      ],
+      "spec": {
+        "task": "Summarize what was implemented and the test outcome in five bullet points.",
+        "readonly": true
+      },
       "output": "text",
       "final": true
     }

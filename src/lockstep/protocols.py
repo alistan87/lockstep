@@ -48,6 +48,11 @@ class RenderCtx(BaseModel):
     executor_default: str | None = None
     heal_text: str = ""  # gate findings appended on heal re-runs; folds into the hash
     steer_text: str = ""  # rendered steering block (r6 C2); folds into the hash
+    # The flow's contracts_module, so an executor can resolve the node's own
+    # contract and STATE its shape in the prompt (E1) — the driver knows the
+    # schema it will validate against; staying silent about it charged authors
+    # a corrective re-spawn for every guessed field name.
+    contracts_module: str | None = None
 
 
 class RawResult(BaseModel):

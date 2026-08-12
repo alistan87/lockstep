@@ -620,3 +620,122 @@ def test_cli_verify_and_dry_run_and_render(tmp_path, git_repo, monkeypatch, caps
     bad = git_repo / "bad.tg.json"
     bad.write_text('{"name": "x", "nodes": [{"id": "a", "kind": "nope"}]}', encoding="utf-8")
     assert main(["verify", str(bad)]) == 5
+
+
+def test_budget_trip_never_strands_a_completed_result(tmp_path, git_repo):
+    # T1 (LESSONS-TO-MECHANISMS, lesson 24): when the spawn budget trips
+    # mid-wave, every node that actually ran must be `done` WITH its result
+    # recorded, the tripped node must be cleanly `pending` (attempts 0, no
+    # error), and a plain resume must finish the run without re-billing.
+    def flow(cap):
+        return {
+            "name": "budget-wave",
+            "budget": {"max_agent_spawns": cap, "max_run_minutes": 120},
+            "nodes": [
+                {"id": "a", "kind": "fake", "spec": {"outputs": ["A"]}},
+                {"id": "b", "kind": "fake", "spec": {"outputs": ["B"]}},
+                {"id": "c", "kind": "fake", "spec": {"outputs": ["C"]}, "final": True},
+            ],
+        }
+
+    h = build(tmp_path, flow(2), git_repo, max_workers=3)
+    assert h.engine.run() == 4
+    st = load_state(h.run_dir)
+    assert st.token_spawns == 2
+    done = [n for n, r in st.nodes.items() if r.status == "done"]
+    pending = [n for n, r in st.nodes.items() if r.status == "pending"]
+    assert len(done) == 2 and len(pending) == 1, st.nodes
+    for n in done:
+        assert st.nodes[n].result_path, f"{n} done but its result was not recorded"
+        assert st.nodes[n].attempts == 1
+    assert st.nodes[pending[0]].attempts == 0
+    assert st.nodes[pending[0]].error is None
+    # A plain resume with headroom completes without re-billing the done pair.
+    from conftest import rebuild
+
+    h2 = rebuild(tmp_path, flow(10), git_repo, h.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert [c.node_id for c in h2.fake.calls] == pending
+
+
+def test_wait_maps_settled_state_to_exit_codes(tmp_path, git_repo):
+    # C2 (LESSONS-TO-MECHANISMS, lesson 23): a first-class blocking wait.
+    from lockstep.cli import main as cli_main
+    from lockstep.state import write_state
+
+    f = {"name": "w", "nodes": [
+        {"id": "a", "kind": "fake", "final": True, "spec": {"outputs": ["A"]}}]}
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    assert cli_main(["wait", str(h.run_dir)]) == 0
+    st = load_state(h.run_dir)
+    st.nodes["a"].status = "failed"
+    write_state(h.run_dir, st)
+    assert cli_main(["wait", str(h.run_dir)]) == 3
+    st.nodes["a"].status = "pending"
+    write_state(h.run_dir, st)
+    assert cli_main(["wait", str(h.run_dir)]) == 4, "stopped-resumable"
+    (h.run_dir / "lock").write_text("{}", encoding="utf-8")
+    assert cli_main(["wait", str(h.run_dir), "--timeout", "0.2", "--poll", "0.05"]) == 1
+    (h.run_dir / "lock").unlink()
+
+
+def test_fresh_state_stamps_driver_version():
+    # V3: run provenance — a drifted mirror otherwise generates folklore about
+    # already-fixed driver behaviour.
+    from lockstep import __version__
+    from lockstep.cli import _fresh_state
+    from lockstep.taskgraph import TaskGraph
+
+    tg = TaskGraph.model_validate(
+        {"name": "v", "nodes": [{"id": "a", "kind": "fake", "final": True, "spec": {}}]})
+    assert _fresh_state(tg, "h", {}, "git").driver_version == __version__
+
+
+def test_wait_reports_a_rejection_as_6_and_gate_block_wins(tmp_path, git_repo):
+    # Spec-audit finding: the engine records every rejection as the approval
+    # node `blocked` with "reject" in the error (rejection.txt is only the
+    # cockpit's artifact), and its precedence is gate-block > rejection >
+    # failed. `wait` must mirror both.
+    from lockstep.cli import main as cli_main
+    from lockstep.state import write_state
+
+    f = {"name": "wr", "nodes": [
+        {"id": "a", "kind": "fake", "final": True, "spec": {"outputs": ["A"]}}]}
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    st.nodes["a"].role = "approval"
+    st.nodes["a"].status = "blocked"
+    st.nodes["a"].error = "approval auto-rejected (non-TTY stdin)"
+    write_state(h.run_dir, st)
+    assert cli_main(["wait", str(h.run_dir)]) == 6
+    # An ORIGIN gate block outranks the rejection; a propagation-blocked gate
+    # ("upstream failed or blocked") does not count as an origin.
+    st.nodes["a"].role = "gate"
+    st.nodes["a"].error = "upstream failed or blocked"
+    write_state(h.run_dir, st)
+    assert cli_main(["wait", str(h.run_dir)]) == 4, "propagation block is not an origin"
+    st.nodes["a"].error = "3 check(s) failed"
+    write_state(h.run_dir, st)
+    assert cli_main(["wait", str(h.run_dir)]) == 2
+
+
+def test_wait_rejection_file_is_not_sticky_after_approval(tmp_path, git_repo):
+    # Adversarial-review finding 3: rejection.txt is never deleted (gc
+    # protects it), so a rejected-then-resumed-and-approved run must not
+    # report 6 forever off the stale file.
+    from lockstep.cli import main as cli_main
+    from lockstep.state import write_state
+
+    f = {"name": "wsr", "nodes": [
+        {"id": "ok", "kind": "fake", "final": True, "spec": {"outputs": ["A"]}}]}
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    st.nodes["ok"].role = "approval"
+    st.nodes["ok"].status = "done"
+    write_state(h.run_dir, st)
+    (h.run_dir / "rejection.txt").write_text("no, because …", encoding="utf-8")
+    assert cli_main(["wait", str(h.run_dir)]) == 0, "settled clean; the file is history"

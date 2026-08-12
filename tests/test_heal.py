@@ -283,3 +283,191 @@ def test_cascade_clears_descendant_map_items(tmp_path, git_repo):
     assert h.engine.run() == 0
     assert len(calls_of(h, "impl")) == 2
     assert len(calls_of(h, "m")) == 4, "descendant map items cleared: 2 items x 2 rounds"
+
+
+def test_heal_retry_restates_declared_write_scope(tmp_path, git_repo):
+    # E5 (LESSONS-TO-MECHANISMS): gate findings + "address this precisely" read
+    # as authorization to chase a finding into files outside the node's scope.
+    # The engine restates the target's own declared scope inside the heal text,
+    # so no flow author has to remember a defensive clause.
+    impl = {"outputs": ["did work"], "write_files": {"gen.txt": "generated\n"},
+            "writes": ["gen.txt"]}
+    h = build(tmp_path, heal_flow([BLOCK, PASS], impl_spec=impl), git_repo)
+    assert h.engine.run() == 0
+    retry_prompt = calls_of(h, "impl")[1].prompt
+    assert "you may modify only gen.txt" in retry_prompt
+    assert "do not edit it" in retry_prompt
+    # A target with no declared scope gets no scope line (nothing to restate).
+    h2 = build(tmp_path, heal_flow([BLOCK, PASS]), git_repo)
+    assert h2.engine.run() == 0
+    assert "write scope is UNCHANGED" not in calls_of(h2, "impl")[1].prompt
+
+
+def test_heal_retry_carries_attempt_notes(tmp_path, git_repo):
+    # E3 (LESSONS-TO-MECHANISMS): heal preserves the phase dir by design but
+    # fed none of it back — a retried node re-derived from zero what a prior
+    # attempt spent real evidence establishing. attempt-notes.md is the carry.
+    impl = {"outputs": ["did work"], "write_files": {"gen.txt": "generated\n"},
+            "write_phase_files": {
+                "attempt-notes.md": "failure X pre-dates this change, confirmed via stash"}}
+    h = build(tmp_path, heal_flow([BLOCK, PASS], impl_spec=impl), git_repo)
+    assert h.engine.run() == 0
+    first, retry = calls_of(h, "impl")[0].prompt, calls_of(h, "impl")[1].prompt
+    assert "prior.attempt.notes" in retry
+    assert "pre-dates this change" in retry
+    assert "prior.attempt.notes" not in first
+
+
+# --------------------------------------------------------- E4: baseline gates
+
+F_OLD = {"severity": "blocker", "category": "lint", "file": "old.py",
+         "claim": "pre-existing debt", "evidence": "e"}
+F_NEW = {"severity": "blocker", "category": "lint", "file": "new.py",
+         "claim": "fresh defect", "evidence": "e"}
+
+
+def baseline_flow(gate_outputs):
+    return {
+        "name": "base",
+        "nodes": [
+            {"id": "impl", "kind": "fake", "spec": {"outputs": ["w"], "writes": []}},
+            {"id": "gate", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+             "spec": {"outputs": gate_outputs, "readonly": True, "baseline": True},
+             "output": "json", "contract": "Verdict"},
+            {"id": "after", "kind": "fake", "depends_on": ["gate"],
+             "spec": {"outputs": ["ok"], "readonly": True}, "final": True},
+        ],
+    }
+
+
+def test_baseline_gate_passes_when_every_finding_predates_the_run(tmp_path, git_repo):
+    base_v = {"findings": [F_OLD], "verdict": "block", "reason": "1 finding"}
+    run_v = {"findings": [F_OLD], "verdict": "block", "reason": "1 finding"}
+    h = build(tmp_path, baseline_flow([base_v, run_v]), git_repo)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    assert st.verdicts["gate"] == "pass"
+    assert st.baseline_findings["gate"], "pre-run findings persisted"
+
+
+def test_baseline_gate_blocks_only_on_new_findings(tmp_path, git_repo):
+    base_v = {"findings": [F_OLD], "verdict": "block", "reason": "1 finding"}
+    run_v = {"findings": [F_OLD, F_NEW], "verdict": "block", "reason": "2 findings"}
+    h = build(tmp_path, baseline_flow([base_v, run_v]), git_repo)
+    assert h.engine.run() == 2
+    st = load_state(h.run_dir)
+    assert "suppressed by the pre-run baseline" in st.verdicts["gate"]
+
+
+def test_baseline_survives_resume_not_remeasured(tmp_path, git_repo):
+    # The persisted baseline is the run's baseline: a resume filters against
+    # what the run STARTED from, and does not re-run the baseline body.
+    base_v = {"findings": [F_OLD], "verdict": "block", "reason": "1"}
+    run_v = {"findings": [F_OLD], "verdict": "block", "reason": "1"}
+    h1 = build(tmp_path, baseline_flow([base_v, run_v]), git_repo)
+    assert h1.engine.run() == 0
+    from conftest import rebuild
+
+    h2 = rebuild(tmp_path, baseline_flow([base_v, run_v]), git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert calls_of(h2, "gate") == [], "neither baseline body nor gate re-ran"
+
+
+def test_baseline_flip_is_visible_downstream(tmp_path, git_repo):
+    # Spec-audit finding: a block->pass flip that only reached state.verdicts
+    # left {steps.gate.json.verdict} reading the raw "block" — the stored
+    # result must be the adjudicated verdict.
+    import json as _json
+
+    base_v = {"findings": [F_OLD], "verdict": "block", "reason": "1 finding"}
+    run_v = {"findings": [F_OLD], "verdict": "block", "reason": "1 finding"}
+    h = build(tmp_path, baseline_flow([base_v, run_v]), git_repo)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    stored = _json.loads(
+        open(st.nodes["gate"].result_path, encoding="utf-8").read())
+    assert stored["verdict"] == "pass", "downstream references read the adjudicated verdict"
+    assert stored["findings"] == []
+
+
+def test_budget_trip_during_baseline_recording_exits_4(tmp_path, git_repo):
+    # Spec-audit finding: BudgetTripped escaping _record_gate_baselines was an
+    # unhandled traceback (exit 1) — §9.5 freezes the trip at exit 4, and a
+    # resume with headroom records the baseline against the still-pre-run tree.
+    def flow(cap):
+        f = baseline_flow([
+            {"findings": [F_OLD], "verdict": "block", "reason": "1"},
+            {"findings": [F_OLD], "verdict": "block", "reason": "1"},
+        ])
+        f["budget"] = {"max_agent_spawns": cap, "max_run_minutes": 120}
+        return f
+
+    h = build(tmp_path, flow(0), git_repo)
+    assert h.engine.run() == 4
+    st = load_state(h.run_dir)
+    assert "gate" not in st.baseline_findings, "nothing recorded under a tripped budget"
+    assert all(r.status == "pending" for r in st.nodes.values())
+    from conftest import rebuild
+
+    h2 = rebuild(tmp_path, flow(10), git_repo, h.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert load_state(h2.run_dir).baseline_findings["gate"], "baseline recorded on resume"
+
+
+def test_baseline_body_never_runs_under_replay(tmp_path, git_repo):
+    # Adversarial-review finding 5: under --replay the wrapper would serve the
+    # gate's recorded (post-run, adjudicated) verdict as the "pre-run"
+    # baseline. Recorded gate results are already adjudicated, so replay skips
+    # the baseline machinery entirely.
+    base_v = {"findings": [F_OLD], "verdict": "block", "reason": "1"}
+    run_v = {"findings": [F_OLD], "verdict": "block", "reason": "1"}
+    h = build(tmp_path, baseline_flow([base_v, run_v]), git_repo)
+    h.engine.replaying = True
+    h.engine.run()
+    st = load_state(h.run_dir)
+    assert st.baseline_findings == {}, "no baseline recorded under replay"
+    # Exactly one gate spawn: the evaluation, not a baseline body.
+    assert len(calls_of(h, "gate")) == 1
+
+
+def test_baseline_gate_when_referencing_steps_is_legal(tmp_path):
+    # Nit 9a: `when` gates the EVALUATION (post-deps); the baseline body never
+    # renders it — verify must not reject it.
+    from lockstep.taskgraph import TaskGraph, verify_flow
+
+    from conftest import make_config
+
+    flow = TaskGraph.model_validate({
+        "name": "bw",
+        "nodes": [
+            {"id": "impl", "kind": "fake", "spec": {"outputs": ["w"], "writes": []}},
+            {"id": "gate", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+             "when": "{steps.impl.output} == \"w\"",
+             "spec": {"outputs": [], "readonly": True, "baseline": True},
+             "output": "json", "contract": "Verdict"},
+            {"id": "after", "kind": "fake", "depends_on": ["gate"],
+             "spec": {"outputs": ["ok"], "readonly": True}, "final": True},
+        ],
+    })
+    from lockstep.executors.fake import FakeExecutor
+    from lockstep.registry import Registry
+
+    reg = Registry()
+    reg.register(FakeExecutor(repo_root=tmp_path))
+    codes = {i.code for i in verify_flow(flow, registry=reg, config=make_config())}
+    assert "baseline-gate-references-steps" not in codes
+    # but a steps ref in the BODY still errors
+    flow2 = TaskGraph.model_validate({
+        "name": "bw2",
+        "nodes": [
+            {"id": "impl", "kind": "fake", "spec": {"outputs": ["w"], "writes": []}},
+            {"id": "gate", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+             "spec": {"task": "judge {steps.impl.output}", "outputs": [],
+                      "readonly": True, "baseline": True},
+             "output": "json", "contract": "Verdict", "final": True},
+        ],
+    })
+    codes2 = {i.code for i in verify_flow(flow2, registry=reg, config=make_config())}
+    assert "baseline-gate-references-steps" in codes2

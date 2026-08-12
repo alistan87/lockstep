@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "sudoku-local",
-  "description": "DEMO: build a playable sudoku with LOCAL models and no network. Three things it exists to show. First, that a harness with no file tools is a first-class executor \u2014 `ollama run` cannot write anything, so the model answers on the stdout result channel (SPEC \u00a78.3) and a shell node writes the file; nothing about caching, gating, healing or resume changes. Second, that the model is per NODE, not per flow: `core` runs on a 14B coder through ollama directly, `cli` on a 7B through the pi harness, because the second job is smaller \u2014 two models and two harnesses in one graph, both config. Third, what a machine check is for: `sudoku-check` runs the module the model wrote and holds it to properties a sudoku either has or does not \u2014 including that a puzzle has exactly ONE solution and that successive puzzles VARY, both judged by the gate's own solver rather than the module's. A BLOCK hands its findings back as the next prompt. Spends no tokens and makes no network request.",
+  "description": "DEMO: build a playable sudoku with LOCAL models and no network. Three things it exists to show. First, that a harness with no file tools is a first-class executor — `ollama run` cannot write anything, so the model answers on the stdout result channel (SPEC §8.3) and a shell node writes the file; nothing about caching, gating, healing or resume changes. Second, that the model is per NODE, not per flow: `core` runs on a 14B coder through ollama directly, `cli` on a 7B through the pi harness, because the second job is smaller — two models and two harnesses in one graph, both config. Third, what a machine check is for: `sudoku-check` runs the module the model wrote and holds it to properties a sudoku either has or does not — including that a puzzle has exactly ONE solution and that successive puzzles VARY, both judged by the gate's own solver rather than the module's. A BLOCK hands its findings back as the next prompt. Spends no tokens and makes no network request.",
   "budget": {
     "max_agent_spawns": 8,
     "max_run_minutes": 40
@@ -16,7 +16,8 @@
       "kind": "harness",
       "spec": {
         "executor": "pi-coder-big",
-        "task": "Write a single self-contained Python module implementing sudoku.\n\nIt must define exactly these module-level functions:\n  solve(grid)    -> takes a 9x9 list of lists of ints where 0 means empty and FILLS IT IN, in place, by backtracking; return True when it is solved and False if it cannot be. Every row, column and 3x3 box must end up containing 1..9 exactly once. (Returning the completed grid instead of True is also accepted.)\n  generate()     -> takes no required arguments, returns a 9x9 puzzle grid with 0 for empty cells.\n  is_valid(grid, row, col, value) -> True if placing value at (row, col) breaks no rule.\n  format_grid(grid) -> a printable string of the grid.\n\ngenerate() has three requirements beyond returning a grid, and they are checked:\n  1. START FROM A RANDOMISED SOLVED GRID. Shuffle the candidate digits inside the backtracking (`random.shuffle`) so a fresh solve does not always produce the same board. Solving an empty grid the same way every time makes every puzzle you cut from it have the same solution.\n  2. REMOVE CELLS IN RANDOM ORDER, so two calls do not return the same puzzle.\n  3. KEEP THE SOLUTION UNIQUE. After removing a cell, count the solutions of the grid so far; if there is more than one, put that cell back and move on to the next. Stop when you have tried every cell. A grid with two solutions is not a puzzle.\n\nUse only the Python standard library. Keep it under 150 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere."
+        "task": "Write a single self-contained Python module implementing sudoku.\n\nIt must define exactly these module-level functions:\n  solve(grid)    -> takes a 9x9 list of lists of ints where 0 means empty and FILLS IT IN, in place, by backtracking; return True when it is solved and False if it cannot be. Every row, column and 3x3 box must end up containing 1..9 exactly once. (Returning the completed grid instead of True is also accepted.)\n  generate()     -> takes no required arguments, returns a 9x9 puzzle grid with 0 for empty cells.\n  is_valid(grid, row, col, value) -> True if placing value at (row, col) breaks no rule.\n  format_grid(grid) -> a printable string of the grid.\n\ngenerate() has three requirements beyond returning a grid, and they are checked:\n  1. START FROM A RANDOMISED SOLVED GRID. Shuffle the candidate digits inside the backtracking (`random.shuffle`) so a fresh solve does not always produce the same board. Solving an empty grid the same way every time makes every puzzle you cut from it have the same solution.\n  2. REMOVE CELLS IN RANDOM ORDER, so two calls do not return the same puzzle.\n  3. KEEP THE SOLUTION UNIQUE. After removing a cell, count the solutions of the grid so far; if there is more than one, put that cell back and move on to the next. Stop when you have tried every cell. A grid with two solutions is not a puzzle.\n\nUse only the Python standard library. Keep it under 150 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere.",
+        "writes": []
       },
       "output": "text",
       "timeout_s": 1800
@@ -37,7 +38,11 @@
           "--out",
           "{args.out_dir}/sudoku_core.py",
           "--strip-fence"
-        ]
+        ],
+        "writes": [
+          "**"
+        ],
+        "writes_rationale": "output path is --arg out_dir run-time data"
       },
       "output": "text",
       "timeout_s": 60
@@ -76,7 +81,8 @@
       ],
       "spec": {
         "executor": "pi-coder",
-        "task": "Write a small command-line front end for a sudoku module that already exists and is importable as `sudoku_core`, sitting in the same directory.\n\n`sudoku_core` provides: solve(grid) which fills the grid IN PLACE and returns True, generate(), is_valid(grid, row, col, value), and format_grid(grid).\n\nThe front end must:\n  - print a freshly generated puzzle;\n  - loop reading lines of the form `row col value` (1-9 each), rejecting a move that is_valid() refuses, and reprinting the grid after each accepted move;\n  - accept `solve` to fill the grid in and `quit` to exit;\n  - say so and exit when the grid is complete;\n  - do all of that under `if __name__ == \"__main__\":` so importing it runs nothing.\n\nUse only the standard library. Keep it under 80 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere."
+        "task": "Write a small command-line front end for a sudoku module that already exists and is importable as `sudoku_core`, sitting in the same directory.\n\n`sudoku_core` provides: solve(grid) which fills the grid IN PLACE and returns True, generate(), is_valid(grid, row, col, value), and format_grid(grid).\n\nThe front end must:\n  - print a freshly generated puzzle;\n  - loop reading lines of the form `row col value` (1-9 each), rejecting a move that is_valid() refuses, and reprinting the grid after each accepted move;\n  - accept `solve` to fill the grid in and `quit` to exit;\n  - say so and exit when the grid is complete;\n  - do all of that under `if __name__ == \"__main__\":` so importing it runs nothing.\n\nUse only the standard library. Keep it under 80 lines.\n\nYour entire response must be the Python source and nothing else: no explanation, no markdown fences, no ``` anywhere.",
+        "writes": []
       },
       "output": "text",
       "timeout_s": 900
@@ -97,7 +103,11 @@
           "--out",
           "{args.out_dir}/play.py",
           "--strip-fence"
-        ]
+        ],
+        "writes": [
+          "**"
+        ],
+        "writes_rationale": "output path is --arg out_dir run-time data"
       },
       "output": "text",
       "timeout_s": 60

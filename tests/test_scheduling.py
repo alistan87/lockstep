@@ -103,3 +103,47 @@ def test_fake_prompt_is_fenced(tmp_path, git_repo):
     prompt = h.fake.calls[0].prompt
     assert "--- begin data: args.x (untrusted) ---" in prompt
     assert "--- end data ---" in prompt
+
+
+# ------------------------------------------------- E1: contract shape in prompt
+
+def _plan_ctx(tmp_path, executor_default="test-exec"):
+    return RenderCtx(
+        args={}, outputs={}, json_results={}, skipped=set(), deps=[],
+        repo_root=tmp_path, personas_dir=tmp_path / "personas", phase_dir=tmp_path / "ph",
+        max_interp_chars=20000, config_digest="d", executor_default=executor_default,
+    )
+
+
+def test_json_contract_shape_is_stated_in_the_prompt(tmp_path):
+    # E1 (LESSONS-TO-MECHANISMS): the driver resolved the contract it will
+    # validate against — the prompt states it, generated from the same model,
+    # so field names cannot drift between what a node is told and what the
+    # validator demands.
+    ex = HarnessExecutor(config=make_config(), repo_root=tmp_path)
+    node = Node(id="rev", kind="harness", spec={"task": "review"},
+                output="json", contract="Verdict")
+    work = ex.plan(node, _plan_ctx(tmp_path))
+    prompt = str(work.render)
+    assert "Output contract Verdict" in prompt
+    assert '"verdict": "pass" | "block"' in prompt
+    assert '"severity": "blocker" | "major" | "minor" | "nit"' in prompt
+    assert "prompt.contract" in work.meta["hash_detail"]
+
+
+def test_text_output_gets_no_contract_block(tmp_path):
+    ex = HarnessExecutor(config=make_config(), repo_root=tmp_path)
+    node = Node(id="t", kind="harness", spec={"task": "x"}, output="text")
+    assert "Output contract" not in str(ex.plan(node, _plan_ctx(tmp_path)).render)
+
+
+def test_describe_contract_array_and_optional_fields():
+    from lockstep.contracts import describe_contract, resolve_contract
+
+    text = describe_contract(resolve_contract("Finding[]"))
+    assert "a JSON ARRAY of Finding objects" in text
+    assert '"line": integer or null (optional)' in text
+    assert '"claim": string' in text
+    verdict = describe_contract(resolve_contract("Verdict"))
+    assert '"schema_version": string (optional)' in verdict
+    assert '"findings": array of object {' in verdict

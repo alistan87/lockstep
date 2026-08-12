@@ -331,3 +331,40 @@ def test_the_shipped_flows_are_all_clean_of_it():
     for path in root.glob("flows/**/*.tg.json"):
         flow = _json.loads(path.read_text(encoding="utf-8"))
         assert "lint-concurrent-heal-rollback" not in _lint_codes(flow), path.name
+
+
+def test_verify_cli_accepts_shared_config(tmp_path):
+    # C1 (LESSONS-TO-MECHANISMS, lesson 7): verify resolved stanzas only from
+    # <repo-root>/lockstep.toml, so a flow whose stanzas live in a shared
+    # --config file always false-positived no-executor-stanza here while
+    # run --config resolved it fine.
+    import json as _json
+
+    from lockstep import EXIT_OK, EXIT_VERIFY
+    from lockstep.cli import main
+
+    f = {"name": "c1", "nodes": [
+        {"id": "n", "kind": "harness", "final": True, "spec": {"task": "x"}}]}
+    path = tmp_path / "f.tg.json"
+    path.write_text(_json.dumps(f), encoding="utf-8")
+    shared = tmp_path / "shared.toml"
+    shared.write_text(
+        'default = "x"\n[executors.x]\nargv = ["python", "-c", "pass", "{prompt}"]\n',
+        encoding="utf-8",
+    )
+    assert main(["verify", str(path), "--repo-root", str(tmp_path)]) == EXIT_VERIFY
+    assert main(
+        ["verify", str(path), "--repo-root", str(tmp_path), "--config", str(shared)]
+    ) == EXIT_OK
+
+
+def test_declared_empty_write_scope_is_verified_not_skipped(tmp_path):
+    # V1 presence-keying: writes: [] is an enforced declaration now, so the
+    # map-level error must fire for it exactly as for a non-empty scope.
+    got = codes(flow([
+        {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest", "spec": {}},
+        {"id": "m", "role": "map", "kind": "fake", "final": True, "concurrency": 1,
+         "depends_on": ["src"], "over": "{steps.src.json.files}",
+         "spec": {"task": "{item}", "writes": []}},
+    ]), tmp_path)
+    assert "write-scope-on-map" in got
