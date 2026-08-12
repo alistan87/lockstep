@@ -191,8 +191,18 @@ lockstep's to fix.
   measurements deliberately do not simulate.
 
 **P3 — spec-level (r7 candidates, record seams in ROADMAP-NOTES)**
-- [ ] **E7:** cross-lineage warm start (`--seed <run_dir>`, hash-keyed result reuse).
-- [ ] **E8:** rollback scope narrowed to targets' declared writes (after V1 universal); interim: loud warning on restoring an undeclared path.
+- [x] **E7:** cross-lineage warm start — shipped 2026-08-12 as
+  `run <flow> --seed <run_dir>` (DEVIATIONS 2026-08-12). Spec text for §9.2's
+  new cross-lineage case, and per-ITEM seeding for maps, remain for r7.
+- [ ] **E8:** rollback scope narrowed to targets' declared writes. Held
+  2026-08-12 pending the first real `restored-undeclared` event — the interim
+  warning is the instrument, and it has not fired yet.
+- [ ] **V1 promotion:** held at lint 2026-08-12 until the work-repo mirror is
+  on this version and its own flows are scoped.
+
+With that, every item in this note is either implemented or has a written
+trigger for when to revisit it. The lessons are closed; what is left is
+evidence-gated, not undone.
 
 **Irreducible residue (the whole surviving prose, ~15 lines total)**
 lessons 2 (probes side-effect-free), 5 (pass narrower than scope), 6 (repeat

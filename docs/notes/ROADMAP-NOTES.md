@@ -160,6 +160,11 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
   (the current behavior is stated spec); the interim loud warning
   (`restored-undeclared` events) ships now. Watch for the warning firing in
   practice as the evidence for the amendment.
+  **Decision 2026-08-12 (owner): still waiting, deliberately.** No run has
+  produced a `restored-undeclared` event yet, and amending stated spec text on
+  a hypothesis is the thing this note exists to prevent. The trigger is
+  explicit: the FIRST real instance is the evidence. Whoever sees one, bring
+  it here — do not re-open this on reasoning alone.
 - ~~**Interpolated write scopes.**~~ SHIPPED 2026-08-12 (DEVIATIONS
   2026-08-12), the first of the two options: scopes render through the run's
   args at plan time. `{steps...}` is refused (`dynamic-write-scope`) — a scope
@@ -171,6 +176,12 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
 - **V1 promotion.** `lint-missing-write-scope` becomes a verify ERROR at
   format_version 1.1 (a mutating node must declare its scope; `[]` and
   `["**"]+rationale` are the honest outs). All committed flows already comply.
+  **Decision 2026-08-12 (owner): hold at lint.** Every flow HERE complies, so
+  the error changes nothing locally — its entire effect lands on flows
+  elsewhere, and the work-repo mirror is imminent. Promoting a lint to an
+  error in the same week a downstream copy is being synchronised turns one
+  migration into two failures. Revisit once the mirror is on this version and
+  its own flows are scoped.
 - **Gate-duration drift under orchestration (lesson 20).** Measured
   2026-08-12; see LESSONS-TO-MECHANISMS P1-perf. `snapshot()` costs O(tree
   bytes) on EVERY call because the temp index is fresh and has no stat cache
