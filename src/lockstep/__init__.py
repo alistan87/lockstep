@@ -7,7 +7,7 @@ docs/spec/AMENDMENTS-r4.md, docs/spec/AMENDMENTS-r5.md, and docs/spec/AMENDMENTS
 (the later revision wins).
 """
 
-__version__ = "0.6.0"  # pinned to pyproject [project].version by test_r7_fixes
+__version__ = "0.7.0"  # pinned to pyproject [project].version by test_r7_fixes
 
 FORMAT_VERSION = "1.0"
 
