@@ -238,6 +238,14 @@ def _node_templates(node: Node) -> list[tuple[str, str]]:
         out.append(("when", node.when))
     if node.over:
         out.append(("over", node.over))
+    writes = node.spec.get("writes")
+    if isinstance(writes, list):
+        # Scopes are rendered too (args only), so their refs face the same
+        # declaration rules as any other template — an `{args.k}` in a scope
+        # is a real reference, and `unused-arg` must see it as one.
+        for i, w in enumerate(writes):
+            if isinstance(w, str):
+                out.append((f"spec.writes[{i}]", w))
     return out
 
 
@@ -440,6 +448,17 @@ def verify_flow(
             err("bad-write-scope", f"node {n.id!r}: spec.writes must be a list of paths")
             continue
         for w in writes:
+            if isinstance(w, str):
+                for ref in extract_refs(w):
+                    parts = ref.split(".")
+                    if parts[0] != "args" or len(parts) != 2:
+                        err(
+                            "dynamic-write-scope",
+                            f"node {n.id!r}: spec.writes entry {w!r} references "
+                            f"{{{ref}}} — a scope may only interpolate {{args.NAME}}. "
+                            f"Anything resolved from a step's output would let the "
+                            f"graph decide what it is allowed to write",
+                        )
             if not isinstance(w, str) or not w.strip():
                 err("bad-write-scope", f"node {n.id!r}: spec.writes has an empty entry")
             elif w.startswith(("/", "\\")) or PurePosixPath(w.replace("\\", "/")).is_absolute():

@@ -461,10 +461,20 @@ The three honest declarations:
   the tightest possible declaration disabled the check.)
 - `"writes": ["**"]` + `"writes_rationale": "…"` — deliberate whole-tree
   access, for a target that is genuinely decided at run time (a generic
-  implementer, a manifest-driven apply). The rationale is required
-  (`lint-unscoped-writes`) so a reviewer can see the missing scope was a
-  decision. Scopes are read RAW, never interpolated — `{args.x}` in a scope
-  matches nothing — so this is today's answer for a parameterized deliverable.
+  implementer told which files to touch by `--arg task`). The rationale is
+  required (`lint-unscoped-writes`) so a reviewer can see the missing scope
+  was a decision.
+
+**A scope may interpolate `{args.NAME}`** — `"writes": ["docs/{args.name}"]`
+— so a parameterized flow scopes to the file it was told to write instead of
+falling back to `["**"]`. Args only, and the reason is the whole point of a
+permit: args are fixed before the run starts and chosen by whoever started it,
+while a `{steps...}` reference would let a node's own upstream output decide
+what that node may write — a permission the graph could widen by writing a
+different answer. `verify` rejects those (`dynamic-write-scope`), and the
+renderer refuses them again, because a scope is the wrong place to assume an
+earlier check ran. The rendered result faces the same absolute-path and `..`
+rules the written entry does, so `--arg dir=../../etc` cannot escape either.
 
 What to know before you declare one:
 
@@ -475,7 +485,8 @@ What to know before you declare one:
   therefore a decision about what may be *reverted*, not only about what gets
   flagged. Rollback still never deletes.
 - **Entries are repo-root-relative and match a path, a directory prefix, or a
-  glob** — `verify` rejects absolute or escaping entries (`bad-write-scope`).
+  glob** — `verify` rejects absolute or escaping entries (`bad-write-scope`)
+  and entries referencing anything but an arg (`dynamic-write-scope`).
   Note that the matcher is `fnmatch`, so `*` crosses `/`.
 - **`verify` warns `write-scope-unenforced`** when the node holds no `tree`
   token — today that means a `readonly` node. Every other write-capable kind,

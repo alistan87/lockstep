@@ -22,6 +22,7 @@ from . import (
 )
 from .contracts import ContractError, Verdict, resolve_contract, validate_result
 from .interpolate import (
+    render_scope,
     InterpolationError,
     ResolveCtx,
     SkippedReference,
@@ -622,7 +623,7 @@ class Engine:
         for n in self.tg.nodes:
             if "writes" not in n.spec:
                 continue
-            scope = [str(w) for w in (n.spec.get("writes") or [])]
+            scope = self._writes_of(n)
             hits = sorted(p for p in dirty if path_in_scope(p, scope))
             if hits:
                 overlaps.append(f"{n.id}: {', '.join(hits)}")
@@ -780,7 +781,7 @@ class Engine:
         # every change is a violation. Only an ABSENT key is the v1
         # unconstrained behavior (DEVIATIONS 2026-08-11).
         has_scope = "writes" in node.spec
-        scope = [str(w) for w in (node.spec.get("writes") or [])]
+        scope = self._writes_of(node)
         scope_ref = None
         scope_error: str | None = None
         try:
@@ -817,6 +818,15 @@ class Engine:
             self._set_status(node.id, "failed", error=scope_error)
             return
         self._finish(node, executor, work, phase_dir, raw)
+
+    def _writes_of(self, node: Node) -> list[str]:
+        """The node's declared scope, with `{args.NAME}` resolved (and nothing
+        else — see interpolate.render_scope). One helper so the engine's four
+        readers (quarantine, dirty preflight, heal-text restatement, rollback
+        warning) can never disagree about what a node was permitted to write.
+        """
+        return render_scope([str(w) for w in (node.spec.get("writes") or [])],
+                            self.store.state.args)
 
     def note_seeded(self, node_id: str, source: str) -> None:
         """E7 provenance. Called by the seed wrapper when it serves a result:
@@ -1304,7 +1314,7 @@ class Engine:
         target = self.tg.node(nid)
         if "writes" not in target.spec:
             return ""
-        scope = [str(w) for w in (target.spec.get("writes") or [])]
+        scope = self._writes_of(target)
         allowed = ", ".join(scope) if scope else "nothing (this step declares writes: [])"
         return (
             "\nYour write scope is UNCHANGED by these findings: you may modify only "
@@ -1393,7 +1403,7 @@ class Engine:
                 any_scope: list[str] = []
                 for n in self.tg.nodes:
                     if "writes" in n.spec:
-                        any_scope.extend(str(w) for w in (n.spec.get("writes") or []))
+                        any_scope.extend(self._writes_of(n))
                 undeclared = [p for p in scope if not path_in_scope(p, any_scope)]
                 for p in undeclared:
                     append_event(

@@ -491,3 +491,25 @@ file records implementation-level departures below that bar.
   `--seed` and `--replay` are refused together: replay serves every node and
   errors on a miss, a seed serves what matches and runs the rest, so the
   combination has no single meaning.
+
+- **2026-08-12 — `spec.writes` may interpolate `{args.NAME}`.** Scopes were
+  read raw, so a parameterized flow could not scope to the file it had been
+  told to write and declared `["**"]` instead — the permit meant nothing on
+  exactly the nodes whose target was least predictable (`evidence-approval`'s
+  producer, now scoped to `{args.deliverable}`). Entries are rendered through
+  the run's args at plan time, in the engine (one helper, `_writes_of`, behind
+  all four readers: quarantine, dirty preflight, heal-text restatement,
+  rollback warning) and in the executors that export `LOCKSTEP_WRITE_SCOPE`,
+  so the in-harness guard and the driver enforce the same paths.
+
+  **Args only.** A `{steps...}` reference would let a node's own upstream
+  output decide what that node may write — a permission the graph can widen by
+  writing a different answer — so it is the verify error
+  `dynamic-write-scope`, and `render_scope` refuses it again at run time (a
+  scope is the wrong place to assume an earlier check ran). The RENDERED value
+  is re-checked for absolute paths and `..`, because `verify` inspected a
+  different string and `--arg dir=../../etc` would otherwise turn a
+  legal-looking scope into an escape. Scope entries also now count as
+  reference sites for §6.4, so an arg used only in a scope no longer trips
+  `unused-arg`. Hash impact: none beyond what args already carry — they fold
+  into every node's `input_hash` already.

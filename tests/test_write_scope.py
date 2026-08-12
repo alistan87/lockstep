@@ -669,3 +669,108 @@ def test_workspace_timings_are_journalled_and_stay_advisory(tmp_path, git_repo):
     assert all(isinstance(e["ms"], int) and e["ms"] >= 0 for e in timings)
     assert all("status" not in e for e in timings), "a timing is not a transition"
     assert trace_status(h.run_dir)["ok"], "advisory lines must still chain"
+
+
+# ------------------------------------------------ interpolated scopes (r7)
+
+
+def _arg_flow(writes, *, write_files, args=None):
+    spec = {"outputs": ["ok"], "write_files": write_files, "writes": writes,
+            "task": "produce {args.name}"}
+    return {
+        "name": "argscope",
+        "args": args if args is not None else {"name": "plan.md"},
+        "nodes": [{"id": "w", "kind": "fake", "final": True, "spec": spec}],
+    }
+
+
+def test_a_scope_may_name_an_arg(tmp_path, git_repo):
+    """The gap this closes: a parameterized flow could not scope to the file it
+    was told to write, so it declared ["**"] and the permit meant nothing."""
+    flow = _arg_flow(["docs/{args.name}"], write_files={"docs/plan.md": "x"})
+    h = build(tmp_path, flow, git_repo)
+    assert h.engine.run() == 0
+    assert load_state(h.run_dir).nodes["w"].status == "done"
+
+
+def test_an_arg_scope_still_quarantines_what_it_does_not_cover(tmp_path, git_repo):
+    flow = _arg_flow(["docs/{args.name}"], write_files={"docs/other.md": "x"})
+    h = build(tmp_path, flow, git_repo)
+    assert h.engine.run() == 3
+    assert "docs/other.md" in (load_state(h.run_dir).nodes["w"].error or "")
+
+
+def test_a_scope_may_not_reference_a_step(tmp_path, git_repo):
+    """A scope resolved from a step's OUTPUT would let the graph widen its own
+    permissions — the model writes the answer that decides what it may write."""
+    flow = {
+        "name": "dynscope",
+        "nodes": [
+            {"id": "a", "kind": "fake", "spec": {"outputs": ["docs"]}},
+            {"id": "w", "kind": "fake", "final": True, "depends_on": ["a"],
+             "spec": {"outputs": ["ok"], "writes": ["{steps.a.output}/x.md"]}},
+        ],
+    }
+    assert "dynamic-write-scope" in _codes(flow)
+
+
+def test_an_arg_cannot_render_a_scope_out_of_the_repo(tmp_path, git_repo):
+    """`verify` checks the WRITTEN entry for `..` and absolute paths; after
+    substitution it is a different string, so the same two rules are applied
+    to what will actually be matched."""
+    from lockstep.interpolate import InterpolationError, render_scope
+
+    try:
+        render_scope(["out/{args.dir}"], {"dir": "../../etc"})
+    except InterpolationError as e:
+        assert "escapes the repo root" in str(e)
+    else:
+        raise AssertionError("an escaping arg must not render into a scope")
+
+
+def test_an_arg_used_only_in_a_scope_counts_as_referenced(tmp_path, git_repo):
+    """Otherwise declaring the arg a scope needs trips `unused-arg`, and the
+    author's only way out is to stop scoping."""
+    flow = {
+        "name": "onlyscope",
+        "args": {"name": "plan.md"},
+        "nodes": [{"id": "w", "kind": "fake", "final": True,
+                   "spec": {"outputs": ["ok"], "writes": ["docs/{args.name}"]}}],
+    }
+    codes = _codes(flow)
+    assert "unused-arg" not in codes
+    assert "undeclared-arg" not in codes
+
+
+def test_a_scope_naming_an_undeclared_arg_is_an_error(tmp_path, git_repo):
+    flow = {
+        "name": "badarg",
+        "nodes": [{"id": "w", "kind": "fake", "final": True,
+                   "spec": {"outputs": ["ok"], "writes": ["docs/{args.nope}"]}}],
+    }
+    assert "undeclared-arg" in _codes(flow)
+
+
+def test_the_spawn_sees_the_RENDERED_scope(tmp_path, git_repo):
+    """The in-harness guard enforces LOCKSTEP_WRITE_SCOPE; if it got the raw
+    template it would block the very path the driver was about to allow."""
+    import sys
+
+    from lockstep.executors.shell import node_env, ShellExecutor
+    from lockstep.protocols import RenderCtx
+
+    node = TaskGraph.model_validate({
+        "name": "envscope",
+        "args": {"name": "plan.md"},
+        "nodes": [{"id": "s", "kind": "shell", "final": True,
+                   "spec": {"cmd": [sys.executable, "-c", "pass"],
+                            "writes": ["docs/{args.name}"]}}],
+    }).nodes[0]
+    ctx = RenderCtx(
+        args={"name": "plan.md"}, outputs={}, json_results={}, skipped=set(), deps=[],
+        repo_root=tmp_path, personas_dir=tmp_path / "p", phase_dir=tmp_path / "ph",
+        max_interp_chars=20000, config_digest="d",
+    )
+    work = ShellExecutor(repo_root=git_repo).plan(node, ctx)
+    env = node_env(work, tmp_path)
+    assert env["LOCKSTEP_WRITE_SCOPE"] == '["docs/plan.md"]'

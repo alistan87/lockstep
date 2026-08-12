@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from ..interpolate import ResolveCtx, render_template
+from ..interpolate import ResolveCtx, render_scope, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..taskgraph import Node
 from .proc import record_spawn_handles, resolve_inside, spawn, wait_or_kill
@@ -146,7 +146,9 @@ class ShellExecutor:
                   "contract": node.contract or "",
                   # None = key absent (unconstrained); [] = declared-empty,
                   # enforced. The distinction must survive to LOCKSTEP_WRITE_SCOPE.
-                  "writes": list(spec.writes) if "writes" in node.spec else None,
+                  # Rendered (args only), same reason as harness.py: the guard
+                  # and the driver must be talking about the same paths.
+                  "writes": render_scope(list(spec.writes), ctx.args) if "writes" in node.spec else None,
                   "repo_root": str(Path(self.repo_root).resolve())},
         )
 

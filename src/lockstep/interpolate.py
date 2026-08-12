@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 STUB_HEAD_CHARS = 500
@@ -279,3 +279,54 @@ def eval_when(expr: str, ctx: ResolveCtx) -> bool:
     lit_norm = compact_json(json.loads(literal))
     eq = serialized == lit_norm
     return eq if op == "==" else not eq
+
+
+def render_scope(entries: list[str], args: dict[str, str]) -> list[str]:
+    """Resolve `{args.K}` inside write-scope entries; refuse anything else.
+
+    A write scope is a PERMISSION, so what may vary in one is a design
+    question, not a convenience one. Args are fixed before the run starts,
+    fold into every node's input_hash already, and are chosen by the person
+    who started the run — so `"writes": ["deliverables/{args.name}/"]` is the
+    same kind of statement as a literal path. A `{steps...}` reference is not:
+    it would let a node's own upstream output decide what that node is allowed
+    to write, which is a permission a model can widen by writing a different
+    answer. `verify` rejects those (`dynamic-write-scope`); this refuses them
+    again at render time, because a scope is exactly the wrong place to trust
+    that an earlier check ran.
+
+    Entries with no placeholder pass through untouched, which is every scope
+    written before this existed.
+    """
+    out: list[str] = []
+    for entry in entries:
+        text = str(entry)
+        for ref in extract_refs(text):
+            parts = ref.split(".")
+            if parts[0] != "args" or len(parts) != 2:
+                raise InterpolationError(
+                    f"write scope entry {text!r} references {{{ref}}}: a scope may only "
+                    f"interpolate {{args.NAME}} — a scope that depends on a step's output "
+                    f"lets the graph widen its own permissions"
+                )
+            if parts[1] not in args:
+                raise InterpolationError(
+                    f"write scope entry {text!r} references undeclared {{args.{parts[1]}}}"
+                )
+            text = text.replace("{" + ref + "}", str(args[parts[1]]))
+        # `verify` checks the WRITTEN entry for absolute paths and `..`; after
+        # substitution it is a different string, and `--arg dir=../../etc`
+        # would otherwise turn a legal-looking scope into an escape. The same
+        # two rules, applied to what will actually be matched.
+        posix = text.replace("\\", "/")
+        if text != str(entry) and (
+            text.startswith(("/", "\\"))
+            or PurePosixPath(posix).is_absolute()
+            or ".." in PurePosixPath(posix).parts
+        ):
+            raise InterpolationError(
+                f"write scope entry {entry!r} rendered to {text!r}, which escapes the "
+                f"repo root — an arg cannot widen a scope past what verify checked"
+            )
+        out.append(text)
+    return out

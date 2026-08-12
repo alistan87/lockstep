@@ -224,11 +224,17 @@ honest declarations:
   printer). Presence-keyed and ENFORCED: any write quarantines. An absent key
   is the old unconstrained behavior; declared-empty is a real constraint.
 - `"writes": ["**"]` + `"writes_rationale": "…"` — deliberate whole-tree
-  access for genuinely run-time-parameterized targets (a generic implementer,
-  a manifest-driven apply). The rationale is required
+  access for genuinely run-time-parameterized targets (a generic implementer
+  told which files to touch by `--arg task`). The rationale is required
   (`lint-unscoped-writes`) so a reviewer can see the omission of a real scope
-  was a decision. Scopes are read raw, never interpolated — `{args.x}` in a
-  scope will not match anything; this escape hatch is the current answer.
+  was a decision.
+
+A scope MAY interpolate `{args.NAME}` (`"writes": ["docs/{args.name}"]`) —
+args only. A `{steps...}` reference would let a node's upstream output decide
+what that node may write, so it is the verify error `dynamic-write-scope`; the
+rendered value is re-checked for `..` and absolute paths so an arg cannot
+escape either. Reach for `["**"]` only when the target is not expressible even
+with args.
 
 It reaches the spawn as `LOCKSTEP_WRITE_SCOPE` so an in-harness extension can
 prevent a stray write; the driver detects one by diffing a baseline tree,
@@ -248,7 +254,8 @@ uncommitted working-tree changes sit inside any declared scope — an in-scope
 write would legally overwrite the operator's edit (`--allow-dirty-scope`
 overrides; resumes are exempt).
 
-Verification: absolute or escaping entries are `bad-write-scope`; a map node
+Verification: absolute or escaping entries are `bad-write-scope`; an entry
+referencing anything but `{args.NAME}` is `dynamic-write-scope`; a map node
 declaring one is the hard error `write-scope-on-map` (the items share one tree
 and one diff); a `readonly` node gets the advisory `write-scope-unenforced`,
 because it holds no `tree` token and the diff would be unsound. Every other

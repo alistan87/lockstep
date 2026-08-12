@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from ..contracts import ContractError, describe_contract, resolve_contract
-from ..interpolate import fence_context_file, render_template
+from ..interpolate import fence_context_file, render_scope, render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
 from ..state import part_digest
@@ -297,7 +297,11 @@ class HarnessExecutor:
                 "argv_template": argv_template,
                 # None = absent (unconstrained); [] = declared-empty, enforced
                 # (see ShellSpec/node_env — the distinction reaches the guard).
-                "writes": list(spec.writes) if "writes" in node.spec else None,
+                # Rendered (args only): the in-harness guard must enforce the
+                # SAME scope the driver detects against, or the two disagree
+                # about a parameterized path and the guard blocks what the
+                # driver would have allowed.
+                "writes": render_scope(list(spec.writes), ctx.args) if "writes" in node.spec else None,
                 "prompt_via": stanza.prompt_via,
                 "json_field": stanza.json_field,
                 "output": node.output,

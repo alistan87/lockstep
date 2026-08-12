@@ -160,12 +160,14 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
   (the current behavior is stated spec); the interim loud warning
   (`restored-undeclared` events) ships now. Watch for the warning firing in
   practice as the evidence for the amendment.
-- **Interpolated write scopes.** `spec.writes` is read raw, never rendered, so
-  a parameterized flow cannot scope to `{args.deliverable}` and falls back to
-  `["**"] + writes_rationale` (see evidence-approval, implement-heal). Either
-  render scopes through args at plan time (hash implications: args already
-  fold into the hash) or say clearly it stays static. The `["**"]` escape
-  hatch makes the gap visible and greppable meanwhile.
+- ~~**Interpolated write scopes.**~~ SHIPPED 2026-08-12 (DEVIATIONS
+  2026-08-12), the first of the two options: scopes render through the run's
+  args at plan time. `{steps...}` is refused (`dynamic-write-scope`) — a scope
+  the graph can widen by writing a different answer is not a permit.
+  `evidence-approval` now scopes to `{args.deliverable}`; `implement-heal`
+  keeps `["**"] + rationale`, correctly — a generic implementer told which
+  files to touch by `--arg task` is not expressible even with args, which is
+  what the escape hatch is for.
 - **V1 promotion.** `lint-missing-write-scope` becomes a verify ERROR at
   format_version 1.1 (a mutating node must declare its scope; `[]` and
   `["**"]+rationale` are the honest outs). All committed flows already comply.
