@@ -187,8 +187,15 @@ statements had gone stale (write scope as optional, the gate-timeout terminal
 message, "state the exact output the contract expects"). Now updated: the
 three new lints, `scoped_checks`, baseline gates, the absolute-target debt
 rule, presence-keyed/`["**"]` scopes, the map-item gap, `attempt-notes.md`,
-`verify --config`, and the residue above minus lesson 21. Still outstanding:
-lessons 12/21/22 belong in `/debug-run` (git-checkout-mid-diagnostic
-forensics, identify a process before killing it, `git fsck` blob recovery from
-`snapshot()`), and `lockstep wait` / `driver_version` drift want a line in
-DRIVING-LOCKSTEP.md.
+`verify --config`, and the residue above minus lesson 21.
+
+Completed the same day: lessons 12/21/22 landed in `/debug-run` as "When
+something survived the run, or the tree lost content" (identify a process
+before killing it; nothing outlives the RUN; a diagnostic that checks out or
+deletes destroys the evidence; `git fsck` recovery of `snapshot()`'s dangling
+blobs), together with the batch's new failure signatures — the dirty-scope
+refusal, the named gate timeout, an enforced `writes: []` quarantine after
+upgrade, a baseline gate's adjudicated-vs-raw verdict, `restored-undeclared`,
+and the version-drift note. `lockstep wait`, `verify --config`, and the drift
+line are in DRIVING-LOCKSTEP.md's drive loop. **The prose residue is now
+placed in full; nothing from the 24 lessons is unhomed.**

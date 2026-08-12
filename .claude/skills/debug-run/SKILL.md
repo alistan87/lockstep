@@ -60,6 +60,33 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
   explicitly opted out of the default.
 - Exit 7 "not git-managed" — a healing gate (`heal.max_rounds > 0`) with
   `rollback: true` on a non-git tree: init git or set `rollback: false`.
+- Exit 7 "uncommitted working-tree changes fall inside declared write scopes"
+  — the E9 preflight, fresh runs only, listing each node and the paths it
+  would legally overwrite. Commit or stash them, narrow the scope, or
+  `--allow-dirty-scope` if the overwrite is what you want. Resumes and replays
+  are exempt (a resumed tree is expectedly dirty with the run's own work).
+- `gate command timed out after Ns` — TERMINAL, and the run stops with budget
+  left: a timeout is not a valid verdict, so it cannot heal (§9.4.3). Nothing
+  is wrong with the gate's schema, which is what the old message
+  (`no valid verdict emitted`) sent people looking for. Raise `timeout_s`,
+  or add `retry` if the duration varies, and `resume`.
+- A quarantine on a node you thought wrote nothing — `"writes": []` has been
+  ENFORCED since 0.7.0 (presence-keyed). Before that it silently meant
+  unconstrained. If a long-lived flow started quarantining after an upgrade,
+  this is why, and the node really was writing.
+- A gate whose `stdout.log` shows blockers but whose status says `pass` — a
+  `baseline: true` gate. The STORED result is the adjudicated verdict (pre-run
+  findings subtracted on exact `(file, claim)`); the raw spawn output stays in
+  the phase dir. Downstream `{steps.<gate>.json…}` and `when` read the
+  adjudicated one, which is the point.
+- `restored-undeclared` in `events.jsonl` — a heal rollback restored a path no
+  heal target declared in `spec.writes`. Usually an out-of-band edit made
+  mid-run and silently undone; check whether it was yours.
+- `note: run created by lockstep X, resuming with Y` on resume (and a
+  `driver:` drift line in `status`) — behaviour genuinely differs across
+  driver versions, and several long-lived beliefs about this tool have turned
+  out to be folklore about a version that no longer exists. Check the version
+  before trusting a remembered symptom.
 - Exit 8 — read `<run_dir>/lock` (pid/hostname). Same-host dead pid clears
   automatically; cross-host requires `resume <run_dir> --force-unlock`.
 - "changed OUTSIDE lockstep" warning on resume — external edits detected via
@@ -85,6 +112,42 @@ a kill, look for that file first: it says the guarantee was never in force,
 which is otherwise indistinguishable from it having failed. Its contents are
 the `GetLastError` from whichever call was refused. See DEVIATIONS.md
 (2026-08-10).
+
+## When something survived the run, or the tree lost content
+
+Rare, and expensive to get wrong — all three were paid for live.
+
+**Identify a process before you kill it.** A stray listener on the port your
+flow used is not necessarily the flow's. Read the command line
+(`Get-CimInstance Win32_Process | ? ProcessId -eq <pid> | % CommandLine`)
+and confirm it is a lockstep descendant — the operator's own editor, browser,
+or dev server is one careless `Stop-Process` away, and killing it destroys
+unsaved work no run dir can recover. Prefer `lockstep cancel <run_dir> <node>`
+while the run lives: it uses the recorded pid and job object rather than a
+guess.
+
+**Nothing should outlive the RUN.** A node MAY background a process for later
+nodes (that is deliberate — see the job-object note above), but when the driver
+exits the kernel reaps the job. A write-capable spawn that survives its
+orchestrator and keeps editing for minutes is the scenario job objects closed;
+if you see it, check for `job-unavailable.txt` first, then treat it as a
+finding worth reporting, not routine.
+
+**A diagnostic can destroy the evidence.** `git checkout` writes the index as
+well as the worktree, so a mid-diagnosis checkout leaves tracked files at old
+content while you are reasoning about new content — you will diagnose the
+wrong bug. Never `rm -rf` a directory a run shares with anything else;
+lockstep's own quarantine and rollback MOVE files rather than delete them,
+and a diagnostic that deletes is strictly worse than the failure it chased.
+
+**Lost working-tree content is usually recoverable.** `snapshot()` runs
+`git add -A` into a temp index, which writes a real blob for every dirty file,
+untracked ones included — those blobs stay in the object store as unreachable
+objects even after the tree moves on. `git fsck --lost-found` lists them;
+`git cat-file -p <sha>` reads one. So a heal rollback, a quarantine, or an
+operator's own mistaken checkout after any node with a snapshot has a
+content-addressable copy behind it. Search the dangling blobs for a phrase you
+remember from the lost file.
 
 ## Resume vs run vs run --fresh
 

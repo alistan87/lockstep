@@ -22,13 +22,26 @@ expresses with caching, healing, and budgets built in.
 ```
 # author: adapt the closest template in flows/starter/ (see docs/guides/FLOW-AUTHORING.md)
 lockstep verify flows/x.tg.json            # loop until "ok"; exit 5 lists ALL named errors
+lockstep verify flows/x.tg.json --config c.toml     # SAME --config the run will use, or stanzas resolve to nothing
 lockstep run flows/x.tg.json --dry-run --arg k=v    # inspect waves; costs nothing
 lockstep run flows/x.tg.json --arg k=v     # only with budget.max_agent_spawns set
+lockstep wait runs/<run-dir>               # block until the driver exits; exits with the RUN's meaning
 lockstep status runs/<run-dir>             # progress incl. latest per-node checkpoint
 lockstep steer runs/<run-dir> <node> "…"   # mid-flight correction, consumed at next checkpoint
 lockstep resume runs/<run-dir>             # continue after exit 2/3/4/8 once addressed
 lockstep run flows/x.tg.json --fresh …     # new lineage; re-runs (and re-bills) everything
 ```
+
+**Waiting on a detached run: use `wait`, never a sleep-loop or a `tail -F |
+grep` incantation.** It blocks on the lock and then exits with the run's own
+meaning (0/2/3/6, 4 = stopped-resumable, 1 = your `--timeout` elapsed), so the
+exit-code table below applies unchanged to the wait. Give it a `--timeout` when
+you have anything else to do; a bare `wait` on a flow with an approval in it
+blocks until the human acts.
+
+**`status` prints the driver version that created the run**, flagged when it
+differs from the installed one, and `resume` says so too. Behaviour genuinely
+differs across versions — check it before acting on a remembered symptom.
 
 ## Branch on exit codes, not log text (frozen)
 
