@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """build_bundle.py — assemble the work-machine bundle: wheel + cockpit + docs.
 
-    python contrib/build_bundle.py [--version 0.5.0]
+    python contrib/build_bundle.py [--version 0.6.0]
 
 Lives IN the repo deliberately. The first version of this script sat outside it,
 which meant the docs reorganisation rewrote every path in the project except the
