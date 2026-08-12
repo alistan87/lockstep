@@ -145,12 +145,14 @@ generality, **take the ergonomics** and record the seam.
 (docs/notes/LESSONS-TO-MECHANISMS.md; the P1/P2 items there are implemented,
 see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
 
-- **E7 — cross-lineage warm start.** `resume` correctly refuses an edited flow
-  (new lineage), but a one-word prompt fix then re-bills every already-done
-  node. Proposal: `run --fresh --seed <old_run_dir>` serves any node whose
-  input_hash matches a recorded result in the seed run — hash-keyed, so sound;
-  the replay machinery already proves result-serving works. Spec text needed:
-  a seeded result's provenance must be visible in the journal.
+- ~~**E7 — cross-lineage warm start.**~~ SHIPPED 2026-08-12 as
+  `run <flow> --seed <run_dir>` (DEVIATIONS 2026-08-12). Provenance landed as
+  proposed — `seeded_from` on the record, a `kind: "seed"` journal line, a
+  `seeded:` line in `status`. What is left for r7 is the SPEC text: §9.2's
+  caching story now has a cross-lineage case, and the three limits (shell
+  nodes, map items, failures) are stated in DEVIATIONS but not in the spec.
+  The open sub-item is per-ITEM seeding for maps, which needs the engine to
+  hand the executor its item index at plan time.
 - **E8-full — narrow heal rollback to declared scopes.** §9.4.4 restores every
   path changed since the gate's baseline; with `spec.writes` now on every
   committed flow (V1), rollback could restore changed ∩ (targets' declared

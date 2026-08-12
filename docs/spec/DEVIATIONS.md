@@ -460,3 +460,34 @@ file records implementation-level departures below that bar.
     folklore about orphan processes a newer driver already contains.
   - **`verify --config`** matches run/resume; without it a flow whose stanzas
     live in a shared config file always false-positived `no-executor-stanza`.
+
+- **2026-08-12 — `run --seed <run_dir>`: cross-lineage warm start (E7).**
+  Editing a flow changes `flow_hash` and starts a new lineage, so every
+  completed node re-runs and re-bills — correct (hash integrity is the cache's
+  basis) and expensive enough that authors avoided editing flows at all. The
+  refusal is unchanged; `--seed` removes the cost. Each node is planned
+  normally, its `input_hash` composed exactly as the engine composes it, and a
+  SUCCESSFUL recording under that same hash in the seed run is served instead
+  of spawned. Nothing is trusted but the hash: an edited node hashes
+  differently and runs, and so does any node whose upstream produced a
+  different result. The seed decision is made at PLAN time so a served node
+  sets `costs_tokens = False` and never spends from the §9.5 spawn budget —
+  `status` and `--estimate` stay honest.
+
+  Provenance, which is what makes this recordable rather than silent:
+  `PhaseRecord.seeded_from` (new optional field), an advisory `kind: "seed"`
+  journal line per hit, and a `seeded:` line in `status` naming the count, the
+  source, and the nodes. A reader of the run dir can always tell inherited
+  work from work the run did — the seed's tree, config and provider are not
+  this run's.
+
+  Three deliberate limits, each of them a rule this feature declines to bend:
+  **shell nodes are never seeded** (§0.1.7 — they always re-run, and a seed is
+  a cache, so it obeys what the in-lineage cache obeys); **map items are never
+  seeded** (the per-item hash appends `index:i` AFTER the executor plans, so a
+  plan-time decision cannot see it, and an execute-time one would spend budget
+  for a spawn that never happened — the cross-lineage per-item gap stays
+  open); and **failures are never served** (a failure is not a result).
+  `--seed` and `--replay` are refused together: replay serves every node and
+  errors on a miss, a seed serves what matches and runs the rest, so the
+  combination has no single meaning.

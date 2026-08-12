@@ -415,7 +415,12 @@ interpolate a fingerprint or a summary instead of the thing.
   `budget.max_run_minutes` may be exceeded by one in-flight `timeout_s`.
 - **Editing a flow file changes `flow_hash` and starts a new lineage** — every
   completed node re-runs (and re-bills). Finalize budgets/retries BEFORE the
-  first run; prefer `lockstep steer` over editing mid-lineage.
+  first run; prefer `lockstep steer` over editing mid-lineage. When you do have
+  to edit, `run <flow> --seed <old_run_dir>` serves every node whose
+  `input_hash` still matches a successful result in the old run and runs the
+  rest — so a one-word prompt fix costs that node and its readers, not the
+  graph. It is hash-keyed, so nothing is trusted: shell nodes and map items are
+  never seeded, and `status` names what was inherited.
 - **A heal target can carry notes into its own retry.** The footer invites
   every write-capable harness node to append durable findings to
   `attempt-notes.md` in its phase dir ("the auth test failure pre-dates this

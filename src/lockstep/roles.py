@@ -818,6 +818,18 @@ class Engine:
             return
         self._finish(node, executor, work, phase_dir, raw)
 
+    def note_seeded(self, node_id: str, source: str) -> None:
+        """E7 provenance. Called by the seed wrapper when it serves a result:
+        the record says where it came from and the journal says when, so a
+        reader can tell inherited work from work this run did."""
+        rec = self._rec(node_id)
+        rec.seeded_from = source
+        self.store.record(rec)
+        append_event(
+            self.store.run_dir,
+            {"kind": "seed", "node": node_id, "source": source},
+        )
+
     def _timed_ws(self, label: str, op: str, fn):
         """Run a workspace operation and journal how long it took (P1-perf).
 

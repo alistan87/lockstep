@@ -30,6 +30,7 @@ lockstep status runs/<run-dir>             # progress incl. latest per-node chec
 lockstep steer runs/<run-dir> <node> "…"   # mid-flight correction, consumed at next checkpoint
 lockstep resume runs/<run-dir>             # continue after exit 2/3/4/8 once addressed
 lockstep run flows/x.tg.json --fresh …     # new lineage; re-runs (and re-bills) everything
+lockstep run flows/x.tg.json --seed runs/<old>   # new lineage, but hash-matched results are inherited
 ```
 
 **Waiting on a detached run: use `wait`, never a sleep-loop or a `tail -F |
@@ -65,7 +66,10 @@ differs across versions — check it before acting on a remembered symptom.
    remove an approval you were not asked to remove.
 2. **Never edit a flow that has a live lineage.** Edits change `flow_hash`:
    every completed node re-runs and re-bills. Use `steer` for mid-flight
-   corrections; batch flow edits for the next fresh run.
+   corrections; batch flow edits for the next fresh run — and start that run
+   with `--seed <the old run dir>`, which inherits every node whose
+   `input_hash` the edit did not move. That makes the batching cheap, not the
+   editing safe: the rule stands.
 3. **Always set `budget.max_agent_spawns`** in flows you author (heal rounds
    and corrective re-spawns count against it). Spawned nodes bill the same
    provider quota you run on.

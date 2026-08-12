@@ -163,6 +163,7 @@ def _run_engine(
     tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path,
     max_workers: int, resume: bool, replay: str | None = None, replay_any: bool = False,
     otel_file: str | None = None, cockpit: bool = False, check_dirty_scope: bool = False,
+    seed: str | None = None,
 ) -> int:
     if otel_file is not None:
         # Bare flag ⇒ alongside the run's other artifacts; a path ⇒ a shared
@@ -201,6 +202,16 @@ def _run_engine(
         print(f"replay: serving recorded results from {replay} — no spawns, no tokens")
         if replay_any:
             print("replay: --replay-any is set; stale recordings are served with a warning")
+    if seed:
+        from .seed import SeedIndex, wrap_registry as wrap_seed
+
+        wrap_seed(
+            engine.registry,
+            SeedIndex.from_run_dir(Path(seed)),
+            log=engine.log,
+            on_hit=engine.note_seeded,
+        )
+        print(f"seed: reusing hash-matched results from {seed}; everything else runs")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")  # AMENDMENTS M6
     if resume:
@@ -248,6 +259,15 @@ def cmd_run(ns) -> int:
             print()
             print(render_estimate(estimate_flow(tg, Path(ns.runs_dir), flow_hash)))
         return EXIT_OK
+    if getattr(ns, "seed", None):
+        # Both serve recorded results, but on opposite defaults (replay errors
+        # on a miss, a seed runs it), so a combination has no single meaning.
+        if ns.replay:
+            return _fail("--seed and --replay cannot be combined: replay serves every node "
+                         "and fails on a miss, a seed serves what matches and runs the rest",
+                         EXIT_CONFIG)
+        if not (Path(ns.seed) / "state.json").is_file():
+            return _fail(f"--seed {ns.seed} is not a run directory (no state.json)", EXIT_CONFIG)
     runs_dir = Path(ns.runs_dir)
     workspace_kind = "git" if (repo_root / ".git").exists() else "null"
     attach = None if ns.fresh else find_attachable_run(runs_dir, flow_hash, args)
@@ -280,6 +300,7 @@ def cmd_run(ns) -> int:
             # E9: fresh runs only — a resumed tree is expected dirty with the
             # run's own prior work; replays write nothing.
             check_dirty_scope=not resume and not ns.replay and not ns.allow_dirty_scope,
+            seed=getattr(ns, "seed", None),
         )
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
@@ -487,6 +508,13 @@ def cmd_status(ns) -> int:
         print(f"driver: {state.driver_version}{drift}")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
+    seeded = sorted(n for n, r in state.nodes.items() if r.seeded_from)
+    if seeded:
+        # E7 provenance where a reader will actually meet it: these results
+        # were produced by ANOTHER run, under its tree and its provider. The
+        # token-spawn count above is honest precisely because they cost none.
+        source = state.nodes[seeded[0]].seeded_from
+        print(f"seeded: {len(seeded)} node(s) served from {source} — {', '.join(seeded)}")
     try:
         events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
     except Exception as e:
@@ -685,6 +713,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="serve results recorded in RUN_DIR instead of spawning; spends nothing")
     pr.add_argument("--replay-any", action="store_true",
                     help="with --replay: use recordings whose input_hash no longer matches")
+    pr.add_argument("--seed", default=None, metavar="RUN_DIR",
+                    help="warm-start a new lineage: serve any node whose input_hash matches a "
+                         "successful result in RUN_DIR, run the rest (E7)")
     pr.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                     help="write OTLP/JSON spans (GenAI semantic conventions); "
                          "bare flag writes <run_dir>/spans.jsonl")

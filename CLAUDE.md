@@ -32,6 +32,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe cancel <run_dir> <node>        # kills the node's process tree; no retries
 .venv\Scripts\lockstep.exe run <flow> --estimate   # cost floor from prior runs; spends nothing
 .venv\Scripts\lockstep.exe run <flow> --replay <run_dir>  # serve recorded results; no spawns, no tokens
+.venv\Scripts\lockstep.exe run <flow> --seed <run_dir>    # warm-start a NEW lineage: serve hash-matched results, run the rest
 .venv\Scripts\lockstep.exe verify-trace <run_dir>  # recompute the journal's hash chain (exit 5 if broken)
 .venv\Scripts\lockstep.exe wait <run_dir> [--timeout s]  # block until the driver exits; exits with the run's meaning
 .venv\Scripts\lockstep.exe verify <flow> --config <toml>  # verify against a shared config, matching run --config

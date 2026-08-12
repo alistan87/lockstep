@@ -130,6 +130,11 @@ class PhaseRecord(BaseModel):
     # evidence at an approval on a 3 000-file codemod anyway.
     touched_count: int | None = None
     touched_path: str | None = None
+    # E7: this result was SERVED from another run's recording under a matching
+    # input_hash, not produced here. A reader of a run dir must be able to tell
+    # what was computed from what was inherited — the seed's own tree, config
+    # and provider are not this run's.
+    seeded_from: str | None = None
 
 
 class RunState(BaseModel):
