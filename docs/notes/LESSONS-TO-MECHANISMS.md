@@ -166,8 +166,29 @@ lockstep's to fix.
 - [x] **V3:** `driver_version` in `state.json`; `resume`/`status` name drift.
   (Source digest + doctor integration deferred — version alone covers the
   observed folklore.)
-- [ ] **P1-perf:** measure `snapshot()` cost growth across many resumes
-  (lesson 20's duration creep) — still open; see ROADMAP-NOTES 2026-08-11.
+- [x] **P1-perf (measured 2026-08-12; the FIX is still a decision).** Two
+  parts: the engine now journals every git tree operation it performs as an
+  advisory `kind: "timing"` line (op + node + ms), and `contrib/snapshot_bench.py`
+  answers the underlying question. `snapshot()` is `git add -A` into a FRESH
+  temp index, so there is no stat cache and git reads and hashes **every file
+  in the tree on every call** — cost is O(tree bytes), not O(what changed).
+  Measured on this machine: a 1 500-file / 6 MB tree takes 0.36 s per snapshot,
+  a 6 000-file / 47 MB tree 1.37 s, flat across rounds (it is the tree size
+  that sets the price, and a run's own output grows the tree). Seeding the temp
+  index from the repo's real one drops those to 0.03 s and 0.05 s — 12× and
+  27× — and produced a byte-identical tree in every round.
+
+  That is the fix candidate, and it is NOT free: seeding trusts git's stat
+  cache, so a file rewritten with identical size and mtime would be staged at
+  its old blob, and the write-scope check would miss a violation. §9.4.2 states
+  the fresh-index mechanism, so this needs a DEVIATIONS entry at minimum.
+  Two other findings from the same measurement, both cheaper: heal rollback
+  takes TWO whole-tree snapshots where one would do (`diff_patch` and
+  `changed_paths` each compute `current` internally) — pure win, no soundness
+  change; and a scoped node costs two per attempt (baseline + diff), which is
+  irreducible. Lesson 20's 13 → 32 min creep is EXPLAINED but not reproduced:
+  it needs a large cold tree under AV, which this machine's warm-cache
+  measurements deliberately do not simulate.
 
 **P3 — spec-level (r7 candidates, record seams in ROADMAP-NOTES)**
 - [ ] **E7:** cross-lineage warm start (`--seed <run_dir>`, hash-keyed result reuse).

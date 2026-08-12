@@ -167,12 +167,28 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
 - **V1 promotion.** `lint-missing-write-scope` becomes a verify ERROR at
   format_version 1.1 (a mutating node must declare its scope; `[]` and
   `["**"]+rationale` are the honest outs). All committed flows already comply.
-- **Gate-duration drift under orchestration (lesson 20, unconfirmed).** The
-  work repo observed a gate command growing 13→32 min across resumes of one
-  long-lived run while manual runs stayed fast; leading suspects are AV
-  interference after large fresh writes and `snapshot()` (`git add -A` +
-  write-tree) object churn. Before any fix: measure — record per-snapshot
-  duration in events.jsonl on long runs. Relates to gc/retention.
+- **Gate-duration drift under orchestration (lesson 20).** Measured
+  2026-08-12; see LESSONS-TO-MECHANISMS P1-perf. `snapshot()` costs O(tree
+  bytes) on EVERY call because the temp index is fresh and has no stat cache
+  (1.37 s for a 47 MB tree here; a run's own output grows the tree it pays
+  for). The engine now journals `kind: "timing"` lines so a slow run can be
+  read rather than guessed at, and `contrib/snapshot_bench.py` reproduces the
+  cost. Two open decisions came out of it:
+  - **Seed the temp index from the repo's real one** — 12–27× faster, tree
+    byte-identical in every measured round. Costs a soundness property: git's
+    stat cache would stage a rewritten-but-same-size-and-mtime file at its old
+    blob, and write-scope detection would miss that violation. §9.4.2 states
+    the fresh-index mechanism, so this is an amendment-or-DEVIATIONS call, not
+    an implementation detail. The honest framing: lockstep already trusts the
+    stat cache in `dirty_paths()` (`git status --porcelain`), so the question
+    is whether the ENFORCEMENT path deserves a stronger guarantee than the
+    advisory one.
+  - **Stop taking two snapshots per rollback** — `diff_patch(baseline)` and
+    `changed_paths(baseline)` each compute `current` internally, so every heal
+    round walks the tree twice for one answer. Passing a shared `current` (or
+    memoizing it for the duration of the rollback) is a pure win with no
+    soundness change; it needs one optional parameter on two `Workspace`
+    methods.
 
 **New r7 candidate (2026-08-12, adversarial review of the batch) — map items
 are the one unguardable mutator class.** A map node cannot declare

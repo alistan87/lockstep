@@ -802,7 +802,7 @@ class Engine:
                 # that stayed in scope is accused of its peer's writes), the
                 # evidence patch captures that peer's work, and the restore
                 # reverts the peer's live file while it goes on to record `done`.
-                in_scope, violations = self._scope_changes(scope_ref, scope)
+                in_scope, violations = self._scope_changes(scope_ref, scope, label=node.id)
                 if violations:
                     scope_error = self._quarantine(
                         node, phase_dir, scope, scope_ref, in_scope, violations, staged_before
@@ -818,12 +818,39 @@ class Engine:
             return
         self._finish(node, executor, work, phase_dir, raw)
 
+    def _timed_ws(self, label: str, op: str, fn):
+        """Run a workspace operation and journal how long it took (P1-perf).
+
+        Every git tree operation the engine performs is here, and each one is
+        O(working tree), not O(what changed) — `snapshot()` writes a blob for
+        every file into a FRESH temp index, so nothing is cached between calls.
+        A run whose nodes write a lot pays that per node, twice for a scoped
+        one (baseline + diff), and a long-lived run's later resumes pay it over
+        a bigger tree than its first. That growth was reported live as a gate
+        creeping 13 → 32 minutes across resumes, with no way to see where the
+        time went; `kind: "timing"` lines are that visibility.
+
+        Advisory, like `progress.jsonl`: no reader branches on them, they carry
+        no `status`, and dropping them changes no decision. They ARE chained
+        into the journal, which costs nothing — every line already carries a
+        wall-clock `ts`, so the trace was never byte-reproducible across runs.
+        """
+        t0 = time.perf_counter()
+        try:
+            return fn()
+        finally:
+            append_event(
+                self.store.run_dir,
+                {"kind": "timing", "node": label, "op": op,
+                 "ms": round((time.perf_counter() - t0) * 1000)},
+            )
+
     def _scope_baseline(self, node: Node) -> SnapshotRef | None:
         """Baseline for write-scope detection. A non-git tree cannot diff, so
         detection is off there — the same honest limitation M6 states for
         external-edit detection."""
         try:
-            return self.workspace.snapshot()
+            return self._timed_ws(node.id, "scope-baseline", self.workspace.snapshot)
         except WorkspaceError:
             self.log(
                 f"write scope: {node.id!r} declares one, but this workspace cannot "
@@ -849,12 +876,15 @@ class Engine:
         prefix = str(rel).replace("\\", "/").strip("/") + "/"
         return [p for p in paths if not p.replace("\\", "/").startswith(prefix)]
 
-    def _scope_changes(self, since: SnapshotRef, scope: list[str]) -> tuple[list[str], list[str]]:
+    def _scope_changes(self, since: SnapshotRef, scope: list[str],
+                       label: str = "") -> tuple[list[str], list[str]]:
         """(in-scope changed paths, violations). Both halves are wanted: the
         violations to quarantine, the in-scope list as touched-path evidence and
         to spot a rename OUT of scope (§0.1 T1.3)."""
         try:
-            changed = self._outside_run_dir(self.workspace.changed_paths(since))
+            changed = self._outside_run_dir(
+                self._timed_ws(label, "scope-diff", lambda: self.workspace.changed_paths(since))
+            )
         except WorkspaceError:
             return [], []
         in_scope = sorted(p for p in changed if path_in_scope(p, scope))
@@ -999,7 +1029,7 @@ class Engine:
             return
         with self._snapshot_guard:
             if self.snapshots.get(gate_id) is None:
-                ref = self.workspace.snapshot()
+                ref = self._timed_ws(gate_id, "heal-baseline", self.workspace.snapshot)
                 self.snapshots[gate_id] = ref
                 # Persist BEFORE the target executes: a later crash + resume
                 # must find this baseline, not re-snapshot a mutated tree.
@@ -1308,14 +1338,19 @@ class Engine:
                 return
             # Preserve the attempt, THEN restore (§9.4.4): the failed work stays
             # inspectable; scope is git-derived, never StepResult.files_written.
-            patch = self.workspace.diff_patch(baseline)
+            patch = self._timed_ws(gate.id, "heal-patch",
+                                   lambda: self.workspace.diff_patch(baseline))
             (gate_phase / f"attempt-{round_n}.patch").write_text(patch, encoding="utf-8")
             # Same exclusion as the scope check, for the same reason and with a
             # sharper edge: a rollback that reverts the run dir would restore
             # `state.json` from under the engine mid-heal.
-            scope = self._outside_run_dir(self.workspace.changed_paths(baseline))
+            scope = self._outside_run_dir(
+                self._timed_ws(gate.id, "heal-diff",
+                               lambda: self.workspace.changed_paths(baseline))
+            )
             discard = gate_phase / f"discarded-{round_n}"
-            self.workspace.restore(baseline, scope, discard)
+            self._timed_ws(gate.id, "heal-restore",
+                           lambda: self.workspace.restore(baseline, scope, discard))
             for p in scope:
                 # Label faithfully: created-since-baseline paths were MOVED
                 # aside, not restored (audit r5 finding).

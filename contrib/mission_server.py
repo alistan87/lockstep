@@ -591,6 +591,11 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
     when = mv.format_clock(ev.get("ts")) or "--:--"
     node = ev.get("node") or ""
     status = ev.get("status") or ""
+    if not status:
+        # An advisory journal line (kind: "timing") carries no status: it is
+        # engine diagnostics, not something that happened to the work. Rendered
+        # it would read as a nameless event beside a step's real ones.
+        return ""
     word = mv.GLOSSARY.get(status, status)
     if node:
         return f"{when}  {mv.label_for(labels, node)}  {word}".rstrip()
@@ -1323,7 +1328,10 @@ def _focus_node(state: dict) -> str | None:
 def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
                focus: str | None, repo_root: Path | None) -> str:
     out = ['<div class="card"><h2>what just happened</h2><div class="feed" id="feed">']
-    for ev in events[-FEED_LIMIT:]:
+    # Filter BEFORE the window: advisory lines that render to nothing must not
+    # consume the last-N slots and push real events out of the feed.
+    narrated = [ev for ev in events if event_text(ev, labels)]
+    for ev in narrated[-FEED_LIMIT:]:
         out.append(f"<div>{e(event_text(ev, labels))}</div>")
     if not events:
         out.append("<div>Nothing has been recorded yet.</div>")
@@ -1610,8 +1618,11 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
             "token": token,
             "next": after + len(fresh),
             "live": running,
-            "events": [{"text": event_text(ev, labels), "node": ev.get("node") or "",
-                        "status": ev.get("status") or ""} for ev in fresh],
+            # `next` counts every line consumed, narrated or not — it is a
+            # cursor into the file, not into the feed.
+            "events": [{"text": text, "node": ev.get("node") or "",
+                        "status": ev.get("status") or ""}
+                       for ev in fresh if (text := event_text(ev, labels))],
         })
 
     if route.startswith("/api/node/"):

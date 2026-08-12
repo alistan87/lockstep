@@ -640,3 +640,32 @@ def test_dirty_scope_preflight_ignores_the_runs_own_dir(tmp_path, git_repo):
                run_dir=inner)
     h2.engine.check_dirty_scope = True
     assert h2.engine.run() == 0, "must not refuse on its own state.json"
+
+
+def test_workspace_timings_are_journalled_and_stay_advisory(tmp_path, git_repo):
+    """P1-perf: every git tree operation the engine performs is journalled with
+    its duration, because a run that slows down over its life had no way to
+    show where the time went (lesson 20: a gate creeping 13 -> 32 minutes
+    across resumes).
+
+    Advisory means three things at once, and each is asserted: the lines carry
+    no `status`, so nothing that branches on transitions can see them; they
+    still chain, so the audit trail stays verifiable; and the run's outcome is
+    unchanged by their presence.
+    """
+    from lockstep.state import trace_status
+
+    h = build(tmp_path, _flow(["src"], write_files={"src/a.py": "x"}), git_repo)
+    assert h.engine.run() == 0
+
+    events = [json.loads(ln) for ln in
+              (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    timings = [e for e in events if e.get("kind") == "timing"]
+    # A scoped node costs TWO whole-tree walks: the baseline before it runs and
+    # the diff after. That is the number the measurement is about.
+    ops = sorted(e["op"] for e in timings)
+    assert ops == ["scope-baseline", "scope-diff"], ops
+    assert all(e["node"] == "w" for e in timings)
+    assert all(isinstance(e["ms"], int) and e["ms"] >= 0 for e in timings)
+    assert all("status" not in e for e in timings), "a timing is not a transition"
+    assert trace_status(h.run_dir)["ok"], "advisory lines must still chain"
