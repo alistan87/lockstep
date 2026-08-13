@@ -89,6 +89,14 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
   before trusting a remembered symptom.
 - Exit 8 — read `<run_dir>/lock` (pid/hostname). Same-host dead pid clears
   automatically; cross-host requires `resume <run_dir> --force-unlock`.
+- **`STALE: …` in `status` (or `wait` refusing to keep waiting)** — the run
+  says `running` but the pid in `lock` is not alive on this host: its driver
+  died without releasing. Nothing is advancing the run; `resume` reclaims it.
+  Do NOT read a long-`running` node as a hung harness until `status` has said
+  the driver is alive — that mistake cost 97 minutes of diagnosis live.
+  `lockstep active <runs_dir>` asks the same question of every run at once.
+  Two caveats: another host's lock is never called dead (liveness is unknowable
+  from here), and a recycled pid reads as alive.
 - "changed OUTSIDE lockstep" warning on resume — external edits detected via
   the lineage-head fingerprint; done nodes with un-consumed outputs re-run.
 - Transient `PermissionError` on this machine is usually AV — retry once.

@@ -6,7 +6,7 @@ a new machine. Copy this directory (and `personas/`) into any git repo where
 lockstep is installed; everything here uses the config-default executor unless
 noted.
 
-All ten flows pass `lockstep verify` and are meant as **templates** — edit
+All eleven flows pass `lockstep verify` and are meant as **templates** — edit
 prompts, check commands, and budgets to fit the target repo, then re-verify.
 Authoring grammar: `docs/guides/FLOW-AUTHORING.md`. Drive protocol for agents (exit
 codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
@@ -35,6 +35,7 @@ whatever the edit did not move.
 | `clarify-gate.tg.json` | up to ~8 | **FRAGMENT** — the clarification-gate pattern: a drafter works from an under-specified brief, and a NON-healing gate (`heal.max_rounds: 0`) reports what only a human can decide as findings with `category: "question"`. Answers arrive by `steer` + `resume`, never by heal text. Copy the gate into your own flow. |
 | `evidence-approval.tg.json` | up to ~6 | **FRAGMENT** — the evidence-bearing terminal approval: a shell node renders a mechanical extract to `<run_dir>/approval-evidence.txt`, which `contrib/approve.ps1` prints before the prompt. Shows the segmentation rule (only a trivial shell node after the approval). |
 | `retrospect.tg.json` | up to ~8 | Gate-driven improvement: `contrib/retrospect.py` emits the friction report (metadata only), an analyst proposes flow/prompt edits **each citing the number that motivates it**, an arbiter blocks anything the numbers do not support. Adoption is gated — run the report by hand first. |
+| `two-phase-remediation.tg.json` | up to ~14 | **Verification-first, in two REVIEWED phases**: phase 1 writes a failing test that pins `--arg bug=` and NOTHING else (its reviewer blocks if product code moved; healing gate, 1 round) → phase 2 fixes it under `--arg fix_scope=` (healing pytest gate) and is reviewed on its own change alone. Both reviewers read `lockstep.probes.node_diff --node <step>` — the two git trees the ENGINE recorded around that step, not the live worktree. Copy this one for any flow that reviews more than one phase; see the note below. |
 | `bugfix-heal.tg.json` | up to ~15 | Observe → diagnose → fix → verify: a shell probe RUNS `--arg repro=` and captures the failure, a **readonly** diagnostician pins root cause from it plus `--arg bug=`; fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); probe captures the change → **readonly** diff review → block-on-major gate. |
 
 ## Running them
@@ -50,6 +51,7 @@ lockstep run flows\starter\sdlc-e2e.tg.json        --arg "task=Add CSV export to
 lockstep run flows\starter\file-audit.tg.json      --arg "glob=docs/*.md" --arg "focus=stale claims vs the code"
 lockstep run flows\starter\proposal-gate.tg.json   --arg "file=proposals/q3-pipeline.md"
 lockstep run flows\starter\bugfix-heal.tg.json     --arg "bug=export drops the last row" --arg "repro=python -m pytest tests/test_export.py -q"
+lockstep run flows\starter\two-phase-remediation.tg.json --arg "bug=export drops the last row"
 
 lockstep status runs\<run-dir>            # live per-node progress
 lockstep steer  runs\<run-dir> impl "prefer the streaming writer"   # consumed at next checkpoint
@@ -61,13 +63,42 @@ Typical `implement-heal` outcomes: exit `0` (all gates passed) or exit `2`
 then `resume`). Exit `6` (approval rejected) can only come from the flows with
 an approval node: `plan-adversarial` and `sdlc-e2e`.
 
+### Why `two-phase-remediation` uses `node_diff`, and when you must
+
+`worktree_diff` reports the tree **as it is now**, and shell nodes always
+re-run on resume (SPEC §0.1.7). In a single-phase flow those are the same
+thing, which is why `implement-heal`, `bugfix-heal` and `sdlc-e2e` still use
+it. In a flow with two reviewed phases they stop being the same the moment
+phase 2 writes a file: on the next resume, phase 1's capture re-runs and now
+describes phase 2's tree. The reviewer's prompt embeds that text, so its input
+hash legitimately moves — and a review that had PASSED re-bills and comes back
+with scope violations that never existed. Reported live at a cost of two full
+`--fresh` restarts (`docs/notes/LESSONS-TO-MECHANISMS.md`, consumer report
+2026-08-13); `tests/test_two_phase_starter.py` reproduces both halves against
+this template.
+
+`node_diff --node <step>` reads the two git tree objects the engine recorded
+around that step, so the answer is byte-identical on every resume and each
+reviewer sees exactly one phase — phase 2's reviewer is not even shown the
+evidence test, because it existed before that step and after it. It requires
+its target to declare `spec.writes` and to hold the `tree` token (i.e. NOT be
+`readonly`): those are the conditions under which the engine already computes
+both trees, which is why recording them costs nothing. `verify --lint` warns
+(`lint-live-diff-per-phase`) when a flow captures the live tree more than once.
+
+One trap when adapting it: **do not add a pytest gate to phase 1.** The test
+written there is supposed to fail — that is the evidence — so a suite gate
+would block the flow on its own success. The only gate phase 1 gets is the
+reviewer's, which judges whether the test pins the reported defect and whether
+any product code moved.
+
 ## Prerequisites
 
 - **A git repo.** The healing gates use `rollback` (the default), which
   requires a git-managed workspace — `verify` only warns, but `run` refuses
   with exit 7 otherwise.
 - **`lockstep.toml`** with a working executor stanza (`lockstep doctor` green).
-- **Personas**: `planner`, `implementer`, `reviewer`, `arbiter` from
+- **Personas**: `planner`, `implementer`, `reviewer`, `arbiter`, `verifier` from
   `personas/` — copy that directory alongside `flows/`.
 - **The deterministic gates are library calls**: `checks` runs
   `python -m lockstep.gates.pytest_verdict` and the review gates run

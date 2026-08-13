@@ -662,9 +662,13 @@ def test_workspace_timings_are_journalled_and_stay_advisory(tmp_path, git_repo):
               (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
     timings = [e for e in events if e.get("kind") == "timing"]
     # A scoped node costs TWO whole-tree walks: the baseline before it runs and
-    # the diff after. That is the number the measurement is about.
+    # the tree it left after. That is the number the measurement is about, and
+    # it did not change when `node_diff` started recording both — the engine
+    # already computed them. What changed is that `scope-diff` now names a
+    # `diff-tree` of those two snapshots rather than a third walk of its own.
     ops = sorted(e["op"] for e in timings)
-    assert ops == ["scope-baseline", "scope-diff"], ops
+    assert ops == ["scope-after", "scope-baseline", "scope-diff"], ops
+    assert len([e for e in timings if e["op"].startswith("scope-") and e["op"] != "scope-diff"]) == 2
     assert all(e["node"] == "w" for e in timings)
     assert all(isinstance(e["ms"], int) and e["ms"] >= 0 for e in timings)
     assert all("status" not in e for e in timings), "a timing is not a transition"

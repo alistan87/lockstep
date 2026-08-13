@@ -785,4 +785,63 @@ def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
                     "ceiling)",
                 )
 
+    # W5 (consumer report 2026-08-13 item 1) — more than one live-tree capture
+    # in one flow. `worktree_diff` reports the tree AS IT IS NOW, and shell
+    # nodes always re-run on resume (SPEC §0.1.7), so on the first resume after
+    # phase 2 has written anything, phase 1's capture re-runs against phase 2's
+    # tree; the reviewer's prompt embeds that text, its input hash moves, and a
+    # review that had PASSED re-bills and comes back with violations that never
+    # existed. Cost when it happened: two full restarts of an hour-plus.
+    captures = [
+        n.id for n in tg.nodes
+        if n.kind == "shell"
+        and any("lockstep.probes.worktree_diff" in str(c) for c in (n.spec.get("cmd") or []))
+    ]
+    if len(captures) > 1:
+        warn(
+            "lint-live-diff-per-phase",
+            f"{len(captures)} nodes capture the LIVE working tree "
+            f"({', '.join(sorted(captures))}); a re-run capture describes the tree as it is "
+            f"THEN, not as it was for the phase it was meant to evidence — use "
+            f"`lockstep.probes.node_diff --node <the step that made the change>`, which reads "
+            f"the trees the engine recorded and cannot be moved by a later phase",
+        )
+
+    # W6 (consumer report 2026-08-13 item 5) — a `--tools` allowlist covers
+    # EXTENSION tools too. A stanza that attaches an extension and then hands
+    # readonly nodes a list without `submit_result` silently removes the
+    # structured-output tool that extension registers. Nothing fails loudly:
+    # the node answers on stdout (SPEC §8.3), which is the designed readonly
+    # channel — but the envelope stops being ENFORCED, which is the whole
+    # reason the extension is attached (ADDENDUM-A A.3.2).
+    if config is not None and getattr(config, "executors", None):
+        flagged: set[str] = set()
+        for n in tg.nodes:
+            if n.kind != "harness":
+                continue
+            name = n.spec.get("executor") or tg.executor_default or config.default
+            stanza = config.executors.get(name) if name else None
+            if stanza is None or name in flagged:
+                continue
+            argv = [str(a) for a in (list(stanza.argv) + list(stanza.readonly_argv or []))]
+            if not any(a == "--extension" or a.startswith("--extension=") for a in argv):
+                continue
+            allow = [argv[i + 1] for i, a in enumerate(argv)
+                     if a == "--tools" and i + 1 < len(argv)]
+            deny = [argv[i + 1] for i, a in enumerate(argv)
+                    if a == "--exclude-tools" and i + 1 < len(argv)]
+            drops = (allow and not any("submit_result" in v for v in allow)) or any(
+                "submit_result" in v for v in deny
+            )
+            if drops:
+                flagged.add(name)
+                warn(
+                    "lint-tools-drops-result-channel",
+                    f"stanza {name!r} attaches an --extension but its tool list "
+                    f"({', '.join(allow + deny) or 'empty'}) does not permit `submit_result`; "
+                    f"the allowlist covers extension tools, so the extension's structured-output "
+                    f"channel is disabled and nodes fall back to the stdout parse (§8.3) with "
+                    f"the envelope unenforced",
+                )
+
     return issues

@@ -117,6 +117,7 @@ lockstep resume <run_dir> [--config lockstep.toml] [--force-unlock]
 lockstep verify <flow.tg.json>          # static only; no runtime flags consulted
 lockstep render <flow.tg.json>          # Mermaid to stdout
 lockstep status <run_dir>
+lockstep active [runs_dir] [--all]      # runs with a driver, live or dead (DEVIATIONS 2026-08-13)
 lockstep doctor [--config lockstep.toml]   # probe each executor (§8.5)
 lockstep init                           # write lockstep.toml.example to ./lockstep.toml
 ```

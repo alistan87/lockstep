@@ -184,7 +184,31 @@ never writes to the workspace.
 - `worktree_diff [--base HEAD] [--max-lines N]` — `git status --short
   --untracked-files=all`, the diff against the base, and the full contents of
   CREATED files (untracked, so absent from any diff). Truncation says it
-  truncated.
+  truncated. Reports the tree **as it is now**; see the warning below before
+  using it more than once in a flow.
+- `node_diff --node <id> [--run-dir D] [--max-lines N]` — what ONE STEP
+  changed, read back from the two git tree objects the engine recorded for it.
+  Deterministic: the same answer on every resume, in every later phase. The run
+  dir is derived from `LOCKSTEP_PHASE_DIR` (exported to every spawn), so a flow
+  node needs no path. Requires the target node to declare `spec.writes`, hold
+  the `tree` token, and have succeeded — those are exactly the conditions under
+  which the engine already computes both trees, so recording them costs
+  nothing. A node that changed nothing, an unknown node and a pruned tree
+  object each report themselves and still exit 0.
+
+> **One live capture per flow.** `worktree_diff` describes the tree at the
+> moment it runs, and shell nodes ALWAYS re-run on resume (SPEC §0.1.7). In a
+> single-phase flow — implement, capture, review — that is exactly right. In a
+> multi-phase one (capture, review, gate, remediate, capture, review, gate) the
+> first capture re-runs on the first resume after phase 2 has written anything,
+> now reporting phase 2's tree; the reviewer's prompt embeds that text, so its
+> input hash legitimately moves, and a review that had PASSED re-bills and
+> comes back with violations that never existed. Reported live at a cost of two
+> full restarts. Use `node_diff --node <the step that made the change>` for any
+> flow that reviews more than one phase; `verify --lint` warns
+> (`lint-live-diff-per-phase`) when a flow captures the live tree twice.
+> Worked example: `flows/starter/two-phase-remediation.tg.json` (prove it, then
+> fix it — each phase reviewed on its own change).
 - `command_output "<cmd>" [--label repro] [--timeout S]` — run one command,
   report exit code and output. The command arrives as one string (it comes from
   `--arg`) and is `shlex`-split with POSIX rules off on Windows. Output is
@@ -421,6 +445,13 @@ interpolate a fingerprint or a summary instead of the thing.
   rest — so a one-word prompt fix costs that node and its readers, not the
   graph. It is hash-keyed, so nothing is trusted: shell nodes and map items are
   never seeded, and `status` names what was inherited.
+  **A seed trusts a prior RESULT, not a prior TREE.** It is not a "start over
+  cleanly" mechanism: a node whose recorded output described a tree that has
+  since moved is served again if its own inputs still hash the same. The one
+  case that would hurt most is already closed — a probe that captures live tree
+  state is a shell node, and shell nodes always re-run — but a harness node
+  that *reasoned* about the tree can still be inherited. When the tree state is
+  what went wrong, `--fresh` is the honest answer.
 - **A heal target can carry notes into its own retry.** The footer invites
   every write-capable harness node to append durable findings to
   `attempt-notes.md` in its phase dir ("the auth test failure pre-dates this

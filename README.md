@@ -30,7 +30,9 @@ $ lockstep init               # writes ./lockstep.toml — edit the argv templat
 $ lockstep doctor             # probe each configured harness actually runs
 $ lockstep verify flows/gated-build.tg.json
 $ lockstep run flows/gated-build.tg.json --arg task="add a --version flag"
-$ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress
+$ lockstep run flows/gated-build.tg.json --detach --arg task="…"   # a driver that outlives this shell
+$ lockstep status runs/gated-build-<stamp>/     # incl. latest per-node progress; STALE if its driver died
+$ lockstep active runs/                         # runs something is (or should be) driving; --all adds idle ones
 $ lockstep steer runs/<run>/ implement "prefer the streaming writer"   # next checkpoint
 $ lockstep cancel runs/<run>/ implement         # kills the node's process tree; no retries
 $ lockstep resume runs/gated-build-<stamp>/     # after a crash or budget trip
@@ -78,14 +80,16 @@ second attempt does not re-derive what the first established.
 
 ## Starter flows
 
-`flows/starter/` ships ten portable, adversarially-reviewed templates — see
+`flows/starter/` ships eleven portable, adversarially-reviewed templates — see
 its README for the full table and per-flow caveats:
 
 - **SDLC**: `plan-adversarial` (author → two attacking reviewers → healing
   arbiter gate → human approval), `implement-heal` (implementer → deterministic
   lint+pytest gate that HEALS on failure → adversarial diff review →
   block-on-major gate), `bugfix-heal` (diagnose → fix → healing repro gate →
-  review), and `sdlc-e2e` (the whole chain).
+  review), `two-phase-remediation` (prove it, then fix it — each phase reviewed
+  on its OWN change via `node_diff`, so no resume can show phase 1's reviewer
+  phase 2's work), and `sdlc-e2e` (the whole chain).
 - **Audit**: `file-audit` (map fan-out, one readonly auditor per file with
   content-fingerprint caching), `proposal-gate` (completeness gates for a
   human-owned doc — deterministic section check, then reviewers; no heal).

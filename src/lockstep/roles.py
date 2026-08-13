@@ -519,6 +519,18 @@ class Engine:
                         rec.status = "pending"
                         self.store.record(rec)
                         if rec.invalidated_by:
+                            # SAY IT, at the moment of the decision. The reason
+                            # was already recorded and journalled, but only
+                            # `explain` ever read it — so an operator watching a
+                            # resume saw a completed node re-bill with no
+                            # account of why, and had to reconstruct it
+                            # afterwards from a confusing gate block (consumer
+                            # report 2026-08-13 item 1(b)). Shell nodes carry no
+                            # reason by design (§0.1.7) and stay quiet.
+                            self.log(
+                                f"re-running {node.id!r} (its cached result no longer matches): "
+                                + "; ".join(rec.invalidated_by)
+                            )
                             append_event(
                                 self.store.run_dir,
                                 {
@@ -795,6 +807,14 @@ class Engine:
                 scope_ref = self._scope_baseline(node)
                 if scope_ref is not None:
                     staged_before = self.workspace.staged_paths()
+                    rec.tree_before = scope_ref.ref
+                    # The pair must always describe the SAME attempt. A heal
+                    # round or a resumed re-run takes a new baseline, and a
+                    # stale `tree_after` from the previous attempt would make
+                    # `node_diff` diff two trees that never bracketed anything
+                    # — possibly backwards.
+                    rec.tree_after = None
+                    self.store.record(rec)
             raw = self._execute_with_retries(node, executor, work, phase_dir)
             if scope_ref is not None:
                 # The WHOLE violation sequence — detect, patch, restore, record —
@@ -803,14 +823,27 @@ class Engine:
                 # that stayed in scope is accused of its peer's writes), the
                 # evidence patch captures that peer's work, and the restore
                 # reverts the peer's live file while it goes on to record `done`.
-                in_scope, violations = self._scope_changes(scope_ref, scope, label=node.id)
+                # ONE snapshot of the tree this node left, shared by every
+                # question asked about it (`diff_patch`'s own docstring says
+                # why: a snapshot walks the whole tree, and two of them
+                # describe two different moments). It is also what
+                # `node_diff` reads back — the recorded pair is the only
+                # description of this step's change that a later phase cannot
+                # move (consumer report 2026-08-13 item 1).
+                after = self._after_snapshot(node)
+                in_scope, violations = self._scope_changes(
+                    scope_ref, scope, label=node.id, current=after
+                )
                 if violations:
                     scope_error = self._quarantine(
-                        node, phase_dir, scope, scope_ref, in_scope, violations, staged_before
+                        node, phase_dir, scope, scope_ref, in_scope, violations,
+                        staged_before, after,
                     )
                 elif not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None:
                     # Evidence of what a node touched, on SUCCESS. A failed
                     # spawn's changed paths are the wreckage, not the record.
+                    if after is not None:
+                        rec.tree_after = after.ref
                     self._record_touched(node, phase_dir, in_scope)
         finally:
             self._release(locks)
@@ -898,14 +931,25 @@ class Engine:
         prefix = str(rel).replace("\\", "/").strip("/") + "/"
         return [p for p in paths if not p.replace("\\", "/").startswith(prefix)]
 
+    def _after_snapshot(self, node: Node) -> SnapshotRef | None:
+        """The tree this node left. Same limitation as the baseline: a non-git
+        tree cannot snapshot, and then there is nothing to compare or record."""
+        try:
+            return self._timed_ws(node.id, "scope-after", self.workspace.snapshot)
+        except WorkspaceError:
+            return None
+
     def _scope_changes(self, since: SnapshotRef, scope: list[str],
-                       label: str = "") -> tuple[list[str], list[str]]:
+                       label: str = "",
+                       current: SnapshotRef | None = None) -> tuple[list[str], list[str]]:
         """(in-scope changed paths, violations). Both halves are wanted: the
         violations to quarantine, the in-scope list as touched-path evidence and
         to spot a rename OUT of scope (§0.1 T1.3)."""
         try:
             changed = self._outside_run_dir(
-                self._timed_ws(label, "scope-diff", lambda: self.workspace.changed_paths(since))
+                self._timed_ws(
+                    label, "scope-diff", lambda: self.workspace.changed_paths(since, current)
+                )
             )
         except WorkspaceError:
             return [], []
@@ -939,6 +983,7 @@ class Engine:
         in_scope: list[str],
         violations: list[str],
         staged_before: set[str],
+        current: SnapshotRef | None = None,
     ) -> str:
         """Preserve the blocked attempt, put the tree back, say what happened to
         every path. Returns the failure message.
@@ -965,7 +1010,7 @@ class Engine:
             # BEFORE any restore (§9.4.4): this is the blocked attempt, and
             # after the rollback there is nothing left to write down.
             (phase_dir / patch_name).write_text(
-                self.workspace.diff_patch(scope_ref), encoding="utf-8"
+                self.workspace.diff_patch(scope_ref, current), encoding="utf-8"
             )
         except (WorkspaceError, OSError) as e:
             failure = f"could not preserve the attempt patch: {e}"

@@ -41,6 +41,7 @@ from .state import (
     chain_head,
     configure_spans,
     find_attachable_run,
+    inspect_lock,
     load_state,
     new_run_dir,
     read_events,
@@ -228,6 +229,82 @@ def _run_engine(
     return code
 
 
+def _detach(ns, runs_dir: Path, locate) -> int:
+    """Re-invoke this exact command in a process that outlives us (item 3).
+
+    The child runs the SAME argv with `--detach` removed, so nothing about the
+    run's semantics is special-cased for detaching: the dirty-scope preflight,
+    attach-vs-fresh, budgets and the lock are all decided by the child exactly
+    as they would be in the foreground. All this parent does is verify (already
+    done by the time we get here — a broken flow fails in the caller's terminal,
+    not in a log), spawn, and confirm the child took the lock.
+    """
+    from .detach import await_start, driver_argv, mark, spawn_detached, tail
+    from .state import utcnow
+
+    if getattr(ns, "dry_run", False) or getattr(ns, "estimate", False) or getattr(ns, "replay", None):
+        return _fail(
+            "--detach has nothing to detach: --dry-run, --estimate and --replay are "
+            "synchronous and spend nothing",
+            EXIT_CONFIG,
+        )
+    # Strip every spelling argparse accepts for this flag, not just the literal
+    # one: argparse honours unambiguous PREFIXES, so `lockstep run f --det`
+    # sets detach=True while a `!= "--detach"` filter leaves it in the child's
+    # command line — and that child detaches another child, forever. A fork
+    # bomb, one keystroke away, found by adversarial review before it shipped.
+    def _is_detach(a: str) -> bool:
+        return a.startswith("--") and len(a) > 2 and "--detach".startswith(a)
+
+    argv = [a for a in (getattr(ns, "_argv", None) or []) if not _is_detach(a)]
+    if not argv:  # pragma: no cover — main() always sets _argv
+        return _fail("--detach could not reconstruct its own command line", EXIT_CONFIG)
+    stamp = utcnow().replace(":", "").replace("-", "").split(".")[0].rstrip("Z")
+    log = runs_dir / f"detached-{stamp}Z.log"
+    # BEFORE the spawn (see detach.mark).
+    pre = locate()
+    before = mark(pre)
+    try:
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        proc, note = spawn_detached(driver_argv(argv), cwd=Path.cwd(), log_path=log)
+    except OSError as e:
+        # A spawn that never happened must exit with a frozen code, not a
+        # traceback — and on this class of machine an AV hold on the log file
+        # is a routine transient.
+        return _fail(f"--detach could not launch a driver: {e}", EXIT_CONFIG)
+    if note:
+        print(f"WARNING: {note}")
+    print(f"detached: launched (log: {log})")
+    run_dir, code, confirmed = await_start(proc, locate, pre=pre, before=before)
+    if confirmed:
+        print(f"  run dir: {run_dir}")
+        holder = inspect_lock(run_dir)
+        if holder.pid is not None:
+            # The DRIVER's pid, read back from the lock — NOT the one Popen
+            # returned. A launcher shim (a uv-built venv `python.exe` is one)
+            # re-execs, so the spawned pid never appears in the lock and cannot
+            # be found in the process table. This is the pid `status` and
+            # `active` cross-reference, so it is the only one worth printing.
+            print(f"  driver pid: {holder.pid}")
+        if code is not None:
+            print(f"  (it already finished, exit {code} — `lockstep status` has the detail)")
+        print(f"  follow:  lockstep status {run_dir}")
+        print(f"  block:   lockstep wait {run_dir}")
+        print("stdin is the null device: an approval auto-rejects (exit 6) rather than "
+              "waiting for a prompt nobody can see")
+        return EXIT_OK
+    if code is not None:
+        # It died before it ever held the lock — a held lock, a bad config, a
+        # missing stanza. That belongs in this terminal, not only in the log.
+        print(f"  the detached driver exited {code} before taking a run lock", file=sys.stderr)
+        for line in tail(log):
+            print(f"    {line}", file=sys.stderr)
+        return code if code != EXIT_OK else EXIT_CONFIG
+    print(f"  a process is alive but has not taken a run lock yet — "
+          f"check `lockstep active {runs_dir}` and the log above")
+    return EXIT_OK
+
+
 def cmd_run(ns) -> int:
     repo_root = Path(ns.repo_root).resolve()
     try:
@@ -244,6 +321,15 @@ def cmd_run(ns) -> int:
         args = _parse_args_kv(ns.arg or [], tg)
     except FlowError as e:
         return _fail(str(e), EXIT_VERIFY)
+    if getattr(ns, "detach", False):
+        # Before the free synchronous modes, so `--detach --dry-run` is
+        # refused rather than silently ignored. The child decides
+        # attach-vs-fresh itself; we look for the dir it settles on by the same
+        # lineage lookup it uses.
+        return _detach(
+            ns, Path(ns.runs_dir),
+            lambda: find_attachable_run(Path(ns.runs_dir), flow_hash, args),
+        )
     if not (ns.dry_run or ns.estimate or ns.replay):
         # Zero-token operations never touch a harness — nagging them (or every
         # replay_suite fixture, whose throwaway runs-dir has no record) would
@@ -342,6 +428,8 @@ def cmd_resume(ns) -> int:
     code, has_errors = _do_verify(tg, config, repo_root)
     if has_errors:
         return code
+    if getattr(ns, "detach", False):
+        return _detach(ns, run_dir.parent, lambda: run_dir)
     try:
         acquire_lock(run_dir, force=ns.force_unlock)
     except LockHeld as e:
@@ -410,6 +498,71 @@ def cmd_gc(ns) -> int:
     return EXIT_OK
 
 
+def cmd_active(ns) -> int:
+    """Every unfinished run under a runs root, with who (if anyone) is driving
+    it (consumer report 2026-08-13, minor item).
+
+    The question this answers is "is it safe to touch the working tree" — which
+    previously meant listing run dirs by hand, reading each `lock`, and
+    cross-referencing pids against the OS process table. Read-only; spends
+    nothing; always exits 0 (a listing has no verdict to report)."""
+    root = Path(ns.runs_dir)
+    dirs = sorted(root.iterdir()) if root.is_dir() else []
+    rows = 0
+    live = 0
+    idle = 0
+    for d in dirs:
+        if not (d / "state.json").exists():
+            continue
+        try:
+            state = load_state(d)
+        except (OSError, ValueError):
+            continue
+        unfinished = sorted(
+            n for n, r in state.nodes.items() if r.status in ("pending", "running", "blocked")
+        )
+        info = inspect_lock(d)
+        if not unfinished and info.state == "none":
+            continue
+        running = sorted(n for n, r in state.nodes.items() if r.status == "running")
+        if info.state == "alive":
+            tag, live = "RUNNING", live + 1
+        elif info.state == "foreign":
+            tag = "FOREIGN"
+        elif info.state == "unknown":
+            tag = "STARTING?"
+        elif info.state == "dead" or running:
+            tag = "STALE"
+        else:
+            # Unfinished, but nobody ever claimed it and nothing says `running`
+            # — a run stopped at a gate or a budget, possibly months ago. Every
+            # such run is unfinished forever, so listing them by default buries
+            # the one question this command exists to answer.
+            tag = "IDLE"
+            idle += 1
+            if not ns.all:
+                continue
+        rows += 1
+        print(f"{tag:<10} {d.name}   flow: {state.flow_name}")
+        print(f"  {info.describe()}")
+        print(f"  unfinished: {len(unfinished)} node(s)"
+              + (f"; running: {', '.join(running)}" if running else ""))
+        if tag == "STALE":
+            print(f"  reclaim:    lockstep resume {d}")
+    idle_note = (
+        "" if (ns.all or not idle)
+        else f"; {idle} idle unfinished run(s) not shown (--all)"
+    )
+    if not rows:
+        print(f"active: nothing is driving a run under {root}{idle_note}")
+        return EXIT_OK
+    print(f"active: {rows} run(s) under {root}; {live} with a live driver{idle_note}")
+    if live:
+        # The reason a domain expert asks: a live run may be writing the tree.
+        print("a RUNNING run may be writing the working tree — leave it alone until it settles")
+    return EXIT_OK
+
+
 def cmd_explain(ns) -> int:
     """A1: which recorded hash inputs moved. Reads state only; never plans,
     never spawns, never spends."""
@@ -447,6 +600,16 @@ def cmd_wait(ns) -> int:
         return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
     deadline = time.monotonic() + ns.timeout if ns.timeout else None
     while (run_dir / "lock").exists():
+        # A driver that died holding the lock releases it never, so the old
+        # `while lock exists` loop waited forever on a run nobody was
+        # advancing (reported live: 97 minutes). A dead SAME-HOST holder is
+        # the one case we can call with certainty; `foreign` and `unknown`
+        # keep waiting, exactly as `acquire_lock` refuses to clear them.
+        info = inspect_lock(run_dir)
+        if info.state == "dead":
+            print(f"wait: STALE — the lock {info.describe()}")
+            print(f"  nothing is driving this run; `lockstep resume {run_dir}` reclaims it")
+            break
         if deadline is not None and time.monotonic() > deadline:
             print(f"wait: lock still held after {ns.timeout:g}s (a crashed driver leaves "
                   f"a stale lock — check `lockstep status` and the lock file)")
@@ -496,6 +659,31 @@ def cmd_wait(ns) -> int:
     return code
 
 
+def _liveness_lines(run_dir: Path, state: RunState) -> list[str]:
+    """Is anything actually driving this run? (consumer report 2026-08-13 item 4)
+
+    `status` used to print `running` for a node whose driver had been dead for
+    an hour and a half, because nothing but `acquire_lock` ever asked. The
+    determination is free and read-only; the only thing that was missing was
+    somewhere to say it.
+    """
+    info = inspect_lock(run_dir)
+    running = sorted(n for n, r in state.nodes.items() if r.status == "running")
+    lines: list[str] = []
+    if info.state == "dead":
+        lines.append(f"STALE: the lock {info.describe()}")
+    elif info.state != "none":
+        lines.append(f"lock: {info.describe()}")
+    if info.state in ("dead", "none") and running:
+        lines.append(
+            f"STALE: {len(running)} node(s) recorded 'running' with no live driver: "
+            + ", ".join(running)
+        )
+    if lines and lines[-1].startswith("STALE"):
+        lines.append(f"  nothing is advancing this run — `lockstep resume {run_dir}` reclaims it")
+    return lines
+
+
 def cmd_status(ns) -> int:
     run_dir = Path(ns.run_dir)
     try:
@@ -503,6 +691,8 @@ def cmd_status(ns) -> int:
     except (OSError, ValueError) as e:
         return _fail(f"cannot read state: {e}", EXIT_CONFIG)
     print(f"flow: {state.flow_name}   started: {state.started_at}   token spawns: {state.token_spawns}")
+    for line in _liveness_lines(run_dir, state):
+        print(line)
     if state.driver_version:
         drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
         print(f"driver: {state.driver_version}{drift}")
@@ -706,6 +896,9 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--config", default=None)
     pr.add_argument("--executor-default", default=None)
     pr.add_argument("--fresh", action="store_true")
+    pr.add_argument("--detach", action="store_true",
+                    help="run in a process that outlives this one; prints the run dir and pid "
+                         "and exits 0 (stdin is the null device: approvals auto-reject)")
     pr.add_argument("--dry-run", action="store_true")
     pr.add_argument("--estimate", action="store_true",
                     help="plan plus an honest cost floor from prior runs; spends nothing")
@@ -715,7 +908,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --replay: use recordings whose input_hash no longer matches")
     pr.add_argument("--seed", default=None, metavar="RUN_DIR",
                     help="warm-start a new lineage: serve any node whose input_hash matches a "
-                         "successful result in RUN_DIR, run the rest (E7)")
+                         "successful result in RUN_DIR, run the rest (E7). Trusts a prior "
+                         "RESULT, not a prior TREE — not a 'start over cleanly' mechanism; "
+                         "use --fresh when the tree state is what went wrong")
     pr.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                     help="write OTLP/JSON spans (GenAI semantic conventions); "
                          "bare flag writes <run_dir>/spans.jsonl")
@@ -731,6 +926,9 @@ def main(argv: list[str] | None = None) -> int:
     pres.add_argument("--repo-root", default=".")
     pres.add_argument("--max-workers", type=int, default=2)
     pres.add_argument("--force-unlock", action="store_true")
+    pres.add_argument("--detach", action="store_true",
+                      help="resume in a process that outlives this one; prints the run dir and "
+                           "pid and exits 0 (stdin is the null device: approvals auto-reject)")
     pres.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                       help="write OTLP/JSON spans; a resume joins the run's existing trace")
     pres.add_argument("--cockpit", action="store_true",
@@ -806,6 +1004,16 @@ def main(argv: list[str] | None = None) -> int:
     pgc.add_argument("--apply", action="store_true", help="actually delete; default is a dry run")
     pgc.set_defaults(fn=cmd_gc)
 
+    pact = sub.add_parser(
+        "active", help="runs under a runs root that something claims to be driving (--all: every "
+                       "unfinished run)"
+    )
+    pact.add_argument("runs_dir", nargs="?", default="runs")
+    pact.add_argument("--all", action="store_true",
+                      help="also list unfinished runs nobody is driving (stopped at a gate or "
+                           "a budget, possibly long ago)")
+    pact.set_defaults(fn=cmd_active)
+
     pex = sub.add_parser("explain", help="which recorded hash inputs moved for a node (A1)")
     pex.add_argument("run_dir")
     pex.add_argument("node_id")
@@ -814,6 +1022,10 @@ def main(argv: list[str] | None = None) -> int:
     pex.set_defaults(fn=cmd_explain)
 
     ns = p.parse_args(argv)
+    # `--detach` re-invokes this exact command in a child, so it needs the
+    # command line verbatim — reconstructing it from the namespace would drop
+    # anything a future flag adds.
+    ns._argv = list(argv) if argv is not None else sys.argv[1:]
     return ns.fn(ns)
 
 

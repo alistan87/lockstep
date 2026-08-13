@@ -13,7 +13,7 @@ import socket
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel
 
@@ -130,6 +130,18 @@ class PhaseRecord(BaseModel):
     # evidence at an approval on a 3 000-file codemod anyway.
     touched_count: int | None = None
     touched_path: str | None = None
+    # The git tree objects this node ran BETWEEN — its write-scope baseline and
+    # the tree it left on success. Recorded only for a node that declares
+    # `spec.writes` and holds the tree token, because those are exactly the
+    # conditions under which the engine already computes both (a snapshot is
+    # O(tree bytes); measuring one just to record it would tax every node).
+    # `lockstep.probes.node_diff` reads them, which is what lets a reviewer ask
+    # "what did THAT step change" and get the same answer on every resume,
+    # instead of re-capturing a tree that later phases have moved on (consumer
+    # report 2026-08-13 item 1). `tree_after` stays None on a quarantined
+    # attempt: it was rolled back, so there is no tree it left.
+    tree_before: str | None = None
+    tree_after: str | None = None
     # E7: this result was SERVED from another run's recording under a matching
     # input_hash, not produced here. A reader of a run dir must be able to tell
     # what was computed from what was inherited — the seed's own tree, config
@@ -557,6 +569,67 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+class LockInfo(NamedTuple):
+    """What the lock file says, and whether anyone is behind it.
+
+    `state` is one of:
+      none     — no lock file; nothing claims to be driving this run
+      alive    — same host, pid still running
+      dead     — same host, pid gone: the driver died without releasing
+      foreign  — another host; liveness is unknowable from here (same rule
+                 `acquire_lock` applies before it clears anything)
+      unknown  — a lock we cannot read: absent/garbled pid, or the window
+                 between `acquire_lock`'s O_EXCL create and its write. NEVER
+                 report it as dead — `wait` would stop waiting on a run that
+                 is about to start.
+    """
+
+    state: str
+    pid: int | None = None
+    hostname: str | None = None
+    started: str | None = None
+
+    def describe(self) -> str:
+        who = f"pid {self.pid} on {self.hostname}"
+        if self.started:
+            who += f" since {self.started}"
+        return {
+            "none": "no lock held",
+            "alive": f"held by {who} (alive)",
+            "dead": f"recorded {who} — that process is NOT alive on this host",
+            "foreign": f"held by {who} — another host; liveness unknown from here",
+            "unknown": "a lock file is present but unreadable (a driver may be starting)",
+        }[self.state]
+
+
+def inspect_lock(run_dir: Path) -> LockInfo:
+    """Read `<run_dir>/lock` and decide whether its holder still exists.
+
+    Read-only and free: `status`, `wait` and `active` all need the same answer,
+    and before this it lived only inside `acquire_lock`, where nothing could
+    ask it without trying to take the lock.
+
+    Inherits `acquire_lock`'s one accepted weakness: a RECYCLED pid reads as
+    alive, so a crashed run can look driven until something else corrects it.
+    Distinguishing them needs the holder's process start time, which is not
+    portable; the trade was already made where it mattered more (clearing a
+    lock), and this only reports.
+    """
+    lock_path = Path(run_dir) / "lock"
+    if not lock_path.exists():
+        return LockInfo("none")
+    try:
+        holder = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return LockInfo("unknown")
+    if not isinstance(holder, dict) or not isinstance(holder.get("pid"), int):
+        return LockInfo("unknown")
+    pid, host, started = holder["pid"], holder.get("hostname"), holder.get("started")
+    if host != socket.gethostname():
+        return LockInfo("foreign", pid, host, started)
+    return LockInfo("alive" if _pid_alive(pid) else "dead", pid, host, started)
 
 
 def acquire_lock(run_dir: Path, force: bool = False) -> None:

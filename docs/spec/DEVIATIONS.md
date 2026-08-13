@@ -513,3 +513,63 @@ file records implementation-level departures below that bar.
   reference sites for §6.4, so an arg used only in a scope no longer trips
   `unused-arg`. Hash impact: none beyond what args already carry — they fold
   into every node's `input_hash` already.
+
+- **2026-08-13 — liveness, detachment, and per-step diffs (consumer report,
+  MIMIR / ontology-dashboard phase 2).** Six items from one live multi-hour
+  session; the two that were wrong are recorded in
+  `docs/notes/LESSONS-TO-MECHANISMS.md` rather than acted on. No frozen surface
+  moves: no exit code is repurposed, `format_version` is unchanged, hash
+  composition is untouched (the new record fields are outputs, never inputs),
+  and §7 fencing is unaffected.
+
+  - **`PhaseRecord.tree_before` / `tree_after` + `probes.node_diff`.** For a
+    node that declares `spec.writes`, holds the `tree` token and SUCCEEDS, the
+    engine now records the two git tree objects it ran between — both already
+    computed for the write-scope check, so no new tree walk exists. The probe
+    diffs those two recorded trees, giving a reviewer an answer about ONE step
+    that a later phase cannot move. `worktree_diff` (live tree) remains, with
+    the new `lint-live-diff-per-phase` warning for a flow that captures the
+    live tree more than once. The pair always brackets one attempt: a fresh
+    baseline clears `tree_after`, and a quarantined attempt records none (it
+    was rolled back). `flows/starter/two-phase-remediation.tg.json` is the
+    worked template, executed end to end (fake executor, zero tokens) by
+    `tests/test_two_phase_starter.py`. The engine also now takes ONE `scope-after` snapshot and
+    shares it with the scope diff and the quarantine patch — the two-walk cost
+    per scoped node is unchanged and still pinned by test; the violation path
+    lost a third walk.
+  - **`state.inspect_lock` + `STALE:` in `status`, `wait`, and a new
+    `lockstep active [runs_dir]`.** SPEC §3's command list gains `active`
+    (read-only, always exits 0, spends nothing). It lists runs something claims
+    to be driving; a run left unfinished at a gate is counted, not listed,
+    without `--all` — every such run is unfinished forever, and on this repo's
+    own `runs/` the default listing was 18 rows of history and nothing live. `wait` now stops polling when
+    the lock's holder is a dead SAME-HOST pid and reports the run's meaning
+    instead of blocking forever — the exit codes it can return are unchanged.
+    `foreign` (another host) and `unknown` (including `acquire_lock`'s
+    create-then-write window) are never called dead, matching the rule
+    `acquire_lock` already applies before clearing anything. Recycled pids read
+    as alive, as they always have.
+  - **`run|resume --detach`.** The driver spawns a detached copy of itself
+    (`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` on Windows, falling back
+    with an explicit WARNING when the surrounding job forbids breakaway;
+    `setsid` on POSIX), waits until that child has actually become the run's
+    driver, prints the run dir and the DRIVER's pid (read from the lock — a
+    launcher-shim `python.exe` re-execs, so the spawned pid is not it), and
+    exits 0. The child runs the same argv minus the flag, so no run semantics
+    are special-cased; `--dry-run`/`--estimate`/`--replay` are refused (exit
+    7), as is a spawn that fails. stdin is always the null device: an approval
+    must auto-reject (exit 6), never wait unseen. Requires `__main__.py`, added
+    for the same reason.
+  - **A resume narrates its own cache misses.** When revalidation invalidates a
+    `done` node, the engine now logs `re-running '<id>' (its cached result no
+    longer matches): <parts>` alongside the journal entry it already wrote.
+    Same information `explain` has always had, said at the moment of the
+    decision — the reporter's item 1(b), and the reason their contamination was
+    only discoverable after a confusing gate block.
+
+  - **`lint-tools-drops-result-channel`.** A stanza that attaches an
+    `--extension` and hands readonly nodes a `--tools` allowlist without
+    `submit_result` silently disables that extension's structured-output tool.
+    Nothing fails loudly — a readonly node answers on stdout (§8.3) — so what
+    is lost is ENFORCEMENT of the envelope, which is why a lint and not an
+    error.

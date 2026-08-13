@@ -120,6 +120,7 @@ JUDGEMENT_NODES = {
     "implement-heal": ["review"],
     "bugfix-heal": ["diagnose", "review"],
     "sdlc-e2e": ["plan-review", "plan-gate", "review", "report"],
+    "two-phase-remediation": ["review-repro", "review-fix"],
 }
 
 
@@ -185,3 +186,47 @@ def test_flows_that_interpolate_a_diff_raise_the_spill_cap(name):
     d = flow(name)
     assert d.get("max_interp_chars", 20000) >= 60000
     assert "spilled" in nodes(name)["review"]["spec"]["task"]
+
+
+# ------------------------------- the two-phase pattern (consumer report 2026-08-13)
+
+
+def test_the_two_phase_template_never_captures_the_live_tree():
+    """Its whole reason to exist. `worktree_diff` reports the tree AS IT IS NOW,
+    and shell nodes always re-run on resume (SPEC 0.1.7) — so in a two-phase
+    flow the phase-1 capture eventually describes phase 2's tree, the reviewer
+    above it re-bills, and it blocks on violations that never existed. Both
+    captures here read the trees the ENGINE recorded for one step.
+    """
+    ns = nodes("two-phase-remediation")
+    for probe_id, target in (("repro-diff", "reproduce"), ("fix-diff", "remediate")):
+        cmd = ns[probe_id]["spec"]["cmd"]
+        assert cmd[:3] == ["python", "-m", "lockstep.probes.node_diff"], probe_id
+        assert cmd[cmd.index("--node") + 1] == target, probe_id
+    # Nodes only: the flow's DESCRIPTION names `worktree_diff` on purpose, to
+    # say what this template is choosing against and why.
+    assert "worktree_diff" not in json.dumps(flow("two-phase-remediation")["nodes"])
+
+
+def test_the_two_phase_reviewers_read_their_own_phase():
+    ns = nodes("two-phase-remediation")
+    for reviewer, probe_id in (("review-repro", "repro-diff"), ("review-fix", "fix-diff")):
+        spec = ns[reviewer]["spec"]
+        assert probe_id in ns[reviewer]["depends_on"]
+        assert "{steps.%s.output}" % probe_id in spec["task"]
+        assert spec.get("readonly") is True
+        assert "spilled" in spec["task"], "a real diff blows past the interpolation cap"
+    assert flow("two-phase-remediation").get("max_interp_chars", 20000) >= 60000
+
+
+def test_node_diff_targets_are_scoped_and_serialized():
+    """`node_diff` can only answer for a node the engine recorded trees for:
+    one that declares `spec.writes` and is NOT readonly (a readonly node holds
+    no `tree` token, and the write-scope baseline is only taken inside it).
+    A template whose targets drifted would print an explanation instead of a
+    diff, and the reviewer above it would judge nothing at all."""
+    ns = nodes("two-phase-remediation")
+    for target in ("reproduce", "remediate"):
+        spec = ns[target]["spec"]
+        assert "writes" in spec, target
+        assert not spec.get("readonly"), target

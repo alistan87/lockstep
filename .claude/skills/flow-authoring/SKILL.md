@@ -123,13 +123,25 @@ text, a readonly node judges it). Always exits 0 — a failed command is an
 observation, not a broken node.
 
 - `worktree_diff [--base HEAD]` — status, diff, and the contents of CREATED
-  files (untracked, so absent from any diff).
+  files (untracked, so absent from any diff). The tree **as it is now**.
+- `node_diff --node <id>` — what ONE STEP changed, from the two git trees the
+  engine recorded for it. Same answer on every resume. Needs the target node to
+  declare `spec.writes`, hold the `tree` token, and have succeeded.
 - `command_output "<cmd>" [--label repro]` — run one command, report exit code
   and output, capped middle-out so a traceback keeps both ends.
 
+**Use `node_diff` for any flow that reviews more than one phase.** Shell nodes
+always re-run on resume (§0.1.7), so a second `worktree_diff` capture — and,
+worse, the FIRST one re-running later — reports a tree that now contains the
+next phase's work. The reviewer's prompt embeds it, its hash legitimately
+moves, and a review that had PASSED re-bills and comes back with violations
+that never existed (reported live: two full restarts).
+`verify --lint` warns via `lint-live-diff-per-phase`.
+
 Shape: `shell probe → readonly judge`. `flows/starter/implement-heal` (capture
 the diff, then review it) and `bugfix-heal` (run the repro, then diagnose it)
-are the worked examples. Beyond enabling `readonly`, the observation becomes
+are the worked examples; `two-phase-remediation` is the two-phase one, where
+both reviewers read `node_diff`. Beyond enabling `readonly`, the observation becomes
 deterministic, cached, and durable as evidence in the run dir.
 
 ## Interpolation (§7)

@@ -27,7 +27,9 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\python.exe -m pytest                 # full suite; run after EVERY change
 .venv\Scripts\lockstep.exe verify <flow.tg.json>   # static verification (exit 5 on error)
 .venv\Scripts\lockstep.exe run <flow> --dry-run    # layered execution plan
-.venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6)
+.venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6); STALE when the lock's pid is dead
+.venv\Scripts\lockstep.exe active [runs] [--all]   # runs with a driver (live/stale/foreign); --all adds idle ones
+.venv\Scripts\lockstep.exe run <flow> --detach     # a driver that outlives this process; prints run dir + DRIVER pid
 .venv\Scripts\lockstep.exe steer <run_dir> <node> "msg"   # consumed at next checkpoint; folds into hash
 .venv\Scripts\lockstep.exe cancel <run_dir> <node>        # kills the node's process tree; no retries
 .venv\Scripts\lockstep.exe run <flow> --estimate   # cost floor from prior runs; spends nothing
@@ -57,7 +59,11 @@ fact and always exits 0. Probes exist because `readonly_argv` must remove the
 shell — bash is a write vector, and `readonly` is what licenses dropping the
 `tree` token — so a readonly reviewer cannot run `git diff` and a readonly
 diagnostician cannot run the repro. `worktree_diff` and `command_output` hand
-them that input as data. `flows/selftest-replay.tg.json` is the
+them that input as data. `node_diff --node <id>` is `worktree_diff`'s
+deterministic sibling: it diffs the two git trees the engine RECORDED for a
+scoped node (`tree_before`/`tree_after`) instead of the live tree, so a
+multi-phase flow's phase-1 review cannot be re-run against phase 2's work —
+use it whenever a flow reviews more than one phase (`lint-live-diff-per-phase`). `flows/selftest-replay.tg.json` is the
 one flow that must stay **shell-only**: a harness node's input hash includes the
 local executor-config digest, so only an all-shell flow yields a fixture whose
 recorded hashes match on another machine — which is what makes

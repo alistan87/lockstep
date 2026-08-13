@@ -25,6 +25,8 @@ lockstep verify flows/x.tg.json            # loop until "ok"; exit 5 lists ALL n
 lockstep verify flows/x.tg.json --config c.toml     # SAME --config the run will use, or stanzas resolve to nothing
 lockstep run flows/x.tg.json --dry-run --arg k=v    # inspect waves; costs nothing
 lockstep run flows/x.tg.json --arg k=v     # only with budget.max_agent_spawns set
+lockstep run flows/x.tg.json --detach      # ditto, in a process that outlives this one; prints run dir + driver pid
+lockstep active runs/                      # runs with a driver (live, stale or foreign); --all adds the idle ones
 lockstep wait runs/<run-dir>               # block until the driver exits; exits with the RUN's meaning
 lockstep status runs/<run-dir>             # progress incl. latest per-node checkpoint
 lockstep steer runs/<run-dir> <node> "…"   # mid-flight correction, consumed at next checkpoint
@@ -43,6 +45,25 @@ blocks until the human acts.
 **`status` prints the driver version that created the run**, flagged when it
 differs from the installed one, and `resume` says so too. Behaviour genuinely
 differs across versions — check it before acting on a remembered symptom.
+
+**A resume now SAYS which cached nodes it is re-running, and why** — one
+`re-running 'x' (its cached result no longer matches): prompt: changed` line per
+node, at the moment of the decision. The reason was always recorded (`explain`
+reads it); nothing printed it, so a re-billed node looked identical to an
+ordinary cache miss while you watched. Shell nodes stay quiet: they always
+re-run by design (§0.1.7) and carry no reason.
+
+**`running` is a claim about a process, and both `status` and `wait` now check
+it.** A driver that dies holding the lock releases it never, so `state.json`
+keeps saying `running` and `wait` used to poll forever (reported live: 97
+minutes). Both cross-reference the pid in `<run_dir>/lock` against this host's
+process table and print `STALE: …` when it is gone; `wait` stops waiting and
+reports the run's meaning instead of hanging. `lockstep active runs/` asks the
+same question of every run at once — which is how you decide whether it is safe
+to touch the working tree. It lists runs something claims to be driving; a run
+stopped at a gate months ago is unfinished forever and is counted, not listed,
+unless you pass `--all`. A `foreign` lock (another host) is never called
+dead: the same rule `resume` applies before it clears anything.
 
 ## Branch on exit codes, not log text (frozen)
 
@@ -209,3 +230,45 @@ nodes, do not resume, and report what was spent.
   when it exits or is killed, the kernel reaps the rest. If descendants ever do
   survive on Windows, check `phases/<node>/job-unavailable.txt` first; it means
   that node never had the guarantee, which looks identical to it failing.
+
+## Windows, when your own shell is Git-Bash
+
+Aimed at an integrator whose *invoking* shell is Git-Bash/MSYS — an increasingly
+common shape for agent-harness integrations, and the one where the hazards
+below are invisible because they happen **before** any lockstep code sees the
+command. Both were reported live (consumer report 2026-08-13, item 6).
+
+- **Backslash paths are silently mangled.** MSYS strips `\` and the character
+  after it from an argument, so `--runs-dir .\runs` arrives as `--runs-dir
+  .runs` — a different, wrong, un-tracked directory, with no error anywhere.
+  The canary, before trusting any command line:
+
+  ```bash
+  echo "test: .\.venv\Scripts\lockstep.exe"
+  ```
+
+  If the output is missing its backslashes, every backslash path on that
+  command line was corrupted. Use forward slashes (`.venv/Scripts/lockstep.exe`,
+  `--runs-dir runs`) from Git-Bash, or run the command from PowerShell.
+
+- **`&`, `nohup` and `disown` do not survive an agent tool call.** `nohup`
+  blocks SIGHUP; it does nothing about a harness tearing down the whole process
+  tree when the tool call ends — which on Windows is a job object with
+  KILL_ON_JOB_CLOSE. The reported result was a driver killed 2.5 minutes into a
+  40-minute node. Use **`lockstep run … --detach`** (or `resume … --detach`):
+  the driver spawns a detached copy of itself with the platform-appropriate
+  escape (`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` on Windows, `setsid`
+  on POSIX), waits until that child has actually taken the run's lock, then
+  prints the run dir and the **driver** pid and exits 0. If the surrounding job
+  forbids breakaway, it says so in a WARNING rather than pretending — a detach
+  that silently still dies with its parent is worse than no detach.
+
+- **Two pids, one of them useless.** A uv-built venv `python.exe` on Windows is
+  a launcher shim that re-execs: the pid you get from spawning it is not the pid
+  running the driver, and it will not be in `<run_dir>/lock`. Always take the
+  driver pid from the lock (`lockstep status`, `lockstep active`, or the
+  `driver pid:` line `--detach` prints), never from whatever launched it.
+
+- **`< NUL` / null stdin is deliberate.** A detached run must never sit at an
+  approval prompt: non-TTY stdin auto-rejects with exit 6, which is the handoff
+  signal. `--detach` always uses the null device for stdin.

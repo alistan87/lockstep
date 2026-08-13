@@ -175,3 +175,97 @@ def test_l1_ungated_mutation_variants():
         {"id": "p", "kind": "shell", "final": True,
          "spec": {"cmd": ["git", "status"], "writes": []}}]})
     assert "lint-ungated-mutation" not in codes(lint_flow(f5))
+
+
+# --- consumer report 2026-08-13 --------------------------------------------
+
+
+def _capture(node_id, dep=None):
+    n = {"id": node_id, "kind": "shell", "output": "text",
+         "spec": {"cmd": ["python", "-m", "lockstep.probes.worktree_diff"], "writes": []}}
+    if dep:
+        n["depends_on"] = [dep]
+    return n
+
+
+def test_w5_a_multi_phase_flow_capturing_the_live_tree_twice():
+    """Item 1: two `worktree_diff` captures in one flow means the second one
+    runs against a tree the first phase's reviewer was never shown — and on
+    resume the FIRST capture re-runs (shell nodes always do) against that same
+    later tree, so a passed review re-bills and comes back contaminated."""
+    flow = tg({
+        "name": "phases",
+        "nodes": [
+            _capture("capture-1"),
+            {"id": "review-1", "kind": "harness", "depends_on": ["capture-1"],
+             "spec": {"task": "review {steps.capture-1.output}", "readonly": True}},
+            {"id": "fix", "kind": "harness", "depends_on": ["review-1"],
+             "spec": {"task": "fix", "writes": ["src"]}},
+            _capture("capture-2", "fix"),
+            {"id": "review-2", "kind": "harness", "final": True, "depends_on": ["capture-2"],
+             "spec": {"task": "review {steps.capture-2.output}", "readonly": True}},
+        ],
+    })
+    found = codes(lint_flow(flow))
+    assert found.count("lint-live-diff-per-phase") == 1
+    msg = next(i.message for i in lint_flow(flow) if i.code == "lint-live-diff-per-phase")
+    assert "node_diff" in msg
+
+
+def test_w5_is_silent_for_a_single_capture():
+    """The single-phase shape every starter flow uses: capture once at the end,
+    review it. Nothing has moved underneath it."""
+    flow = tg({
+        "name": "one",
+        "nodes": [
+            {"id": "impl", "kind": "harness", "spec": {"task": "do", "writes": ["src"]}},
+            _capture("capture", "impl"),
+            {"id": "review", "kind": "harness", "final": True, "depends_on": ["capture"],
+             "spec": {"task": "review {steps.capture.output}", "readonly": True}},
+        ],
+    })
+    assert "lint-live-diff-per-phase" not in codes(lint_flow(flow))
+
+
+def test_w6_a_tools_allowlist_that_drops_the_extensions_own_tool():
+    """Item 5: `--tools` covers EXTENSION tools too, so an allowlist that does
+    not name `submit_result` silently removes the guard extension's structured
+    output channel — the node still answers on stdout (§8.3), so nothing fails
+    loudly; the envelope simply stops being enforced."""
+    flow = tg({
+        "name": "ro",
+        "nodes": [
+            {"id": "rev", "kind": "harness", "final": True, "output": "json",
+             "contract": "Verdict", "spec": {"task": "judge", "readonly": True}},
+        ],
+    })
+    cfg = LockstepConfig(default="pi", executors={"pi": ExecutorStanza(
+        argv=["pi", "--extension", "guard.ts", "{prompt}"],
+        readonly_argv=["--tools", "read,grep,find,ls"],
+    )})
+    assert codes(lint_flow(flow, cfg)).count("lint-tools-drops-result-channel") == 1
+    ok = LockstepConfig(default="pi", executors={"pi": ExecutorStanza(
+        argv=["pi", "--extension", "guard.ts", "{prompt}"],
+        readonly_argv=["--tools", "read,submit_result"],
+    )})
+    assert "lint-tools-drops-result-channel" not in codes(lint_flow(flow, ok))
+
+
+def test_w6_needs_an_extension_before_it_can_complain():
+    """No `--extension` means no extension tool to drop; a bare allowlist is
+    just a tool restriction, which is the whole point of readonly_argv."""
+    flow = tg({"name": "ro2", "nodes": [
+        {"id": "rev", "kind": "harness", "final": True, "spec": {"task": "j", "readonly": True}}]})
+    cfg = LockstepConfig(default="c", executors={"c": ExecutorStanza(
+        argv=["c", "{prompt}"], readonly_argv=["--tools", "read,grep"])})
+    assert "lint-tools-drops-result-channel" not in codes(lint_flow(flow, cfg))
+    assert "lint-tools-drops-result-channel" not in codes(lint_flow(flow))  # no config: skipped
+
+
+def test_w6_also_catches_an_explicit_exclusion():
+    flow = tg({"name": "ro3", "nodes": [
+        {"id": "rev", "kind": "harness", "final": True, "spec": {"task": "j", "readonly": True}}]})
+    cfg = LockstepConfig(default="c", executors={"c": ExecutorStanza(
+        argv=["c", "--extension", "g.ts", "--exclude-tools", "write,submit_result", "{prompt}"],
+        readonly_argv=["--tools", "read,submit_result"])})
+    assert "lint-tools-drops-result-channel" in codes(lint_flow(flow, cfg))

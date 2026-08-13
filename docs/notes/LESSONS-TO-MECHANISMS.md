@@ -235,3 +235,93 @@ upgrade, a baseline gate's adjudicated-vs-raw verdict, `restored-undeclared`,
 and the version-drift note. `lockstep wait`, `verify --config`, and the drift
 line are in DRIVING-LOCKSTEP.md's drive loop. **The prose residue is now
 placed in full; nothing from the 24 lessons is unhomed.**
+
+---
+
+## Consumer report 2026-08-13 (MIMIR / ontology-dashboard phase 2, driver 0.8.0)
+
+Six items from one continuous multi-hour session driving a 13-node
+verification-first flow on Windows, through two silent process deaths and two
+contaminated-diff blocks. Same provenance rule as the batch above: every claim
+was re-verified against this repo's source before acting, and two of the six
+were wrong in ways worth writing down.
+
+**1 — "resume invalidation is whole-tree, not dependency-scoped" (real symptom,
+wrong mechanism).** The reporter's earlier phases genuinely re-ran against a
+contaminated tree, twice, at a cost of two full restarts. But the lineage-head
+fingerprint they inferred is not what did it, and their proposed fix —
+scoping re-validation to a node's dependency chain — would not have helped,
+because the contamination travels ALONG a correctly-declared dependency edge:
+
+- `capture-diff-*` is a shell node; shell nodes always re-run on resume
+  (SPEC §0.1.7). Every resume re-captures the tree AS IT IS NOW.
+- By phase 2 that tree contains phase 2's work.
+- The reviewer fences the capture into its prompt, so its `input_hash`
+  legitimately moves and it legitimately re-runs — now judging phase 1 against
+  a tree that has moved on.
+
+Nothing in that chain is a defect. What was missing was a way to ask "what did
+node X change" and get the same answer forever. Shipped: `PhaseRecord.tree_before`
+/ `tree_after` (the write-scope baseline and the tree the node left — both
+already computed for a scoped node serialized on the tree, so recording them
+costs nothing) and `python -m lockstep.probes.node_diff --node <id>`, which
+diffs those two recorded git trees. `verify --lint` gained
+`lint-live-diff-per-phase` for a flow that captures the live tree more than
+once, and `flows/starter/two-phase-remediation.tg.json` is the worked template
+(prove it, then fix it; each phase reviewed on its own change).
+`tests/test_two_phase_starter.py` runs that template end to end on the fake
+executor and asserts both halves — each reviewer sees only its own phase, and a
+resume moves neither capture. Swapping `node_diff` for `worktree_diff` there
+fails with "the phase-1 capture moved under the reviewer", which is the
+consumer's incident reproduced as a test. The engine now also takes ONE `scope-after` snapshot and shares it with
+the scope diff and the quarantine patch, which removes a third whole-tree walk
+from the violation path; the two-walk cost claim is unchanged and still pinned.
+
+**2 — "`--seed` can re-serve a stale shell result" (already closed).**
+`seed.py` returns early for any non-cacheable executor, deliberately and with
+the reason in the docstring; a live-tree probe is a shell node and is never
+seeded. The reporter reasoned it through and avoided it rather than testing it.
+The doc gap was real: `--seed`'s CLI help and FLOW-AUTHORING now state that a
+seed trusts a prior RESULT, not a prior TREE, and is not a "start over cleanly"
+mechanism.
+
+**3 — no detached launch mode (real).** `nohup`/`&` do not survive an agent
+tool call on Windows, where the harness tears the process tree down via a
+KILL_ON_JOB_CLOSE job. Shipped: `run|resume --detach` (`detach.py`) —
+`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` on Windows with an explicit
+WARNING when the surrounding job forbids breakaway, `setsid` on POSIX, null
+stdin always (an approval must auto-reject, never wait unseen). The child runs
+the same argv minus `--detach`, so no run semantics are special-cased; the
+parent waits until the child has actually taken the lock, so a failed launch
+lands in the caller's terminal instead of only in a log.
+
+**4 — `status`/`wait` could not tell "running" from "orphaned" (real, and the
+cheapest of the six).** The determination already existed inside
+`acquire_lock`; nothing read-only could ask it. Shipped: `state.inspect_lock`
+(none/alive/dead/foreign/unknown — `unknown` covers `acquire_lock`'s
+create-then-write window and must never read as dead), a `STALE:` line in
+`status`, `wait` breaking its poll loop on a dead same-host holder, and
+`lockstep active [runs_dir]` for "is it safe to touch the tree".
+
+**5 — `--tools` can drop the extension's own `submit_result` (already
+documented; their config had drifted).** `lockstep.toml.example`,
+FLOW-AUTHORING, ADDENDUM-A and `test_addendum_a.py` all pin
+`readonly_argv = ["--tools", "read,submit_result"]` with this exact rationale.
+Their causal theory was also wrong: a readonly node gets `FOOTER_READONLY` and
+answers on stdout (§8.3), so losing `submit_result` costs ENFORCEMENT of the
+envelope, not the answer. Shipped anyway, because a config can drift silently:
+`lint-tools-drops-result-channel` fires when a stanza attaches an
+`--extension` and its tool list does not permit `submit_result`.
+
+**6 — no Windows/Git-Bash section for integrators (real).** DRIVING-LOCKSTEP
+now has one: the backslash-mangling canary (`--runs-dir .\runs` silently
+becoming `.runs`), why bash backgrounding does not survive a tool call, and
+the two-pids trap — a uv-built venv `python.exe` is a launcher shim, so the
+spawned pid is not the driver's and will not be in `<run_dir>/lock`. Always
+take the driver pid from the lock.
+
+**Deferred.** Real-time concurrent-edit detection (their minor ask): a
+snapshot is O(tree bytes) and already measured at 1.4 s on a 47 MB tree —
+polling it during a node multiplies the cost this repo added `kind: "timing"`
+lines to make visible. Revisit only with an OS-level watcher and a measured
+budget.
