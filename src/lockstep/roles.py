@@ -332,6 +332,7 @@ class Engine:
             # concurrency 1 re-read the mailbox between items.
             steer_text=render_steering(read_mailbox(self.store.run_dir, node.id)),
             contracts_module=self.tg.contracts_module,
+            runs_root=self.store.run_dir.parent,
         )
 
     def _body_referenced_deps(self, node: Node) -> set[str]:

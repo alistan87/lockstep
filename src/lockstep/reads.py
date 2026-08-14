@@ -158,8 +158,13 @@ def apply_reads(reads: list[str], ctx, node_id: str) -> tuple[list[str], dict[st
 
     rendered = render_scope(list(reads), ctx.args)
     run_dir = Path(ctx.phase_dir).parents[1]
+    # The exclusion uses the REAL runs root from the ctx when the engine set
+    # one; the phase-dir derivation is only the fallback for a bare ctx. The
+    # timing line still goes beside the phase dir — a throwaway planner's
+    # journal is exactly where its timing belongs.
+    runs_root = Path(ctx.runs_root) if getattr(ctx, "runs_root", None) else run_dir.parent
     part, detail, stats = hash_reads(
-        Path(ctx.repo_root), rendered, exclude_roots=(run_dir.parent,)
+        Path(ctx.repo_root), rendered, exclude_roots=(runs_root,)
     )
     try:
         append_event(run_dir, {"kind": "timing", "node": node_id, "op": "reads-hash", **stats})

@@ -42,6 +42,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
 .venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged
 .venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
+.venv\Scripts\lockstep.exe explain <run_dir> --graph  # whole-graph staleness dry run vs the current tree; plans into a throwaway dir, zero spawns
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
 .venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)

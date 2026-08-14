@@ -53,6 +53,12 @@ class RenderCtx(BaseModel):
     # schema it will validate against; staying silent about it charged authors
     # a corrective re-spawn for every guessed field name.
     contracts_module: str | None = None
+    # The REAL runs root, for spec.reads exclusion (parity 3.1): a `**` glob
+    # must never hash run dirs. Explicit rather than derived from phase_dir,
+    # because a throwaway planning dir (`explain --graph`) has a phase_dir
+    # whose grandparent is the system temp dir — deriving from it excluded
+    # everything under temp, including the tree being planned against.
+    runs_root: Path | None = None
 
 
 class RawResult(BaseModel):

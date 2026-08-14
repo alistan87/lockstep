@@ -564,10 +564,24 @@ def cmd_active(ns) -> int:
 
 
 def cmd_explain(ns) -> int:
-    """A1: which recorded hash inputs moved. Reads state only; never plans,
-    never spawns, never spends."""
-    from .explain import explain_node
+    """A1: which recorded hash inputs moved. The node modes read state only;
+    `--graph` (parity 3.2) plans every node into a throwaway directory and
+    compares against the record — still zero spawns, zero tokens."""
+    from .explain import explain_graph, explain_node
 
+    if getattr(ns, "graph", False):
+        if ns.node_id:
+            return _fail("--graph takes no node id (it covers the whole graph)", EXIT_CONFIG)
+        repo_root = Path(ns.repo_root).resolve()
+        try:
+            config = load_config(
+                Path(ns.config) if getattr(ns, "config", None) else repo_root / "lockstep.toml"
+            )
+        except ConfigError as e:
+            return _fail(str(e), EXIT_CONFIG)
+        return explain_graph(Path(ns.run_dir), repo_root=repo_root, config=config)
+    if not ns.node_id:
+        return _fail("pass a node id, or --graph for the whole-graph dry run", EXIT_CONFIG)
     return explain_node(
         Path(ns.run_dir), ns.node_id, Path(ns.against) if ns.against else None
     )
@@ -1014,11 +1028,18 @@ def main(argv: list[str] | None = None) -> int:
                            "a budget, possibly long ago)")
     pact.set_defaults(fn=cmd_active)
 
-    pex = sub.add_parser("explain", help="which recorded hash inputs moved for a node (A1)")
+    pex = sub.add_parser("explain", help="which recorded hash inputs moved for a node (A1); "
+                                         "--graph = whole-graph staleness dry run (3.2)")
     pex.add_argument("run_dir")
-    pex.add_argument("node_id")
+    pex.add_argument("node_id", nargs="?", default=None)
     pex.add_argument("--against", default=None, metavar="RUN_DIR",
                      help="diff this run's recorded parts against another run dir's")
+    pex.add_argument("--graph", action="store_true",
+                     help="plan the WHOLE graph against the current tree and report what "
+                          "would re-run and why; plans into a throwaway dir, spawns nothing")
+    pex.add_argument("--repo-root", default=".")
+    pex.add_argument("--config", default=None, metavar="TOML",
+                     help="config to plan against (default: <repo-root>/lockstep.toml)")
     pex.set_defaults(fn=cmd_explain)
 
     ns = p.parse_args(argv)
