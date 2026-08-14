@@ -158,6 +158,16 @@ a feature over adding a dependency. Full pytest after every change.
   `--extension`. After a pi upgrade, re-run
   `lockstep run flows\starter\pi-guard-smoke.tg.json --fresh` — `doctor` probes
   the stanza, not the guard's behaviour.
+- pi stanzas also carry `--no-context-files --no-skills`: pi auto-loads a
+  repo-root `AGENTS.md`/`CLAUDE.md` — including THIS file, proven by live
+  control on this machine — and discovered skills into headless spawns, none
+  of it in `input_hash`. pi 0.83.0 has no `--persona` flag; leave
+  `persona_flag` unset so the driver prepends the persona body (§8.4).
+- A persona that never mutates by contract says `readonly: true` in its
+  front-matter (`reviewer.md`, `arbiter.md`); `lint-persona-not-readonly` then
+  catches a node wearing it while declaring neither `spec.readonly` nor
+  `spec.writes`. The key is stripped before hashing — adding it re-bills
+  nothing.
 - This machine's AV causes transient `PermissionError` on file replaces and
   git object writes — retry once before investigating.
 - `runs/` holds prompts, diffs, and model output: sensitive, gitignored,

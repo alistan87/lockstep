@@ -109,6 +109,14 @@ prompt, the persona body, the argv template, and the digest of the **resolved**
 executor stanza — not the whole config file, so editing an unrelated stanza does
 not invalidate the world.
 
+One boundary to know: the hash covers what the **driver** sends. A harness that
+auto-discovers instruction files on its own (pi loads a repo-root
+`AGENTS.md`/`CLAUDE.md`; Claude Code loads `CLAUDE.md`) adds context the hash
+cannot see — editing such a file changes behaviour while every `input_hash`
+stays put, which defeats `run`, `--replay`, `--seed`, and `explain` at once.
+The shipped pi stanzas close this in argv (`--no-context-files --no-skills`);
+`contrib/AUTHORING-FOR-PI-ON-WINDOWS.md` §1 is the full story.
+
 Two implications worth internalising, because both surprise people:
 
 - **Editing a flow file starts a new lineage.** The flow hash changes, every

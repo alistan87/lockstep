@@ -114,7 +114,20 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
 
   **Consequence to design around: a readonly node cannot run `git diff` or
   search the repo.** Hand it the input as data from a shell node — see the
-  probe library below.
+  probe library below. And a directory reference is a search even when it
+  doesn't look like one: "every file under `gates/`" needs the same treatment,
+  because `read` takes a named file and errors on a directory (`EISDIR` on
+  pi 0.83.0) — have a shell node emit the listing and say "the files listed
+  below" instead.
+
+  **Give never-mutating personas `readonly: true` in their front-matter**
+  (`personas/reviewer.md` and `arbiter.md` here carry it; the key is stripped
+  before hashing, so adding it re-bills nothing). `spec.persona` and
+  `spec.readonly` are independent fields, so a "you fix nothing" persona on a
+  node that declares neither `spec.readonly` nor `spec.writes` silently keeps
+  full write tools and the `tree` token — `verify --lint` names that
+  (`lint-persona-not-readonly`). Any explicit statement satisfies it,
+  including `writes: []` for a reviewer that must keep a shell.
 
 ## The probe library (`python -m lockstep.probes.<name>`)
 

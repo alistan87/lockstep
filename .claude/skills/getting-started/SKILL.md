@@ -59,6 +59,11 @@ wonder whether something is broken:
   `--mode json`**, because a readonly node answers on stdout; on claude it is
   `--disallowedTools`. Readonly nodes drop the `tree` token and run in
   parallel, so this is usually a speedup as well as a safety flag.
+- **Keep `--no-context-files --no-skills` on the pi stanzas.** They are in the
+  template on purpose: pi auto-loads a repo-root `AGENTS.md`/`CLAUDE.md` (and
+  discovered skills) into headless spawns, and none of that is in the input
+  hash — an invisible instruction channel that breaks caching, replay, and
+  `explain`. Trimming flags you don't recognise is how it comes back.
 
 ## Step 3 — the paid check
 

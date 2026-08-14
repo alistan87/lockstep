@@ -116,8 +116,15 @@ default = "pi"
 # WRITERS. `--mode json` gives the cost views their usage numbers, and costs
 # these nodes nothing: they answer in a file, which the driver reads first.
 # NO readonly_argv here -- see `pi-review`.
+#
+# `--no-context-files --no-skills` on every pi stanza: pi auto-loads a
+# repo-root AGENTS.md/CLAUDE.md (and discovered skills) into headless spawns,
+# and neither is in the input hash -- editing such a file would change what
+# every node does while every cache key stayed put. The flags make that
+# impossible instead of discouraged (contrib/AUTHORING-FOR-PI-ON-WINDOWS.md §1).
 [executors.pi]
-argv = ["pi.cmd", "-p", "--mode", "json", "--no-session", "{prompt}"]
+argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills", "{prompt}"]
 prompt_via = "stdin"                       # not argv: see §11 on the 32k cap
 
 # JUDGEMENT NODES (reviewers, arbiters, triage, estimation, planning).
@@ -128,7 +135,7 @@ prompt_via = "stdin"                       # not argv: see §11 on the 32k cap
 # would read as the answer. The trade: these nodes report `no envelope` in the
 # cost views.
 [executors.pi-review]
-argv = ["pi.cmd", "-p", "--no-session", "{prompt}"]
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--tools", "read,submit_result"]
 
@@ -142,6 +149,7 @@ prompt_via = "argv"
 # A writer stanza, so no readonly_argv here either.
 [executors.pi-guarded]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills",
         "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
 prompt_via = "stdin"
 ```
