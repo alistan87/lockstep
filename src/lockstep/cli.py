@@ -164,7 +164,7 @@ def _run_engine(
     tg, flow_hash, config, run_dir: Path, state: RunState, repo_root: Path,
     max_workers: int, resume: bool, replay: str | None = None, replay_any: bool = False,
     otel_file: str | None = None, cockpit: bool = False, check_dirty_scope: bool = False,
-    seed: str | None = None,
+    seed: str | None = None, force_stale: list[str] | None = None,
 ) -> int:
     if otel_file is not None:
         # Bare flag ⇒ alongside the run's other artifacts; a path ⇒ a shared
@@ -204,15 +204,22 @@ def _run_engine(
         if replay_any:
             print("replay: --replay-any is set; stale recordings are served with a warning")
     if seed:
-        from .seed import SeedIndex, wrap_registry as wrap_seed
+        from .seed import SeedIndex, forced_set, wrap_registry as wrap_seed
 
+        forced = forced_set(tg, force_stale) if force_stale else set()
         wrap_seed(
             engine.registry,
             SeedIndex.from_run_dir(Path(seed)),
             log=engine.log,
             on_hit=engine.note_seeded,
+            forced=forced,
+            on_forced=engine.note_forced,
         )
         print(f"seed: reusing hash-matched results from {seed}; everything else runs")
+        if forced:
+            print(f"force-stale: {len(forced)} node(s) will NOT be served regardless of "
+                  f"hash — {', '.join(sorted(forced))} (the named frontier plus everything "
+                  f"downstream)")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")  # AMENDMENTS M6
     if resume:
@@ -354,6 +361,19 @@ def cmd_run(ns) -> int:
                          EXIT_CONFIG)
         if not (Path(ns.seed) / "state.json").is_file():
             return _fail(f"--seed {ns.seed} is not a run directory (no state.json)", EXIT_CONFIG)
+    if getattr(ns, "force_stale", None):
+        # Parity 3.3: --force-stale is a modifier of the SEED decision — with
+        # no seed there is nothing to decline, and silently accepting it would
+        # read as a re-run guarantee this run makes anyway.
+        if not getattr(ns, "seed", None):
+            return _fail("--force-stale requires --seed <run_dir> (it names what the seed "
+                         "must NOT serve); a plain run re-runs everything already", EXIT_CONFIG)
+        from .seed import forced_set
+
+        try:
+            forced_set(tg, ns.force_stale)  # validate names early, before any state exists
+        except ValueError as e:
+            return _fail(str(e), EXIT_CONFIG)
     runs_dir = Path(ns.runs_dir)
     workspace_kind = "git" if (repo_root / ".git").exists() else "null"
     attach = None if ns.fresh else find_attachable_run(runs_dir, flow_hash, args)
@@ -387,6 +407,7 @@ def cmd_run(ns) -> int:
             # run's own prior work; replays write nothing.
             check_dirty_scope=not resume and not ns.replay and not ns.allow_dirty_scope,
             seed=getattr(ns, "seed", None),
+            force_stale=getattr(ns, "force_stale", None),
         )
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
         return _fail(str(e), EXIT_CONFIG)
@@ -719,6 +740,15 @@ def cmd_status(ns) -> int:
         # token-spawn count above is honest precisely because they cost none.
         source = state.nodes[seeded[0]].seeded_from
         print(f"seeded: {len(seeded)} node(s) served from {source} — {', '.join(seeded)}")
+    forced = sorted(
+        n for n, r in state.nodes.items()
+        if any("forced stale" in reason for reason in (r.invalidated_by or []))
+    )
+    if forced:
+        # Parity 3.3: forced ≠ hash-missed. These re-billed on instruction,
+        # with inputs that may not have moved at all.
+        print(f"forced stale: {len(forced)} node(s) re-ran by --force-stale — "
+              f"{', '.join(forced)}")
     try:
         events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
     except Exception as e:
@@ -925,6 +955,11 @@ def main(argv: list[str] | None = None) -> int:
                          "successful result in RUN_DIR, run the rest (E7). Trusts a prior "
                          "RESULT, not a prior TREE — not a 'start over cleanly' mechanism; "
                          "use --fresh when the tree state is what went wrong")
+    pr.add_argument("--force-stale", action="append", default=None, metavar="NODE",
+                    help="with --seed: never serve NODE or anything downstream of it — they "
+                         "run for real, everything else seeds as usual (recompute with "
+                         "--apply, parity 3.3; `explain <seed_run> --graph` is the dry run). "
+                         "Repeatable. `status` and the journal record forced vs hash-missed")
     pr.add_argument("--otel-file", nargs="?", const="", default=None, metavar="PATH",
                     help="write OTLP/JSON spans (GenAI semantic conventions); "
                          "bare flag writes <run_dir>/spans.jsonl")

@@ -241,3 +241,98 @@ def test_status_names_what_was_inherited(tmp_path, git_repo, capsys):
     out = capsys.readouterr().out
     assert "seeded: 2 node(s) served from" in out
     assert "token spawns: 0" in out
+
+
+# ----------------------------- --force-stale (parity 3.3, 2026-08-14)
+
+
+def _forced(tmp_path, git_repo, source, names, flow=FLOW, *, name="forced"):
+    from lockstep.seed import forced_set
+    from lockstep.taskgraph import TaskGraph
+
+    h = build(tmp_path / name, flow, git_repo)
+    wrap_registry(
+        h.engine.registry,
+        SeedIndex.from_run_dir(source),
+        log=h.engine.log,
+        on_hit=h.engine.note_seeded,
+        forced=forced_set(TaskGraph.model_validate(flow), names),
+        on_forced=h.engine.note_forced,
+    )
+    return h
+
+
+def test_force_stale_runs_the_frontier_and_everything_downstream(tmp_path, git_repo):
+    """recompute with --apply: nothing changed, but the named node and its
+    readers run for real anyway; nodes OUTSIDE the cone still seed."""
+    flow = {
+        "name": "seedy3",
+        "nodes": [
+            {"id": "a", "kind": "fake", "spec": {"outputs": ["one"]}},
+            {"id": "b", "kind": "fake", "depends_on": ["a"],
+             "spec": {"outputs": ["two"], "task": "reads {steps.a.output}"}},
+            {"id": "c", "kind": "fake", "final": True, "depends_on": ["b"],
+             "spec": {"outputs": ["three"], "task": "reads {steps.b.output}"}},
+        ],
+    }
+    source = _record(tmp_path, git_repo, flow)
+    h = _forced(tmp_path, git_repo, source, ["b"], flow=flow)
+    assert h.engine.run() == 0
+    assert calls_of(h, "a") == [], "outside the cone: still served"
+    assert len(calls_of(h, "b")) == 1, "the named frontier runs for real"
+    assert len(calls_of(h, "c")) == 1, "downstream of the frontier runs for real"
+
+
+def test_force_stale_provenance_distinguishes_forced_from_hash_missed(tmp_path, git_repo):
+    """The proposal names this in 3.3''s scope: without it a reader cannot
+    tell why a node re-billed when its inputs never moved. The record carries
+    the reason (explain shows invalidated_by), the journal a distinct event,
+    and the seeded node keeps its ordinary provenance."""
+    source = _record(tmp_path, git_repo)
+    h = _forced(tmp_path, git_repo, source, ["b"])
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    assert st.nodes["a"].seeded_from, "a was served, with normal seed provenance"
+    assert any("forced stale" in r for r in (st.nodes["b"].invalidated_by or []))
+    assert st.nodes["b"].seeded_from is None
+    events = [json.loads(ln) for ln in
+              (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+              if ln.strip()]
+    forced_events = [e for e in events
+                     if e.get("kind") == "seed" and e.get("decision") == "forced"]
+    assert [e["node"] for e in forced_events] == ["b"]
+
+
+def test_forced_set_is_the_frontier_plus_descendants_and_rejects_unknowns():
+    import pytest
+
+    from lockstep.seed import forced_set
+    from lockstep.taskgraph import TaskGraph
+
+    flow = {
+        "name": "cone",
+        "nodes": [
+            {"id": "a", "kind": "fake", "spec": {}},
+            {"id": "b", "kind": "fake", "depends_on": ["a"], "spec": {}},
+            {"id": "c", "kind": "fake", "depends_on": ["b"], "spec": {}},
+            {"id": "d", "kind": "fake", "final": True, "spec": {}},
+        ],
+    }
+    tg = TaskGraph.model_validate(flow)
+    assert forced_set(tg, ["b"]) == {"b", "c"}
+    assert forced_set(tg, ["a"]) == {"a", "b", "c"}
+    assert forced_set(tg, ["d"]) == {"d"}
+    with pytest.raises(ValueError, match="unknown node"):
+        forced_set(tg, ["nope"])
+
+
+def test_force_stale_without_seed_is_refused_by_the_cli(tmp_path, git_repo, capsys):
+    from lockstep import EXIT_CONFIG
+    from lockstep.cli import main
+
+    flow_path = tmp_path / "f.tg.json"
+    flow_path.write_text(json.dumps(FLOW), encoding="utf-8")
+    code = main(["run", str(flow_path), "--repo-root", str(git_repo),
+                 "--runs-dir", str(tmp_path / "runs"), "--force-stale", "b"])
+    assert code == EXIT_CONFIG
+    assert "--force-stale requires --seed" in capsys.readouterr().err + capsys.readouterr().out

@@ -862,6 +862,22 @@ class Engine:
         return render_scope([str(w) for w in (node.spec.get("writes") or [])],
                             self.store.state.args)
 
+    def note_forced(self, node_id: str) -> None:
+        """Parity 3.3 provenance: the seed DECLINED this node on instruction,
+        not on a hash miss. Without the distinction, `status` and `explain`
+        would show a node that re-billed with inputs that never moved and no
+        way to tell whether that was --force-stale or a hash bug."""
+        rec = self._rec(node_id)
+        rec.invalidated_by = [
+            "forced stale (--force-stale): the seed was instructed not to serve "
+            "this node or anything downstream of the named frontier"
+        ]
+        self.store.record(rec)
+        append_event(
+            self.store.run_dir,
+            {"kind": "seed", "node": node_id, "decision": "forced"},
+        )
+
     def note_seeded(self, node_id: str, source: str) -> None:
         """E7 provenance. Called by the seed wrapper when it serves a result:
         the record says where it came from and the journal says when, so a

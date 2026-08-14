@@ -42,15 +42,47 @@ from .taskgraph import Node
 SeedIndex = ReplayIndex  # same shape, read the same way: (node, item) -> Recording
 
 
+def forced_set(tg, names: list[str]) -> set[str]:
+    """`--force-stale` (parity 3.3): the named nodes plus everything
+    downstream of them — a re-run node's result feeds its readers' hashes, so
+    a frontier that stopped at the named node would serve its readers results
+    computed from inputs this run is about to replace."""
+    ids = {n.id for n in tg.nodes}
+    unknown = sorted(set(names) - ids)
+    if unknown:
+        raise ValueError(f"--force-stale names unknown node(s): {', '.join(unknown)}")
+    children: dict[str, list[str]] = {}
+    for n in tg.nodes:
+        for d in n.depends_on:
+            children.setdefault(d, []).append(n.id)
+    out = set(names)
+    frontier = list(names)
+    while frontier:
+        nid = frontier.pop()
+        for c in children.get(nid, []):
+            if c not in out:
+                out.add(c)
+                frontier.append(c)
+    return out
+
+
 class SeedExecutor:
     """Wraps a real executor: plans through it (so hashing is bit-identical),
     serves a hash-matched recording, and otherwise gets out of the way."""
 
-    def __init__(self, inner, index: SeedIndex, *, log=print, on_hit=None):
+    def __init__(self, inner, index: SeedIndex, *, log=print, on_hit=None,
+                 forced: set[str] | None = None, on_forced=None):
         self.inner = inner
         self.index = index
         self.log = log
         self.on_hit = on_hit
+        # Parity 3.3: node ids the seed must DECLINE regardless of hash match
+        # (--force-stale <node> + descendants). Declining is a plan-time
+        # decision like serving, and for the same reason: honesty about what
+        # spends budget.
+        self.forced = forced or set()
+        self.on_forced = on_forced
+        self._forced_noted: set[str] = set()
         self.kind = inner.kind
         self.cacheable = inner.cacheable
         # A MISS runs for real, so the fallthrough keeps every capability of
@@ -69,6 +101,16 @@ class SeedExecutor:
         if node.role == "map":
             # Every item plans through this node; a (node, None) hit here would
             # mark all of them free and serve one aggregate result to each.
+            return work
+        if node.id in self.forced:
+            # Forced ≠ hash-missed, and the distinction is recorded (once) —
+            # a reader of `status` or `explain` must be able to tell why this
+            # node re-billed when its inputs may not have moved at all.
+            if node.id not in self._forced_noted:
+                self._forced_noted.add(node.id)
+                self.log(f"seed: {node.id} forced stale (--force-stale) — runs for real")
+                if self.on_forced is not None:
+                    self.on_forced(node.id)
             return work
         recording = self.index.get(node.id, None)
         if (
@@ -104,9 +146,11 @@ class SeedExecutor:
         return RawResult(exit_code=0, result_text=recording.result_text, source="file", error=None)
 
 
-def wrap_registry(registry, index: SeedIndex, *, log=print, on_hit=None):
+def wrap_registry(registry, index: SeedIndex, *, log=print, on_hit=None,
+                  forced: set[str] | None = None, on_forced=None):
     """Replace every registered executor with a seed wrapper, in place."""
     for kind in registry.kinds():
         inner = registry.get(kind)
-        registry.register(SeedExecutor(inner, index, log=log, on_hit=on_hit))
+        registry.register(SeedExecutor(inner, index, log=log, on_hit=on_hit,
+                                       forced=forced, on_forced=on_forced))
     return registry
