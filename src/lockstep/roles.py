@@ -1330,7 +1330,20 @@ class Engine:
                 and bool(gate.heal.targets)
             )
             if not can_heal:
-                self._terminal_block(gate, oc.reason)
+                # on_exhausted: "pass" applies ONLY to a valid block whose
+                # rounds genuinely ran out — a timeout or malformed verdict is
+                # not a block that exhausted, it is a gate that never decided
+                # (§9.4.3), and it terminal-blocks whatever on_exhausted says.
+                exhausted = (
+                    valid_block
+                    and gate.heal.max_rounds > 0
+                    and rec.heal_round >= gate.heal.max_rounds
+                    and bool(gate.heal.targets)
+                )
+                if exhausted and gate.heal.on_exhausted == "pass":
+                    self._accept_exhausted(gate, rec, oc.verdict)
+                else:
+                    self._terminal_block(gate, oc.reason)
                 continue
             self._heal(gate, rec, oc.verdict)
 
@@ -1350,6 +1363,40 @@ class Engine:
                 if self._rec(dep_id).status in ("pending", "running"):
                     self._set_status(dep_id, "blocked", error=f"gate {gate.id} blocked: {reason}")
                 frontier.append(dep_id)
+
+    def _accept_exhausted(self, gate: Node, rec, verdict: Verdict) -> None:
+        """heal.on_exhausted: "pass" — rounds ran out and the gate still
+        blocks; accept the best-so-far, but never as a plain pass
+        (PROPOSAL-taskflow-parity-tiers 2.1, adopted 2026-08-13).
+
+        Three consumers must all see the truth, and each has its own channel:
+        the STORED result is rewritten (same route as the E4 baseline
+        adjudication) so downstream `{steps.<gate>.json...}` references and
+        `when` conditions read verdict "pass" with a reason naming what
+        happened; `state.verdicts` gets the same reason so `status` never
+        shows a gate that blocked as a gate that was satisfied; and the
+        journal gets its own event so `verify-trace`'s record distinguishes
+        an exhausted acceptance from a genuine pass. The unresolved findings
+        STAY in the verdict — they are what was accepted."""
+        rounds = rec.heal_round
+        reason = (
+            f"accepted after {rounds} round(s) without resolving: {verdict.reason}"
+        )
+        adjudicated = verdict.model_copy(update={"verdict": "pass", "reason": reason})
+        text = json.dumps(adjudicated.model_dump(), ensure_ascii=False)
+        rec.result_path = str(self.store.write_result(gate.id, text, json_output=True))
+        self.store.mutate(lambda st: st.verdicts.__setitem__(gate.id, f"pass: {reason}"))
+        # The heal cycle is over — drop the baseline exactly like a real pass,
+        # or a later re-entry would restore to a tree from a finished cycle.
+        if gate.id in self.snapshots:
+            self.snapshots[gate.id] = None
+            self.store.mutate(lambda st: st.heal_baselines.pop(gate.id, None))
+        append_event(
+            self.store.run_dir,
+            {"node": gate.id, "status": "heal-exhausted-pass", "round": rounds,
+             "reason": verdict.reason},
+        )
+        self._set_status(gate.id, "done")
 
     _ATTEMPT_NOTES_CAP = 4000  # tail-capped: the latest notes win
 
@@ -1481,6 +1528,12 @@ class Engine:
         findings_json = json.dumps([f.model_dump() for f in verdict.findings], ensure_ascii=False)
         base_heal = (
             f"A quality gate blocked with: {verdict.reason}. Address this precisely.\n"
+            # The round number rides in the engine-composed heal text — NOT a
+            # {round} interpolation form: reference forms are a §7 surface, and
+            # heal_texts already folds into both the prompt and the hash
+            # (PROPOSAL-taskflow-parity-tiers 2.1, finding 17).
+            f"This is repair round {round_n} of {gate.heal.max_rounds} for gate "
+            f"'{gate.id}'.\n"
             + fence_block("gate.findings", findings_json)
         )
         for nid in sorted(invalid):

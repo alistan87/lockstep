@@ -8,7 +8,8 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 **Start from the closest template in `flows/starter/`, not from a blank file.**
 The adversarially-reviewed flows there cover the shapes that recur — author→
 review→approve, implement→heal→review, map fan-out (reduce = any consumer of
-`{steps.<map>.json}`), tournament (rival candidates → judge), clarification
+`{steps.<map>.json}`), tournament (rival candidates → judge), refine loop
+(healing gate with `rollback: false` + `on_exhausted`), clarification
 gate, evidence approval, diagnose→fix→verify. Copy the nearest one and edit prompts, checks and
 budgets. Its README table says what each is for and carries the per-flow
 caveats. Authoring from scratch reinvents decisions those flows already
@@ -87,7 +88,16 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   are harness-kind ANCESTORS of the gate; a node may not be a target of two
   gates; a healing gate (`max_rounds > 0`) with `rollback: true` — the
   default — requires a git-managed workspace: `verify` only WARNS
-  (`heal-rollback-nongit`), but the run refuses with exit 7.
+  (`heal-rollback-nongit`), but the run refuses with exit 7. The heal prompt
+  names its round ("This is repair round N of M", engine-composed). A heal
+  gate with `rollback: false` is the LOOP pattern (each round builds on the
+  last — `flows/starter/refine-loop.tg.json`), and `heal.on_exhausted:
+  "pass"` accepts the best-so-far when rounds run out, recorded as
+  "accepted after N rounds without resolving: ..." — forbidden with
+  `rollback: true` (`on-exhausted-with-rollback`), dead without rounds
+  (`on-exhausted-without-rounds`), lint-named (`lint-on-exhausted-pass`).
+  A `worktree_diff` capture inside a loop body draws
+  `lint-live-diff-per-phase` even alone — use `node_diff`.
 - **Map**: `role: "map"` requires `over` shaped `{steps.X.json...}` resolving
   to a JSON array; `concurrency: 1` guarantees array-order sequential runs;
   items resume per-item.

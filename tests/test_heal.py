@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from lockstep.protocols import SnapshotRef
@@ -500,3 +502,89 @@ def test_rollback_walks_the_tree_once_for_both_answers(tmp_path, git_repo):
     patch = (h.run_dir / "phases" / "gate" / "attempt-1.patch").read_text(encoding="utf-8")
     assert "gen.txt" in patch
     assert (h.run_dir / "phases" / "gate" / "discarded-1" / "gen.txt").exists()
+
+
+# ---------------------- heal.on_exhausted (parity phase B, 2026-08-14)
+
+
+def exhaust_flow(gate_outputs, *, on_exhausted="pass", max_rounds=1, after_when=None):
+    """A loop that never converges: the gate blocks every round. rollback is
+    False throughout - on_exhausted: "pass" is forbidden with rollback by
+    verify (on-exhausted-with-rollback), and these tests exercise the engine
+    path behind that rule."""
+    after = {"id": "after", "kind": "fake", "depends_on": ["gate"],
+             "spec": {"outputs": ["ok"], "readonly": True}, "final": True}
+    if after_when:
+        after["when"] = after_when
+    return {
+        "name": "exhaust",
+        "nodes": [
+            {"id": "impl", "kind": "fake",
+             "spec": {"outputs": ["v1", "v2"], "write_files": {"gen.txt": "generated\n"}}},
+            {"id": "gate", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+             "spec": {"outputs": gate_outputs, "readonly": True},
+             "output": "json", "contract": "Verdict",
+             "heal": {"max_rounds": max_rounds, "targets": ["impl"],
+                      "rollback": False, "on_exhausted": on_exhausted}},
+            after,
+        ],
+    }
+
+
+def test_exhausted_pass_accepts_best_so_far_and_says_so_everywhere(tmp_path, git_repo):
+    """on_exhausted: "pass" must never record a plain pass. Three channels,
+    each checked: the STORED result is the adjudicated verdict (downstream
+    refs and `when` read it), state.verdicts carries the same reason (so
+    `status` never shows a blocked gate as satisfied), and the journal gets
+    its own event (so the trace distinguishes acceptance from success)."""
+    h = build(tmp_path, exhaust_flow(
+        [BLOCK, BLOCK], after_when='{steps.gate.json.verdict} == "pass"'), git_repo)
+    assert h.engine.run() == 0
+    st = load_state(h.run_dir)
+    assert st.nodes["gate"].status == "done"
+    assert st.nodes["gate"].heal_round == 1
+    assert len(calls_of(h, "impl")) == 2, "the one heal round ran"
+    stored = json.loads(
+        (h.run_dir / "phases" / "gate" / "result.json").read_text(encoding="utf-8"))
+    assert stored["verdict"] == "pass"
+    assert stored["reason"] == "accepted after 1 round(s) without resolving: not good enough"
+    assert len(stored["findings"]) == 1, "the unresolved findings ARE what was accepted"
+    assert st.verdicts["gate"] == (
+        "pass: accepted after 1 round(s) without resolving: not good enough")
+    events = [json.loads(ln) for ln in
+              (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+              if ln.strip()]
+    accepted = [e for e in events if e.get("status") == "heal-exhausted-pass"]
+    assert len(accepted) == 1 and accepted[0]["node"] == "gate" and accepted[0]["round"] == 1
+    # The downstream `when` read the ADJUDICATED verdict, not the raw block.
+    assert st.nodes["after"].status == "done"
+
+
+def test_exhausted_block_stays_the_default(tmp_path, git_repo):
+    h = build(tmp_path, exhaust_flow([BLOCK, BLOCK], on_exhausted="block"), git_repo)
+    assert h.engine.run() == 2
+    st = load_state(h.run_dir)
+    assert st.nodes["gate"].status == "blocked"
+    assert st.verdicts["gate"].startswith("block: not good enough")
+
+
+def test_a_gate_that_never_decided_cannot_exhaust_to_pass(tmp_path, git_repo):
+    """SPEC 9.4.3 extended to acceptance: a malformed verdict (or a timeout)
+    is not a block whose rounds ran out - it is a gate that never decided,
+    and it terminal-blocks whatever on_exhausted says."""
+    h = build(tmp_path, exhaust_flow([BLOCK, "garbage", "more garbage"]), git_repo)
+    assert h.engine.run() == 2
+    st = load_state(h.run_dir)
+    assert st.nodes["gate"].status == "blocked"
+    assert st.verdicts["gate"] == "block: no valid verdict emitted"
+
+
+def test_the_heal_prompt_names_the_round(tmp_path, git_repo):
+    """Parity 2.1's first gap: the body could not tell which round it was in.
+    The round rides in the ENGINE-COMPOSED heal text (finding 17: not a
+    {round} interpolation form - reference forms are a SPEC 7 surface, and
+    heal_texts already folds into both the prompt and the hash)."""
+    h = build(tmp_path, heal_flow([BLOCK, PASS]), git_repo)
+    assert h.engine.run() == 0
+    retry_prompt = calls_of(h, "impl")[1].prompt
+    assert "This is repair round 1 of 1 for gate 'gate'." in retry_prompt

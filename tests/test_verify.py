@@ -368,3 +368,24 @@ def test_declared_empty_write_scope_is_verified_not_skipped(tmp_path):
          "spec": {"task": "{item}", "writes": []}},
     ]), tmp_path)
     assert "write-scope-on-map" in got
+
+
+def test_on_exhausted_rules(tmp_path):
+    """Parity 2.1: "pass" is forbidden with rollback (a gate that rolls back
+    and then passes accepts a tree the work is no longer in) and dead without
+    rounds (same posture as target validation at max_rounds == 0)."""
+    def healable(heal):
+        return flow([
+            {"id": "impl", "kind": "fake", "spec": {}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+             "output": "json", "contract": "Verdict", "spec": {}, "heal": heal},
+            {"id": "z", "kind": "fake", "depends_on": ["g"], "final": True},
+        ])
+    with_rollback = healable(
+        {"max_rounds": 1, "targets": ["impl"], "rollback": True, "on_exhausted": "pass"})
+    assert "on-exhausted-with-rollback" in codes(with_rollback, tmp_path)
+    dead = healable({"max_rounds": 0, "rollback": False, "on_exhausted": "pass"})
+    assert "on-exhausted-without-rounds" in codes(dead, tmp_path)
+    ok = healable(
+        {"max_rounds": 1, "targets": ["impl"], "rollback": False, "on_exhausted": "pass"})
+    assert not [c for c in codes(ok, tmp_path) if c.startswith("on-exhausted")]

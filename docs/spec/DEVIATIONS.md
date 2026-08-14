@@ -607,3 +607,27 @@ file records implementation-level departures below that bar.
     claude-code stanza documents the same channel and why its documented off
     switch (`--bare`) is not adopted: it also restricts auth to
     ANTHROPIC_API_KEY, which breaks a subscription-backed stanza.
+
+- **2026-08-14 — `heal.on_exhausted: "block" | "pass"` on `HealSpec`, a
+  first-class optional field within `format_version` 1.x**
+  (PROPOSAL-taskflow-parity-tiers 2.1, adopted 2026-08-13). SPEC 9.4 knows one
+  exhaustion outcome: rounds run out, the gate blocks, exit 2. `"pass"`
+  accepts the best-so-far instead - the loop pattern's exit - and it is
+  deliberately loud everywhere a plain pass would lie: the STORED verdict is
+  rewritten (the E4 route) to `accepted after N rounds without resolving:
+  <reason>` with the unresolved findings kept, so downstream references,
+  `when` conditions, `status`, and the cockpit all read the truth, and the
+  journal gains a `heal-exhausted-pass` event. A timeout or malformed verdict
+  never exhausts to pass (9.4.3: a gate that never decided). Guards:
+  `on-exhausted-with-rollback` and `on-exhausted-without-rounds` are section-6
+  ERRORS; `lint-on-exhausted-pass` names every user. Format note, why this is
+  in this file: the Node model's own comment records that a first-class field
+  is 1.1 territory and `spec.*` keys are the 1.x extension route - but heal is
+  ENGINE behaviour with no executor SpecModel to validate a spec key, and the
+  adopted proposal specifies `heal.on_exhausted`. Every existing flow keeps
+  its exact meaning (default "block"); a flow that USES the key fails on an
+  older driver at load with a named FlowError (pydantic `extra="forbid"`
+  wrapped by `load_flow`), which is a loud, attributable failure rather than
+  silent drift. The engine also now composes the round number into the heal
+  text ("This is repair round N of M") - prompt-and-hash-folded via the
+  existing `heal_texts` mechanism, no new 7 reference form.

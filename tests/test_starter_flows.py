@@ -122,6 +122,7 @@ JUDGEMENT_NODES = {
     "sdlc-e2e": ["plan-review", "plan-gate", "review", "report"],
     "two-phase-remediation": ["review-repro", "review-fix"],
     "tournament-judge": ["judge"],
+    "refine-loop": ["review"],
 }
 
 
@@ -307,6 +308,63 @@ def test_the_candidate_lenses_actually_differ():
     assert len(set(tasks)) == 3
     for t in tasks:
         assert "{args.task}" in t and "{args.criteria}" in t
+
+
+# --------------------------------- the refine-loop template (parity phase B, 2026-08-14)
+
+
+def test_refine_loop_is_a_loop_not_a_heal():
+    """rollback: false is the difference between "undo the bad attempt"
+    (heal) and "build on the last one" (loop); on_exhausted: "pass" accepts
+    the best-so-far when rounds run out. With either flipped, this template
+    is implement-heal wearing a new name — and with rollback true the pair
+    is a verify ERROR (on-exhausted-with-rollback)."""
+    heal = nodes("refine-loop")["loop-gate"]["heal"]
+    assert heal["rollback"] is False
+    assert heal["on_exhausted"] == "pass"
+    assert heal["max_rounds"] >= 1
+    assert heal["targets"] == ["draft"]
+
+
+def test_refine_loop_reviews_the_recorded_round_not_the_live_tree():
+    """Parity 2.1 finding 13: a live capture inside a loop body is wrong from
+    round 2 (the body re-runs every round, so `worktree_diff` would describe
+    the cumulative tree) — and lint-live-diff-per-phase now fires on it even
+    alone. node_diff reads the trees the engine recorded around the draft's
+    own attempt, which requires the draft to declare writes and hold the
+    tree token."""
+    ns = nodes("refine-loop")
+    cmd = ns["capture"]["spec"]["cmd"]
+    assert cmd[:3] == ["python", "-m", "lockstep.probes.node_diff"]
+    assert cmd[cmd.index("--node") + 1] == "draft"
+    assert "worktree_diff" not in json.dumps(flow("refine-loop")["nodes"])
+    draft = ns["draft"]["spec"]
+    assert "writes" in draft and not draft.get("readonly")
+
+
+def test_refine_loop_draft_is_told_to_build_not_restart():
+    """rollback: false only buys a loop if the drafter knows the file it
+    finds is its own prior round, not someone else's mess to discard."""
+    task = nodes("refine-loop")["draft"]["spec"]["task"]
+    assert "IN PLACE" in task
+    assert "never rolls back" in task
+
+
+def test_refine_loop_surfaces_the_exhausted_reason():
+    """on_exhausted: "pass" must never end silently: the final node renders
+    the gate's recorded reason, which after exhaustion reads "accepted after
+    N rounds without resolving: ..." — the flow's last words tell the truth
+    about what was accepted."""
+    done = nodes("refine-loop")["done"]
+    assert "{steps.loop-gate.json.reason}" in json.dumps(done["spec"]["cmd"])
+
+
+def test_refine_loop_gate_is_deterministic_and_the_diff_can_spill():
+    ns = nodes("refine-loop")
+    assert ns["loop-gate"]["spec"]["cmd"][:3] == [
+        "python", "-m", "lockstep.gates.block_on_severity"]
+    assert "spilled" in ns["review"]["spec"]["task"]
+    assert flow("refine-loop").get("max_interp_chars", 20000) >= 60000
 
 
 def test_node_diff_targets_are_scoped_and_serialized():

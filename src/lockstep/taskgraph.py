@@ -36,6 +36,14 @@ class HealSpec(BaseModel):
     max_rounds: int = 0  # gate-triggered re-run of `targets` (SPEC §9.4)
     targets: list[str] = []  # explicit harness-node ids; required when max_rounds > 0
     rollback: bool = True  # restore the proactive baseline snapshot
+    # "pass" = exhausting max_rounds accepts the best-so-far instead of
+    # blocking; the recorded verdict names the truth ("accepted after N rounds
+    # without resolving: ..."), never a plain pass. Forbidden with rollback
+    # (§6 on-exhausted-with-rollback) and lint-visible. Optional field within
+    # 1.x: every existing flow keeps its meaning; a flow that uses it fails on
+    # an older driver at load (extra="forbid") — recorded in DEVIATIONS
+    # 2026-08-14 (PROPOSAL-taskflow-parity-tiers 2.1, adopted 2026-08-13).
+    on_exhausted: Literal["block", "pass"] = "block"
 
 
 class Node(BaseModel):
@@ -543,6 +551,24 @@ def verify_flow(
     for n in tg.nodes:
         if n.role != "gate":
             continue
+        if n.heal.on_exhausted == "pass" and n.heal.rollback:
+            # A gate that rolls back and then passes has thrown away the work
+            # it just accepted (PROPOSAL-taskflow-parity-tiers 2.1, finding 8).
+            err(
+                "on-exhausted-with-rollback",
+                f"gate {n.id!r} has heal.on_exhausted: \"pass\" with heal.rollback: true — "
+                "accepting the best-so-far after rolling it back accepts a tree the work "
+                "is no longer in; set rollback: false (build on each round) or drop on_exhausted",
+            )
+        if n.heal.on_exhausted == "pass" and n.heal.max_rounds == 0:
+            # Same posture as target validation at max_rounds == 0 (audit r5):
+            # dead config should not hide a wrong belief about what it does.
+            err(
+                "on-exhausted-without-rounds",
+                f"gate {n.id!r} has heal.on_exhausted: \"pass\" but heal.max_rounds is 0 — "
+                "rounds can never exhaust, so the key would never apply; a plain block "
+                "is what this gate actually is",
+            )
         if n.heal.max_rounds > 0 and not n.heal.targets:
             err("heal-targets-required", f"gate {n.id!r} has heal.max_rounds > 0 but empty heal.targets")
             continue
@@ -830,6 +856,41 @@ def lint_flow(
             f"the trees the engine recorded and cannot be moved by a later phase",
         )
 
+    # W5b (PROPOSAL-taskflow-parity-tiers 2.1, finding 13) — a live capture
+    # INSIDE a heal loop body: the nodes between a healing gate's targets and
+    # the gate itself re-run every round, so from round 2 a `worktree_diff`
+    # there describes the cumulative tree — and, on resume, whatever else has
+    # moved — never just the round it evidences. ONE capture is enough to be
+    # wrong here, so this fires below W5's 2+ threshold. (A capture DOWNSTREAM
+    # of the gate runs after the loop settles and stays quiet — implement-heal's
+    # single post-loop capture is correct.)
+    if captures:
+        children: dict[str, list[str]] = {}
+        for n in tg.nodes:
+            for d in n.depends_on:
+                children.setdefault(d, []).append(n.id)
+        for g in tg.nodes:
+            if g.role != "gate" or g.heal.max_rounds == 0:
+                continue
+            body: set[str] = set()
+            frontier = list(g.heal.targets)
+            while frontier:
+                nid = frontier.pop()
+                for c in children.get(nid, []):
+                    if c not in body:
+                        body.add(c)
+                        frontier.append(c)
+            looped = sorted(set(captures) & body & _ancestors(tg, g.id))
+            if looped:
+                warn(
+                    "lint-live-diff-per-phase",
+                    f"node(s) {', '.join(looped)} capture the LIVE working tree inside "
+                    f"gate {g.id!r}'s heal loop; the loop body re-runs every round, so from "
+                    f"round 2 the capture describes the cumulative tree, not the round it "
+                    f"evidences — use `lockstep.probes.node_diff --node <heal target>`, "
+                    f"which reads the trees the engine recorded for that round's attempt",
+                )
+
     # W6 (consumer report 2026-08-13 item 5) — a `--tools` allowlist covers
     # EXTENSION tools too. A stanza that attaches an extension and then hands
     # readonly nodes a list without `submit_result` silently removes the
@@ -901,5 +962,21 @@ def lint_flow(
                     f"true (verify then enforces it via readonly_argv, and the node fans out "
                     f"in parallel), or declare spec.writes if writing is intended",
                 )
+
+    # W8 (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) — heal.on_exhausted:
+    # "pass" converts a blocking gate into a passing one after its repair
+    # rounds run out, and gates exist to stop bad work. It is legal by design
+    # (a refinement loop accepts the best-so-far), but every gate that can
+    # wave work through gets named so a reviewer of the flow sees the full
+    # list in one pass.
+    for n in tg.nodes:
+        if n.role == "gate" and n.heal.on_exhausted == "pass":
+            warn(
+                "lint-on-exhausted-pass",
+                f"gate {n.id!r} accepts the best-so-far when its {n.heal.max_rounds} heal "
+                f"round(s) exhaust (heal.on_exhausted: \"pass\"); the recorded verdict will "
+                f"name what happened, but nothing will block — confirm this gate is a "
+                f"refinement loop, not a quality bar",
+            )
 
     return issues

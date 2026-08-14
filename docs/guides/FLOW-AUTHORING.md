@@ -63,7 +63,13 @@ is fine.
   target of two gates (`heal-target-overlap`); healing with `rollback: true`
   (the default) needs a git-managed workspace (verify warns; run refuses,
   exit 7). On block: attempt preserved as a patch, tree restored, findings
-  folded into the target's re-prompt, descendants invalidated, re-run.
+  folded into the target's re-prompt (the engine names the round: "This is
+  repair round N of M"), descendants invalidated, re-run.
+  `heal.on_exhausted: "pass"` accepts the best-so-far when rounds run out
+  (see the loop pattern below) — forbidden with `rollback: true`
+  (`on-exhausted-with-rollback`: accepting work you rolled back accepts a
+  tree the work is no longer in) and dead without rounds
+  (`on-exhausted-without-rounds`).
 - **Map** (`role: "map"`): `over` must be shaped `{steps.X.json...}` and
   resolve to a JSON array at run time; `item_var` (default `item`),
   `concurrency`. Items cache and resume per item; item hashes couple to array
@@ -135,7 +141,8 @@ reading as clean.
 | `lint-missing-write-scope` | a write-capable work node declares no `spec.writes` | prose scoping is advisory text a model rationalizes past under gate pressure; becomes a verify ERROR at `format_version` 1.1 |
 | `lint-unscoped-writes` | `"writes": ["**"]` without `spec.writes_rationale` | whole-tree access is sometimes right (a run-time-parameterized target) but it should be a written decision, not an omission |
 | `lint-ungated-mutation` | a write-capable work node with no gate or approval on either side of it | nothing authorized the change and nothing can block it; silenced by saying "ungated" in the flow `description` when a human reads the output directly by design |
-| `lint-live-diff-per-phase` | more than one node captures the live tree (`worktree_diff`) | shell nodes re-run on resume, so phase 1's capture re-runs against phase 2's tree and a passed review re-bills contaminated; use `node_diff --node` per phase (consumer report 2026-08-13) |
+| `lint-live-diff-per-phase` | more than one node captures the live tree (`worktree_diff`), or even ONE does so inside a healing gate's loop body | shell nodes re-run on resume, so phase 1's capture re-runs against phase 2's tree and a passed review re-bills contaminated; a loop body re-runs every round, so its capture is wrong from round 2 even alone; use `node_diff --node` (consumer report 2026-08-13; parity 2.1 finding 13) |
+| `lint-on-exhausted-pass` | a gate declares `heal.on_exhausted: "pass"` | it converts a blocking gate into a passing one after N failed repairs — legal for a refinement loop, but every gate that can wave work through gets named so a flow review sees the full list (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) |
 | `lint-tools-drops-result-channel` *(config)* | a stanza attaches an `--extension` but its `--tools` list omits `submit_result` | the allowlist covers extension tools, so the guard's structured-output channel silently disappears and the envelope stops being enforced (consumer report 2026-08-13) |
 | `lint-persona-not-readonly` *(repo)* | a node names a persona whose frontmatter declares `readonly: true` but sets neither `spec.readonly` nor `spec.writes` | `spec.persona` and `spec.readonly` are independent fields, so "you fix nothing" personas silently keep full write tools and the `tree` token; `readonly: true` in the persona file is the self-documenting signal (consumer report 2026-08-14) |
 
@@ -439,11 +446,11 @@ anywhere in a large interpolated value re-runs that node and every descendant.
 If the payload changes often and the node does not truly depend on all of it,
 interpolate a fingerprint or a summary instead of the thing.
 
-## Patterns you already have (reduce, parallel, tournament)
+## Patterns you already have (reduce, parallel, tournament, loop)
 
 Names other DAG runners give to features that are already expressible here —
 written down so nobody goes hunting for a keyword that deliberately does not
-exist (adopted from PROPOSAL-taskflow-parity-tiers §1, 2026-08-13: no new
+exist (adopted from PROPOSAL-taskflow-parity-tiers §1–§2, 2026-08-13: no new
 roles for any of these).
 
 **Reduce.** A map node's own result IS the collected array: the engine writes
@@ -487,6 +494,35 @@ isolation, deliberately not built; see the proposal). What keeps a tournament
 honest is the judge's prompt: it must pick on the stated criteria and quote
 the decisive passages, or the flow has paid for N answers and gotten a coin
 flip.
+
+**Loop.** A healing gate already is a loop: it re-marks its targets pending,
+folds its findings into their prompts as feedback, and re-runs up to
+`max_rounds` — with the round number engine-composed into the heal text
+("This is repair round N of M"), so the body always knows where it stands.
+`rollback: false` is the whole difference between *heal* ("undo the bad
+attempt") and *loop* ("build on the last one") — and the target's prompt must
+say so, or the drafter treats its own round-1 work as someone else's mess.
+`heal.on_exhausted: "pass"` closes the loop's other end: rounds run out and
+the best-so-far is accepted — never silently. The stored verdict is rewritten
+to `accepted after N rounds without resolving: <reason>` (downstream
+`{steps...}` references and `when` conditions read the adjudicated pass, the
+unresolved findings stay in it as the record of what was accepted), `status`
+shows the same reason, and the journal carries a `heal-exhausted-pass` event.
+A gate that times out or emits garbage never "exhausts to pass" — that is a
+gate that never decided, and it blocks whatever `on_exhausted` says. Guards:
+`on_exhausted: "pass"` is a §6 ERROR with `rollback: true`
+(`on-exhausted-with-rollback`) and without rounds
+(`on-exhausted-without-rounds`), and `verify --lint` names every gate that
+uses it (`lint-on-exhausted-pass`) — on the starter it fires by design; a
+refinement loop is exactly a gate that is not a quality bar, and the lint
+makes each one legible in review. One trap, from the 2026-08-13 consumer
+report: a live `worktree_diff` capture inside the loop body draws
+`lint-live-diff-per-phase` even when it is the flow's only capture — the body
+re-runs every round, so from round 2 the capture describes the cumulative
+tree, never the round it evidences. `flows/starter/refine-loop.tg.json` is
+the worked example: `node_diff --node draft` per round, deterministic
+severity gate, and a final node that prints the gate's reason so an exhausted
+acceptance is the flow's last words rather than a quiet exit 0.
 
 ## Retry, budget, caching
 

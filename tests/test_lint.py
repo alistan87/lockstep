@@ -367,3 +367,80 @@ def test_w7_this_repos_own_readonly_personas_carry_the_key():
     # checks (bash is a write vector) — none of them may claim readonly.
     for name in ("planner", "implementer", "verifier"):
         assert not persona_declares_readonly(personas, name)
+
+
+# --- parity phase B (2026-08-14) --------------------------------------------
+
+
+def _loop_flow(capture_cmd, on_exhausted="block"):
+    """draft -> capture -> review -> healing gate -> done: the refine-loop
+    shape, with the capture command as the variable under test."""
+    return tg({
+        "name": "loop",
+        "nodes": [
+            {"id": "draft", "kind": "harness", "spec": {"task": "write", "writes": ["doc.md"]}},
+            {"id": "capture", "kind": "shell", "depends_on": ["draft"], "output": "text",
+             "spec": {"cmd": capture_cmd, "writes": []}},
+            {"id": "review", "kind": "harness", "depends_on": ["capture"],
+             "spec": {"task": "review {steps.capture.output}", "readonly": True},
+             "output": "json", "contract": "Finding[]"},
+            {"id": "gate", "role": "gate", "kind": "shell", "depends_on": ["review"],
+             "output": "json", "contract": "Verdict",
+             "spec": {"cmd": ["python", "-m", "lockstep.gates.block_on_severity",
+                              "--at", "major", "--node", "review"], "writes": []},
+             "heal": {"max_rounds": 2, "targets": ["draft"], "rollback": False,
+                      "on_exhausted": on_exhausted}},
+            {"id": "done", "kind": "shell", "final": True, "depends_on": ["gate"],
+             "spec": {"cmd": ["python", "-c", "print(1)"], "writes": []}},
+        ],
+    })
+
+
+def test_w5b_one_live_capture_inside_a_heal_loop_body_warns():
+    """Parity 2.1 finding 13: the loop body re-runs every round, so from
+    round 2 a live capture describes the cumulative tree, never the round it
+    evidences. ONE capture is enough to be wrong here - this fires below
+    W5's 2+ threshold."""
+    flow = _loop_flow(["python", "-m", "lockstep.probes.worktree_diff"])
+    found = codes(lint_flow(flow))
+    assert found.count("lint-live-diff-per-phase") == 1
+    msg = next(i.message for i in lint_flow(flow)
+               if i.code == "lint-live-diff-per-phase")
+    assert "heal loop" in msg and "node_diff" in msg
+
+
+def test_w5b_node_diff_inside_the_loop_stays_quiet():
+    flow = _loop_flow(["python", "-m", "lockstep.probes.node_diff", "--node", "draft"])
+    assert "lint-live-diff-per-phase" not in codes(lint_flow(flow))
+
+
+def test_w5b_stays_quiet_for_a_post_loop_capture():
+    """implement-heal's shape: the single live capture depends on the healing
+    gate, so it runs after the loop settles and describes exactly the tree
+    its reviewer will see. The cone is descendants(targets) INTERSECTED with
+    ancestors(gate) - a capture downstream of the gate is outside the body."""
+    flow = tg({
+        "name": "post",
+        "nodes": [
+            {"id": "impl", "kind": "harness", "spec": {"task": "do", "writes": ["src"]}},
+            {"id": "checks", "role": "gate", "kind": "shell", "depends_on": ["impl"],
+             "output": "json", "contract": "Verdict",
+             "spec": {"cmd": ["python", "-m", "lockstep.gates.pytest_verdict"], "writes": []},
+             "heal": {"max_rounds": 2, "targets": ["impl"]}},
+            _capture("capture", "checks"),
+            {"id": "review", "kind": "harness", "final": True, "depends_on": ["capture"],
+             "spec": {"task": "review {steps.capture.output}", "readonly": True}},
+        ],
+    })
+    assert "lint-live-diff-per-phase" not in codes(lint_flow(flow))
+
+
+def test_w8_on_exhausted_pass_is_named_per_gate():
+    """Parity 2.1 finding 8: a gate that can wave work through is worth one
+    line in a review of the flow."""
+    found = codes(lint_flow(_loop_flow(
+        ["python", "-m", "lockstep.probes.node_diff", "--node", "draft"],
+        on_exhausted="pass")))
+    assert found.count("lint-on-exhausted-pass") == 1
+    assert "lint-on-exhausted-pass" not in codes(lint_flow(_loop_flow(
+        ["python", "-m", "lockstep.probes.node_diff", "--node", "draft"])))
