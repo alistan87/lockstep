@@ -247,16 +247,27 @@ def test_tournament_pick_gate_is_the_library_call_with_the_real_candidate_ids():
     assert "{steps.judge.json}" in cmd
 
 
-def test_the_publish_step_can_reach_every_candidates_answer():
-    """publish selects the winner's text by id from id/answer argv pairs. A
-    candidate missing a pair is a winnable candidate whose victory fails the
-    flow at its last, cheapest step."""
+def test_the_publish_step_never_puts_an_answer_on_the_command_line():
+    """The first draft interpolated all three answers into publish's argv —
+    the exact anti-pattern FLOW-AUTHORING rule 2 forbids: shell argv is
+    neither capped nor spilled, so three answers approaching the advisory
+    120-line cap could clear Windows' ~32k limit and fail the spawn (exit 127)
+    AFTER every token was spent, deterministically on every resume (2026-08-14
+    adversarial review, blocker). publish gets the winner ID via argv and
+    reads the answer from the winner's phase dir via LOCKSTEP_PHASE_DIR — the
+    same env-not-argv route the gate library and node_diff use. Every
+    candidate id must still appear in argv (the eligibility list), each must
+    still be a dependency (its result file must exist before publish runs),
+    and no candidate OUTPUT may appear anywhere in the node."""
     ns = nodes("tournament-judge")
-    cmd = ns["publish"]["spec"]["cmd"]
+    publish = ns["publish"]
+    cmd = publish["spec"]["cmd"]
     assert "{steps.judge.json.winner}" in cmd
+    assert "LOCKSTEP_PHASE_DIR" in cmd[cmd.index("-c") + 1]
     for cid in CANDIDATES:
         assert cid in cmd, cid
-        assert cmd[cmd.index(cid) + 1] == "{steps.%s.output}" % cid, cid
+        assert cid in publish["depends_on"], cid
+        assert "{steps.%s.output}" % cid not in json.dumps(publish), cid
 
 
 def test_the_judge_sees_every_answer_the_criteria_and_the_no_winner_exit():
