@@ -1,14 +1,23 @@
 ---
 type: proposal
 title: "Proposal: parity tiers 1–3 — patterns, loop, composition, and declared staleness"
-description: What it takes to close the feature gap with pi-taskflow 0.2.6 for tiers 1–3, after checking each item against this repo's source. Three of the six items turn out to be documentation or small extensions of existing machinery; two are real engine work; one (race) is recommended against. Includes the adversarial review that reshaped it.
+description: What it takes to close the feature gap with pi-taskflow 0.2.6 for tiers 1–3, after checking each item against this repo's source. Phases A–C (patterns docs, loop, declared staleness) adopted 2026-08-13; composition (§2.2) split out pending its own proposal after a third-pass review; race not built. Includes the adversarial reviews that reshaped it.
 resource: docs/proposals/PROPOSAL-taskflow-parity-tiers.md
-status: draft
+status: stable
 ---
 # Proposal: parity tiers 1–3
 
-**Status: draft, not adopted.** A proposal carries no authority; adoption is a
-commit that says so.
+**ADOPTED IN PART, 2026-08-13.** Phases **A, B and C** (§4) are adopted as
+written, with one correction applied at adoption: §2.1's Work line contradicted
+finding 17 and has been fixed in place (third pass, finding 23). **Phase D
+(composition, §2.2) is NOT adopted** — an independent third-pass review (below)
+found three unanswered engine questions (findings 24–26: pool dispatch for a
+`flow` kind, the per-engine lock registry, resume-mid-child semantics), each of
+which is a design decision rather than an implementation detail. D returns as
+its own proposal that must answer them before any code. **Race (§1.4) is not
+built**, per the recommendation. This resolves §4's sequencing tension
+(finding 22) by default: C-before-D is now the schedule, not a trade. The
+authority is the commit that adopted this; the document stays as the reasoning.
 
 **Standing caveat, stated once.** The recommendation on the record is *not* to
 chase parity: pi-taskflow is a maintained package with a larger surface, and
@@ -142,8 +151,11 @@ gate into a passing one, and gates exist to stop bad work. Guards:
 passes has thrown away the work it just accepted), and a `verify --lint`
 warning naming every gate that uses it.
 
-**Work:** `{round}` in `interpolate.py` + `on_exhausted` in the gate outcome
-path + verify rule + lint + starter flow + tests. **~1 week.**
+**Work:** round number appended to the engine-composed heal text in `roles.py`
+(beside `_heal_scope_line` — NOT a `{round}` form in `interpolate.py`; this
+line originally contradicted finding 17 and was corrected at adoption, finding
+23) + `on_exhausted` in the gate outcome path + verify rule + lint + starter
+flow + tests. **~1 week.**
 
 ### 2.2 `flow` composition — run a saved flow as one node
 
@@ -308,11 +320,15 @@ factory flows into fewer, and every flow that exists when C lands is a flow C's
 pain over speculative consolidation. Reversing it is defensible; doing C and D
 concurrently is not, because D changes what a node *is*.
 
-**Exit criteria for the whole plan:** full pytest green, torture suite extended
-with the composition cases, replay fixture unchanged (proving 3.1 was
-additive), `DEVIATIONS.md` entries for `reads`, `on_exhausted` and composition,
-and every new surface in `docs/guides/FLOW-AUTHORING.md` before it is announced
-anywhere else.
+**Resolved at adoption (2026-08-13):** C before D, by default rather than by
+argument — D is not adopted and returns as its own proposal (findings 24–26),
+so C is simply the schedule. Finding 22 is closed.
+
+**Exit criteria for the adopted scope (A–C; the composition items move with D
+to its own proposal):** full pytest green, replay fixture unchanged as a smoke
+check with the additive-parts assertion as the proof (finding 27),
+`DEVIATIONS.md` entries for `reads` and `on_exhausted`, and every new surface
+in `docs/guides/FLOW-AUTHORING.md` before it is announced anywhere else.
 
 ---
 
@@ -444,3 +460,56 @@ against the source, which is where the real damage was.
 author as the plan. The failure mode that leaves — shared blind spots — is
 exactly what an independent reviewer is for. The highest-value target for one
 is §2.2: everything else in this plan is small enough to fix after the fact.
+
+### Third pass — independent review at adoption (2026-08-13)
+
+Run by a different reader than the author of the plan and both passes above,
+against the source, at adoption time. It confirmed the plan's checked premises
+(the role/kind split, `rollback: false` legality, the `heal_texts` fold at
+`roles.py:328` and `:1496`, the single-level `iterdir()` in `gc`/`estimate`/
+`active`, and resume putting every `done` node through `needs_check` →
+`_settle` re-planning — so 3.1's perf worry is real). It found five things the
+first two passes missed — three of them exactly the shared-blind-spot kind the
+standing note predicted, all three in §2.2:
+
+23. **applied** — §2.1's Work line still said "`{round}` in `interpolate.py`",
+    the very thing finding 17 rejected; the gap table above it said the
+    opposite. A stale-after-revision estimate line is how the rejected design
+    gets built. Corrected in place.
+24. **material, blocks D** — `_costs_tokens_hint` (`roles.py:272`) returns
+    `False` for every kind that is not `harness` or `fake`, so a
+    `kind: "flow"` node dispatches to the hardcoded 8-worker `other_pool`
+    (`roles.py:578`, `:604`), not the `--max-workers`-bounded `token_pool` —
+    every agent spawn inside a composed child escapes the operator's
+    concurrency cap. The same seam finding 16 caught for `race`
+    (`_spend_spawn` under-billing), unchecked for `flow`.
+25. **material, blocks D** — the "same registry" §2.2's deadlock fix relies on
+    does not exist as a seam: `_locks` is per-`Engine` instance state built in
+    `__init__` (`roles.py:188`), with nothing injecting it. A naive sub-engine
+    gets a fresh lock dict, and the failure is not finding 4's deadlock — it
+    is the silent inverse: the child's tree-writing node runs concurrently
+    with a parent-level sibling holding `tree`. Two writers, one shared tree —
+    the exact invariant the exclusive-token design exists to hold.
+    `_budget_guard`, `_snapshot_guard`, `store`, `workspace` and `needs_check`
+    are in the same position; sharing them is real constructor work absent
+    from the 2–3 week estimate.
+26. **blocks D** — "resume mid-child" is listed as a torture case but is an
+    undecided design question. Resume works from the parent's per-node
+    `input_hash` and one record: does resuming re-run the whole child
+    (correct but re-bills, under one wallet, everything the child already
+    paid for) or descend into the child's own `state.json` (the parent record
+    must carry a child-run pointer, and the child's lineage head must be
+    reconciled against a tree the parent's other nodes have since moved)?
+    A torture case cannot be written until this is answered.
+27. **applied, small** — 3.1's headline falsifiable test ("the replay fixture
+    passes without re-recording") is nearly vacuous: the portable fixture is
+    shell-only by design, and shell `fingerprint_parts` is `argv:` alone
+    (`shell.py:134`), so no fixture node could ever carry `reads`. The direct
+    assertion test (no-`reads` node ⇒ byte-identical parts) is the real
+    evidence; keep the fixture check, but as a smoke test, not the proof.
+
+**Outcome.** A, B and C adopted as written (with 23 applied). D withdrawn to
+its own proposal, which must answer 24–26 before any code — plus finding 4's
+token-holding rule and finding 21's gc/estimate test, which remain right. Race
+stays unbuilt. The standing note's request is discharged: §2.2 was the target,
+and §2.2 is where all three material findings landed.
