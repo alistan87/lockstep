@@ -628,6 +628,13 @@ file records implementation-level departures below that bar.
   its exact meaning (default "block"); a flow that USES the key fails on an
   older driver at load with a named FlowError (pydantic `extra="forbid"`
   wrapped by `load_flow`), which is a loud, attributable failure rather than
-  silent drift. The engine also now composes the round number into the heal
+  silent drift. One inherited edge, stated: `heal_round` is a LINEAGE budget
+  that never resets (the 2026-07-25 resume entry: "exhausted heal budgets stay
+  exhausted"), so a gate re-entered after an accepted cycle - upstream change,
+  revalidation, re-run, block - accepts immediately, and its reason counts
+  rounds spent on the previous cycle's work. Same shape as the default
+  behaviour, where a re-entered exhausted gate re-blocks without new rounds;
+  changing either means changing what the round budget is, which is not this
+  entry. The engine also now composes the round number into the heal
   text ("This is repair round N of M") - prompt-and-hash-folded via the
   existing `heal_texts` mechanism, no new 7 reference form.

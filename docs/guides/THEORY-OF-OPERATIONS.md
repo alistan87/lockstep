@@ -223,9 +223,16 @@ A gate emits a `Verdict` (`pass` | `block`, plus findings). A blocked gate stops
 its descendants and exits **2**. That is a normal outcome, not an error.
 
 A gate may **heal**: on block, up to `max_rounds` times, the driver rolls the
-workspace back to the pre-attempt snapshot, folds the gate's findings into the
-target's re-prompt, and re-runs it. Constraints exist because each prevents a
-specific pathology:
+workspace back to the pre-attempt snapshot (`rollback: true`, the default),
+folds the gate's findings into the target's re-prompt, and re-runs it. With
+`rollback: false` the same machinery is a **loop**: each round builds on the
+last attempt instead of undoing it, and `heal.on_exhausted: "pass"` may accept
+the best-so-far when rounds run out — recorded loudly ("accepted after N
+rounds without resolving: …" in the stored verdict, `status`, and a
+`heal-exhausted-pass` journal event), because a gate that blocked must never
+read as a gate that was satisfied. A gate that timed out or emitted no valid
+verdict never "exhausts to pass" — it never decided. Constraints exist because
+each prevents a specific pathology:
 
 - targets must be harness-kind **ancestors** of the gate — you cannot heal
   something that did not produce the input;
@@ -239,8 +246,10 @@ a human or an orchestrator. That is why "answers to questions" travel by `steer`
 and not by heal. Being engine-owned is also what lets it carry two things no
 flow author can be relied on to add: the target's **own declared write scope**,
 restated, because findings that name out-of-scope files otherwise read as
-authorization to go and fix them; and the target's `attempt-notes.md`, so a
-retry inherits what the previous attempt established instead of re-deriving it.
+authorization to go and fix them; the target's `attempt-notes.md`, so a
+retry inherits what the previous attempt established instead of re-deriving it;
+and the **round number** ("This is repair round N of M"), so a loop body knows
+where it stands without a new interpolation form.
 
 A heal round is the most expensive thing this engine does — a rollback plus a
 full re-run — so a gate that blocks on failures the run did not cause is not

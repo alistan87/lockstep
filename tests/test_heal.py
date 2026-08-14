@@ -588,3 +588,24 @@ def test_the_heal_prompt_names_the_round(tmp_path, git_repo):
     assert h.engine.run() == 0
     retry_prompt = calls_of(h, "impl")[1].prompt
     assert "This is repair round 1 of 1 for gate 'gate'." in retry_prompt
+
+
+def test_an_accepted_gate_survives_resume_without_rerunning(tmp_path, git_repo):
+    """The quiet-untruth risk in on_exhausted: "pass" is a RESUME that re-runs
+    the gate and re-blocks - or worse, silently replaces the adjudicated
+    result with a raw block. An unchanged resume must hash-match the gate,
+    keep it done, and keep the rewritten verdict (2026-08-14 adversarial
+    review of phase B)."""
+    from conftest import rebuild
+
+    h1 = build(tmp_path, exhaust_flow([BLOCK, BLOCK]), git_repo)
+    assert h1.engine.run() == 0
+    h2 = rebuild(tmp_path, exhaust_flow([BLOCK, BLOCK]), git_repo, h1.run_dir)
+    h2.engine.prepare_resume()
+    assert h2.engine.run() == 0
+    assert calls_of(h2, "impl") == [], "healed target must stay cached"
+    assert calls_of(h2, "gate") == [], "accepted gate must stay done"
+    stored = json.loads(
+        (h1.run_dir / "phases" / "gate" / "result.json").read_text(encoding="utf-8"))
+    assert stored["verdict"] == "pass"
+    assert stored["reason"].startswith("accepted after 1 round(s)")
