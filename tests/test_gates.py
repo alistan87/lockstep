@@ -18,6 +18,7 @@ from lockstep.gates import (
     pi_guard_smoke,
     pytest_verdict,
     required_sections,
+    tournament_pick,
     version_sync,
 )
 
@@ -118,6 +119,49 @@ def test_shell_resolves_bare_python_to_the_driver_interpreter(tmp_path, git_repo
     )
     parts = load_state(h.run_dir).nodes["which"].hash_parts
     assert parts["argv"] == hashlib.sha256(portable.encode("utf-8")).hexdigest()
+
+
+# ------------------------------------------------------- tournament_pick
+
+
+def _pick(winner, ranking=None, rationale="the decisive quote") -> str:
+    return json.dumps({
+        "schema_version": "1.0", "winner": winner,
+        "ranking": ranking or [], "rationale": rationale,
+    })
+
+
+def test_tournament_pick_passes_an_eligible_winner(capsys):
+    v = run_gate(tournament_pick, ["--candidates", "a,b,c", _pick("b")], capsys)
+    assert v["verdict"] == "pass"
+    assert "b" in v["reason"] and "the decisive quote" in v["reason"]
+
+
+def test_tournament_pick_null_winner_blocks_with_the_judges_rationale(capsys):
+    """A judge that found nothing acceptable must block the flow, and the
+    human deciding what to do next should see the judge's own words in the
+    verdict, not a generic refusal."""
+    v = run_gate(tournament_pick, ["--candidates", "a,b", _pick(None, rationale="both invent an API")], capsys)
+    assert v["verdict"] == "block"
+    assert v["findings"][0]["category"] == "no-winner"
+    assert "both invent an API" in v["findings"][0]["evidence"]
+
+
+def test_tournament_pick_invented_winner_blocks_as_a_model_defect(capsys):
+    """A winner id outside --candidates would otherwise surface one node later
+    as a publish-step failure — a config-error diagnosis for a judge that
+    invented a candidate."""
+    v = run_gate(tournament_pick, ["--candidates", "a,b", _pick("z")], capsys)
+    assert v["verdict"] == "block"
+    assert v["findings"][0]["category"] == "gate-error"
+    assert "'z'" in v["findings"][0]["claim"]
+
+
+def test_tournament_pick_malformed_pick_blocks_not_crashes(capsys):
+    for bad in ("{not json", "null", "[1, 2]"):
+        v = run_gate(tournament_pick, ["--candidates", "a", bad], capsys)
+        assert v["verdict"] == "block", bad
+        assert v["findings"][0]["category"] == "gate-error", bad
 
 
 # ------------------------------------------------------- required_sections

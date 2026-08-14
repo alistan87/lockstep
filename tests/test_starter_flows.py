@@ -1,4 +1,4 @@
-"""Invariants the ten starter templates must keep.
+"""Invariants the starter templates must keep.
 
 They are copied into other repos and imitated by every flow written after
 them, so a defect here propagates. Each test below pins a defect the
@@ -121,6 +121,7 @@ JUDGEMENT_NODES = {
     "bugfix-heal": ["diagnose", "review"],
     "sdlc-e2e": ["plan-review", "plan-gate", "review", "report"],
     "two-phase-remediation": ["review-repro", "review-fix"],
+    "tournament-judge": ["judge"],
 }
 
 
@@ -217,6 +218,84 @@ def test_the_two_phase_reviewers_read_their_own_phase():
         assert spec.get("readonly") is True
         assert "spilled" in spec["task"], "a real diff blows past the interpolation cap"
     assert flow("two-phase-remediation").get("max_interp_chars", 20000) >= 60000
+
+
+# --------------------------------- the tournament template (parity phase A, 2026-08-14)
+
+CANDIDATES = ["cand-simple", "cand-robust", "cand-rethink"]
+
+
+def test_tournament_candidates_are_readonly():
+    """Readonly is the tournament's load-bearing wall twice over: it is what
+    lets three candidates share one wave (no `tree` token), and what makes N
+    answers over one shared tree coherent at all — write-capable candidates
+    would serialize into a slow sequence, each mutating the tree the next one
+    reads. (The judge is covered by JUDGEMENT_NODES above.)"""
+    ns = nodes("tournament-judge")
+    for cid in CANDIDATES:
+        assert ns[cid]["spec"].get("readonly") is True, cid
+
+
+def test_tournament_pick_gate_is_the_library_call_with_the_real_candidate_ids():
+    """The gate blocks a null winner and an invented one — but only if its
+    --candidates list is the flow's actual candidate ids. If they drift apart,
+    every legitimate winner is 'unknown' and the flow can never pass."""
+    ns = nodes("tournament-judge")
+    cmd = ns["pick-gate"]["spec"]["cmd"]
+    assert cmd[:3] == ["python", "-m", "lockstep.gates.tournament_pick"]
+    assert cmd[cmd.index("--candidates") + 1].split(",") == CANDIDATES
+    assert "{steps.judge.json}" in cmd
+
+
+def test_the_publish_step_can_reach_every_candidates_answer():
+    """publish selects the winner's text by id from id/answer argv pairs. A
+    candidate missing a pair is a winnable candidate whose victory fails the
+    flow at its last, cheapest step."""
+    ns = nodes("tournament-judge")
+    cmd = ns["publish"]["spec"]["cmd"]
+    assert "{steps.judge.json.winner}" in cmd
+    for cid in CANDIDATES:
+        assert cid in cmd, cid
+        assert cmd[cmd.index(cid) + 1] == "{steps.%s.output}" % cid, cid
+
+
+def test_the_judge_sees_every_answer_the_criteria_and_the_no_winner_exit():
+    """A judge shown two of three answers silently judges a smaller
+    tournament; a judge never told that null is a legal winner crowns the
+    least-bad instead of blocking; and three answers can spill past the
+    interpolation cap."""
+    d = flow("tournament-judge")
+    task = nodes("tournament-judge")["judge"]["spec"]["task"]
+    for cid in CANDIDATES:
+        assert "{steps.%s.output}" % cid in task, cid
+    assert "{args.criteria}" in task
+    assert "null" in task
+    assert "spilled" in task
+    assert d.get("max_interp_chars", 20000) >= 60000
+
+
+def test_the_tournament_contract_resolves_from_the_file_beside_the_flow():
+    """The starter set's one custom contract: `contracts_module` is a
+    repo-root-relative path, so the flow and its module must travel together
+    (the README says so; this pins it)."""
+    d = flow("tournament-judge")
+    assert d["contracts_module"] == "flows/starter/tournament_contracts.py"
+    module_path = STARTER / "tournament_contracts.py"
+    assert module_path.exists()
+    from lockstep.contracts import resolve_contract
+
+    ref = resolve_contract(f"{module_path}:TournamentPick")
+    assert {"winner", "ranking", "rationale"} <= set(ref.model.model_fields)
+    assert nodes("tournament-judge")["judge"]["contract"] == "TournamentPick"
+
+
+def test_the_candidate_lenses_actually_differ():
+    """Three copies of one prompt is paying triple for one answer plus a
+    judge; the assigned angles are the tournament's entire value."""
+    tasks = [nodes("tournament-judge")[c]["spec"]["task"] for c in CANDIDATES]
+    assert len(set(tasks)) == 3
+    for t in tasks:
+        assert "{args.task}" in t and "{args.criteria}" in t
 
 
 def test_node_diff_targets_are_scoped_and_serialized():

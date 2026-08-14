@@ -6,7 +6,7 @@ a new machine. Copy this directory (and `personas/`) into any git repo where
 lockstep is installed; everything here uses the config-default executor unless
 noted.
 
-All eleven flows pass `lockstep verify` and are meant as **templates** — edit
+All twelve flows pass `lockstep verify` and are meant as **templates** — edit
 prompts, check commands, and budgets to fit the target repo, then re-verify.
 Authoring grammar: `docs/guides/FLOW-AUTHORING.md`. Drive protocol for agents (exit
 codes, run-dir diagnosis, approval rules): `docs/guides/DRIVING-LOCKSTEP.md`.
@@ -36,6 +36,7 @@ whatever the edit did not move.
 | `evidence-approval.tg.json` | up to ~6 | **FRAGMENT** — the evidence-bearing terminal approval: a shell node renders a mechanical extract to `<run_dir>/approval-evidence.txt`, which `contrib/approve.ps1` prints before the prompt. Shows the segmentation rule (only a trivial shell node after the approval). |
 | `retrospect.tg.json` | up to ~8 | Gate-driven improvement: `contrib/retrospect.py` emits the friction report (metadata only), an analyst proposes flow/prompt edits **each citing the number that motivates it**, an arbiter blocks anything the numbers do not support. Adoption is gated — run the report by hand first. |
 | `two-phase-remediation.tg.json` | up to ~14 | **Verification-first, in two REVIEWED phases**: phase 1 writes a failing test that pins `--arg bug=` and NOTHING else (its reviewer blocks if product code moved; healing gate, 1 round) → phase 2 fixes it under `--arg fix_scope=` (healing pytest gate) and is reviewed on its own change alone. Both reviewers read `lockstep.probes.node_diff --node <step>` — the two git trees the ENGINE recorded around that step, not the live worktree. Copy this one for any flow that reviews more than one phase; see the note below. |
+| `tournament-judge.tg.json` | up to ~5 | **Tournament**: three **readonly** candidates answer `--arg task=` in one wave, each from a fixed angle (minimal / robustness-first / reframe); a readonly judge ranks them against `--arg criteria=` and crowns at most one — a custom `TournamentPick` contract via `contracts_module`, the starter set's worked example of that field (the module travels beside the flow; update the path if you move them); `lockstep.gates.tournament_pick` blocks a null or invented winner; the winning answer republishes verbatim as the flow's result. Answers are prompt-capped (~120 lines): they pass through shell argv, which Windows limits to ~32k chars. |
 | `bugfix-heal.tg.json` | up to ~15 | Observe → diagnose → fix → verify: a shell probe RUNS `--arg repro=` and captures the failure, a **readonly** diagnostician pins root cause from it plus `--arg bug=`; fixer implements with the diagnosis in-prompt; deterministic repro gate re-runs the command and **heals** the fixer (≤2 rounds); probe captures the change → **readonly** diff review → block-on-major gate. |
 
 ## Running them
@@ -52,6 +53,7 @@ lockstep run flows\starter\file-audit.tg.json      --arg "glob=docs/*.md" --arg 
 lockstep run flows\starter\proposal-gate.tg.json   --arg "file=proposals/q3-pipeline.md"
 lockstep run flows\starter\bugfix-heal.tg.json     --arg "bug=export drops the last row" --arg "repro=python -m pytest tests/test_export.py -q"
 lockstep run flows\starter\two-phase-remediation.tg.json --arg "bug=export drops the last row"
+lockstep run flows\starter\tournament-judge.tg.json --arg "task=How should we add CSV export to the report module?"
 
 lockstep status runs\<run-dir>            # live per-node progress
 lockstep steer  runs\<run-dir> impl "prefer the streaming writer"   # consumed at next checkpoint
@@ -62,6 +64,17 @@ Typical `implement-heal` outcomes: exit `0` (all gates passed) or exit `2`
 (`review-gate` blocked — read the gate's verdict in the run dir, fix or decide,
 then `resume`). Exit `6` (approval rejected) can only come from the flows with
 an approval node: `plan-adversarial` and `sdlc-e2e`.
+
+### Patterns hiding in this table
+
+Three shapes other DAG runners ship as keywords are plain flows here, and
+FLOW-AUTHORING's "Patterns you already have" section names them: **reduce**
+(any node consuming `{steps.<map>.json}` — `file-audit`'s arbiter),
+**parallel** (the default for whatever holds no `tree` token — `readonly` is
+what buys fan-out, which is why the reviewer pairs genuinely run
+concurrently), and **tournament** (`tournament-judge`, rival candidates → one
+judge). If you go looking for a `reduce` or `parallel` keyword in the flow
+grammar, you are looking for something that deliberately does not exist.
 
 ### Why `two-phase-remediation` uses `node_diff`, and when you must
 
@@ -98,8 +111,9 @@ any product code moved.
   requires a git-managed workspace — `verify` only warns, but `run` refuses
   with exit 7 otherwise.
 - **`lockstep.toml`** with a working executor stanza (`lockstep doctor` green).
-- **Personas**: `planner`, `implementer`, `reviewer`, `arbiter`, `verifier` from
-  `personas/` — copy that directory alongside `flows/`.
+- **Personas**: `planner`, `implementer`, `reviewer`, `arbiter`, `verifier`,
+  `candidate`, `judge` from `personas/` — copy that directory alongside
+  `flows/`.
 - **The deterministic gates are library calls**: `checks` runs
   `python -m lockstep.gates.pytest_verdict` and the review gates run
   `lockstep.gates.block_on_severity` — tested programs shipped in the package

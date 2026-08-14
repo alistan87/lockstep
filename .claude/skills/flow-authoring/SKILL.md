@@ -6,9 +6,10 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 # Authoring a taskgraph
 
 **Start from the closest template in `flows/starter/`, not from a blank file.**
-Ten adversarially-reviewed flows cover the shapes that recur — author→review→
-approve, implement→heal→review, map fan-out, clarification gate, evidence
-approval, diagnose→fix→verify. Copy the nearest one and edit prompts, checks and
+The adversarially-reviewed flows there cover the shapes that recur — author→
+review→approve, implement→heal→review, map fan-out (reduce = any consumer of
+`{steps.<map>.json}`), tournament (rival candidates → judge), clarification
+gate, evidence approval, diagnose→fix→verify. Copy the nearest one and edit prompts, checks and
 budgets. Its README table says what each is for and carries the per-flow
 caveats. Authoring from scratch reinvents decisions those flows already
 survived a review over, and the failure it produces is not a verify error —
@@ -55,7 +56,8 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   library** before writing an inline `python -c`: `python -m
   lockstep.gates.<name>` — `pytest_verdict`, `block_on_severity`,
   `required_sections`, `version_sync`, `citation_check`, `numbers_check`,
-  `coverage_delta`, `fingerprint_check`, `pi_guard_smoke`, `scoped_checks`
+  `coverage_delta`, `fingerprint_check`, `pi_guard_smoke`, `scoped_checks`,
+  `tournament_pick`
   (FLOW-AUTHORING has the argv for each). An embedded one-liner is untested,
   unreadable in the run dir, and re-quoted wrong on the first edit.
 - **A gate wired to an ABSOLUTE target owns the repository's debt.**

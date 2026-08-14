@@ -170,6 +170,13 @@ starter flows work against any target repo where lockstep is importable.
   (ADDENDUM-A A.3.3: it reads the guard's `verdicts.jsonl`, never the model's
   claim about being blocked). Removes the escape file it finds, so a failed
   smoke does not poison the next run.
+- `tournament_pick --candidates a,b,c "{steps.judge.json}"` — a tournament
+  judge's pick → Verdict. Blocks when `winner` is null (no candidate met the
+  bar — crowning the least-bad is the quiet untruth the gate exists to stop)
+  and when the winner is an id outside `--candidates` (a model-output defect
+  that would otherwise surface one node later as a publish-step failure). The
+  judge's rationale rides in the verdict reason either way. Worked example:
+  `flows/starter/tournament-judge.tg.json`; see the tournament pattern below.
 - `scoped_checks --run "ruff check {files}" [--run …] [--suffix .py]` — runs
   each check over ONLY the files this run changed (`git status --porcelain`,
   `{files}` expanding to one argument per file, the command skipped as a pass
@@ -431,6 +438,55 @@ is what makes the cache honest — but it also means a one-character edit
 anywhere in a large interpolated value re-runs that node and every descendant.
 If the payload changes often and the node does not truly depend on all of it,
 interpolate a fingerprint or a summary instead of the thing.
+
+## Patterns you already have (reduce, parallel, tournament)
+
+Names other DAG runners give to features that are already expressible here —
+written down so nobody goes hunting for a keyword that deliberately does not
+exist (adopted from PROPOSAL-taskflow-parity-tiers §1, 2026-08-13: no new
+roles for any of these).
+
+**Reduce.** A map node's own result IS the collected array: the engine writes
+one JSON array holding every item's result in manifest order, with a failed
+`optional` slot arriving as `{"status": "failed"}`. Any downstream node that
+consumes `{steps.<map>.json}` is therefore a reduce — no role, no keyword,
+nothing to enable. `flows/starter/file-audit.tg.json`'s `arbiter` is the
+worked example: it flattens, deduplicates, and adjudicates the per-file
+Finding arrays into one Verdict. Two things to carry over from it: tell the
+reducer what a failed slot looks like (or it reads one as clean data), and
+raise `max_interp_chars` — a collected array is exactly the kind of value
+that spills.
+
+**Parallel.** Wave scheduling is the default: every node whose dependencies
+are settled dispatches in the same wave, bounded by `--max-workers` (and a
+map node's `concurrency` for its items). What actually needs authoring is the
+INVERSE — why nodes serialize when you expected fan-out: any two nodes that
+can write the tree share the `tree` exclusive token, so write-capable nodes
+run one at a time by design, and a "parallel phase" of writers is a slow
+sequence wearing a parallel name. `readonly: true` is what buys fan-out — it
+is the declaration that licenses the scheduler to drop the `tree` token, and
+the stanza's `readonly_argv` is what makes it true rather than polite. That
+is why every judgement node in the starter flows is readonly and why
+`plan-adversarial`'s reviewer pair genuinely runs concurrently. If a phase is
+serializing, the fix is almost never more workers; it is making the nodes
+that only judge stop being able to write.
+
+**Tournament.** N competing candidates + a judge is `plan-adversarial`'s
+shape with the reviewers replaced by rival authors: same fan-out, same
+fan-in. `flows/starter/tournament-judge.tg.json` is the template — three
+readonly candidates answer one brief from deliberately different angles in a
+single wave, a readonly judge ranks them against stated criteria (a custom
+`TournamentPick` contract via `contracts_module` — the starter set's worked
+example of that field), `lockstep.gates.tournament_pick` blocks a null or
+invented winner, and a shell node republishes the winning answer verbatim as
+the flow's result. Candidates are readonly for the same two reasons stacked:
+it is what lets them share a wave, and N writers to one shared tree is not a
+tournament, it is a fight — which is also why the deliverable is the winning
+ANSWER, not a change to the repo (racing writers needs per-node workspace
+isolation, deliberately not built; see the proposal). What keeps a tournament
+honest is the judge's prompt: it must pick on the stated criteria and quote
+the decisive passages, or the flow has paid for N answers and gotten a coin
+flip.
 
 ## Retry, budget, caching
 
