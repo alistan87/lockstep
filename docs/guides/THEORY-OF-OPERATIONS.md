@@ -107,7 +107,10 @@ each part length-prefixed and NUL-joined, so no two different inputs can collide
 through concatenation. For a harness node the fingerprint parts are the rendered
 prompt, the persona body, the argv template, and the digest of the **resolved**
 executor stanza — not the whole config file, so editing an unrelated stanza does
-not invalidate the world.
+not invalidate the world. A node that declares `spec.reads` contributes one
+more part: every matched file as `path|content-sha256` — declared file inputs,
+precision not correctness (an undeclared read stays invisible; see
+FLOW-AUTHORING "Declared reads").
 
 One boundary to know: the hash covers what the **driver** sends. A harness that
 auto-discovers instruction files on its own (pi loads a repo-root

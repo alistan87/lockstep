@@ -33,6 +33,8 @@ lockstep steer runs/<run-dir> <node> "…"   # mid-flight correction, consumed a
 lockstep resume runs/<run-dir>             # continue after exit 2/3/4/8 once addressed
 lockstep run flows/x.tg.json --fresh …     # new lineage; re-runs (and re-bills) everything
 lockstep run flows/x.tg.json --seed runs/<old>   # new lineage, but hash-matched results are inherited
+lockstep run flows/x.tg.json --seed runs/<old> --force-stale <node>  # ...except <node> + descendants, which run for real
+lockstep explain runs/<old> --graph              # dry run of the above: what would re-run, and why (zero spawns)
 ```
 
 **Waiting on a detached run: use `wait`, never a sleep-loop or a `tail -F |

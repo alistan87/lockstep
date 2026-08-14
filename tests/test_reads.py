@@ -181,3 +181,26 @@ def test_reads_interpolates_args_like_a_write_scope(tmp_path, git_repo):
     work = h.fake.plan(node, h.engine._render_ctx(node, h.store.phase_dir("reader")))
     part = next(p for p in work.fingerprint_parts if p.startswith("reads:"))
     assert "docs/spec.md|" in part
+
+
+def test_the_real_harness_executor_folds_reads_too(tmp_path, git_repo):
+    """The fake pins the shape, but the HARNESS executor has its own plan()
+    with its own apply_reads call - cover it directly (2026-08-14 phase C
+    adversarial review). Additivity for the no-reads harness path is pinned
+    by the existing exact-parts tests (test_addendum_a, test_r5), which
+    passed unchanged across this feature."""
+    (git_repo / "in.txt").write_text("harness sees this\n", encoding="utf-8")
+    f = {
+        "name": "harness-reads",
+        "nodes": [
+            {"id": "h", "kind": "harness", "final": True,
+             "spec": {"task": "do", "reads": ["in.txt"]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)  # build only; never run (a spawn is not needed)
+    node = h.tg.node("h")
+    ctx = h.engine._render_ctx(node, h.store.phase_dir("h"))
+    work = h.engine.registry.get("harness").plan(node, ctx)
+    part = next(p for p in work.fingerprint_parts if p.startswith("reads:"))
+    assert "in.txt|" in part
+    assert "reads.in.txt" in work.meta["hash_detail"]

@@ -106,6 +106,9 @@ class SeedExecutor:
             # Forced ≠ hash-missed, and the distinction is recorded (once) —
             # a reader of `status` or `explain` must be able to tell why this
             # node re-billed when its inputs may not have moved at all.
+            # (Reached only for cacheable non-map nodes: a shell or map node
+            # in the cone re-runs regardless — the early returns above — so
+            # noting it would claim causation --force-stale does not have.)
             if node.id not in self._forced_noted:
                 self._forced_noted.add(node.id)
                 self.log(f"seed: {node.id} forced stale (--force-stale) — runs for real")
