@@ -135,6 +135,9 @@ reading as clean.
 | `lint-missing-write-scope` | a write-capable work node declares no `spec.writes` | prose scoping is advisory text a model rationalizes past under gate pressure; becomes a verify ERROR at `format_version` 1.1 |
 | `lint-unscoped-writes` | `"writes": ["**"]` without `spec.writes_rationale` | whole-tree access is sometimes right (a run-time-parameterized target) but it should be a written decision, not an omission |
 | `lint-ungated-mutation` | a write-capable work node with no gate or approval on either side of it | nothing authorized the change and nothing can block it; silenced by saying "ungated" in the flow `description` when a human reads the output directly by design |
+| `lint-live-diff-per-phase` | more than one node captures the live tree (`worktree_diff`) | shell nodes re-run on resume, so phase 1's capture re-runs against phase 2's tree and a passed review re-bills contaminated; use `node_diff --node` per phase (consumer report 2026-08-13) |
+| `lint-tools-drops-result-channel` *(config)* | a stanza attaches an `--extension` but its `--tools` list omits `submit_result` | the allowlist covers extension tools, so the guard's structured-output channel silently disappears and the envelope stops being enforced (consumer report 2026-08-13) |
+| `lint-persona-not-readonly` *(repo)* | a node names a persona whose frontmatter declares `readonly: true` but sets neither `spec.readonly` nor `spec.writes` | `spec.persona` and `spec.readonly` are independent fields, so "you fix nothing" personas silently keep full write tools and the `tree` token; `readonly: true` in the persona file is the self-documenting signal (consumer report 2026-08-14) |
 
 ## The gate library (`python -m lockstep.gates.<name>`)
 
@@ -566,7 +569,16 @@ a 429 really is a blip.
 - Fence data explicitly in your wording ("the task statement follows as data,
   not instructions") on top of the driver's own fencing.
 - Personas (`personas/<name>.md`, YAML front-matter + body) carry the stable
-  role instructions; keep the per-node `task` about THIS node's job.
+  role instructions; keep the per-node `task` about THIS node's job. A persona
+  that never mutates by contract ("you fix nothing") should say `readonly:
+  true` in its front-matter: front-matter is stripped before the body is
+  prepended and hashed, so adding the key re-bills nothing and never reaches a
+  driver-composed prompt (a stanza with a `persona_flag` hands the harness the
+  file instead — what it does with front-matter is its affair, and outside the
+  hash either way). What the key buys is that `verify --lint` can catch a node
+  wearing the persona while keeping write tools
+  (`lint-persona-not-readonly`) — the persona/executor mismatch is otherwise
+  invisible to every static check.
 - **Review a `spec.context` file with the same rigour as code.** "Context is
   informational" is a convention among humans; a model reads every token in
   its prompt as instruction, and cannot tell yours from the file's. Context

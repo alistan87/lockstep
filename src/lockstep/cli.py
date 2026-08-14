@@ -464,7 +464,7 @@ def cmd_verify(ns) -> int:
     code, _ = _do_verify(tg, config, repo_root)
     if getattr(ns, "lint", False):
         # Advisory only — the exit code is §6's alone, and a lint never moves it.
-        lints = lint_flow(tg, config)
+        lints = lint_flow(tg, config, repo_root=repo_root)
         for issue in lints:
             print(f"lint {issue}")
         if not config.executors:

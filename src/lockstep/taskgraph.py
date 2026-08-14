@@ -578,11 +578,34 @@ def verify_flow(
 
 _TOKEN_KINDS = ("harness", "fake")  # kinds that spend tokens
 
+# `readonly: true` in a persona's YAML frontmatter — the persona's own,
+# self-documenting statement that any node wearing it should never mutate.
+# Scanned with a line regex rather than a YAML parser: pydantic is the only
+# runtime dependency, and the key is a fixed literal, not structured data.
+_PERSONA_FM_RE = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
+_PERSONA_READONLY_RE = re.compile(r"^readonly\s*:\s*true\s*$", re.MULTILINE)
 
-def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
+
+def persona_declares_readonly(personas_dir: Path, name: str) -> bool:
+    """True iff personas/<name>.md exists and its frontmatter says
+    `readonly: true`. A missing file is False — verify's `persona-missing`
+    ERROR owns that case — and so is an unreadable one (ValueError covers
+    UnicodeDecodeError): a lint may stay silent, never crash verify."""
+    try:
+        text = (personas_dir / f"{name}.md").read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    m = _PERSONA_FM_RE.match(text)
+    return bool(m and _PERSONA_READONLY_RE.search(m.group(1)))
+
+
+def lint_flow(
+    tg: TaskGraph, config: Any = None, repo_root: Path | None = None
+) -> list[VerifyIssue]:
     """Advisory warnings only. `config` (a LockstepConfig) enables the
-    executor-config lints; without it they are skipped, and the caller should
-    say so — a lint silently not run reads as clean."""
+    executor-config lints, and `repo_root` enables the persona lints; without
+    them those passes are skipped, and the caller should say so — a lint
+    silently not run reads as clean."""
     issues: list[VerifyIssue] = []
     warn = lambda code, msg: issues.append(VerifyIssue("warning", code, msg))
     idset = {n.id for n in tg.nodes}
@@ -842,6 +865,41 @@ def lint_flow(tg: TaskGraph, config: Any = None) -> list[VerifyIssue]:
                     f"the allowlist covers extension tools, so the extension's structured-output "
                     f"channel is disabled and nodes fall back to the stdout parse (§8.3) with "
                     f"the envelope unenforced",
+                )
+
+    # W7 (consumer report 2026-08-14 item 1) — a node wearing a persona whose
+    # own frontmatter declares `readonly: true`, while the node itself says
+    # NOTHING about the tree: no spec.readonly, no spec.writes. spec.persona
+    # and spec.readonly are independent fields, so "You fix nothing" in the
+    # persona coexists silently with the stanza's full write tools — and the
+    # node holds the exclusive `tree` token, serializing against every writer.
+    # ANY explicit statement stays quiet — the trap is only the node that says
+    # nothing: `writes: []` is quarantine-enforced write-nothing (the shape for
+    # a reviewer that must run `git diff`, which readonly's tool allowlist
+    # would forbid), a real scope is a stated decision to reuse the persona on
+    # a node that writes its report, and an explicit `readonly: false` is a
+    # stated override. Approvals never spawn an executor, so they are exempt
+    # like W1/W4.
+    if repo_root is not None:
+        personas_dir = repo_root / "personas"
+        for n in tg.nodes:
+            if (
+                n.kind != "harness"
+                or n.role == "approval"
+                or "readonly" in n.spec
+                or "writes" in n.spec
+            ):
+                continue
+            persona = n.spec.get("persona")
+            if persona and persona_declares_readonly(personas_dir, str(persona)):
+                warn(
+                    "lint-persona-not-readonly",
+                    f"node {n.id!r} names persona {persona!r}, whose frontmatter declares "
+                    f"readonly: true, but sets neither spec.readonly nor spec.writes — the "
+                    f"persona's restriction is prose only: the node keeps the stanza's full "
+                    f"write tools and holds the exclusive `tree` token. Set spec.readonly: "
+                    f"true (verify then enforces it via readonly_argv, and the node fans out "
+                    f"in parallel), or declare spec.writes if writing is intended",
                 )
 
     return issues

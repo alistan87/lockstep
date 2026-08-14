@@ -573,3 +573,37 @@ file records implementation-level departures below that bar.
     Nothing fails loudly — a readonly node answers on stdout (§8.3) — so what
     is lost is ENFORCEMENT of the envelope, which is why a lint and not an
     error.
+
+- **2026-08-14 — persona-readonly lint and the unhashed-discovery flags
+  (consumer report, MIMIR follow-ups).** Three items found while the consumer
+  adopted the 2026-08-13 batch; full accounting in
+  `docs/notes/LESSONS-TO-MECHANISMS.md`. No frozen surface moves: the lint is
+  advisory (§6's exit code untouched), hash composition is unchanged (persona
+  front-matter was already stripped before the body is hashed, so the new key
+  is invisible to `input_hash`; the example-config argv edits re-bill the
+  affected stanzas once through the existing stanza digest, which is that
+  mechanism working, not changing).
+
+  - **`lint-persona-not-readonly` + `readonly: true` persona front-matter.**
+    `spec.persona` and `spec.readonly` are independent fields, so a node can
+    wear a "you fix nothing" persona while keeping full write tools and the
+    exclusive `tree` token. A persona whose front-matter declares
+    `readonly: true` now lets the lint name that mismatch when the node sets
+    neither `spec.readonly` nor `spec.writes`; a declared scope (including
+    `writes: []`, the shape for a reviewer that must run `git diff`) is a
+    stated decision and stays quiet. Chains into the existing
+    `readonly-unenforced` verify ERROR once `spec.readonly` is set.
+    `lint_flow` gains an optional `repo_root`; without it persona lints are
+    skipped, matching the config-lint convention.
+  - **`--no-context-files --no-skills` on every driven pi stanza.** pi 0.83.0
+    loads `AGENTS.md`/`CLAUDE.md` from cwd and its parents — a node's default
+    cwd is the repo root — and discovers skills; both are instruction channels
+    `input_hash` cannot see. The flags close them in argv (ADDENDUM-A's
+    enforce-never-enable: deleting them cannot change what a correct node can
+    do; both verified with a live control — discovery loaded this repo's root
+    CLAUDE.md and the global AGENTS.md into a headless spawn, the flags
+    reduced that to NONE), and `contrib/AUTHORING-FOR-PI-ON-WINDOWS.md` §1's discovery claim,
+    which a consumer falsified against pi's own README, is corrected. The
+    claude-code stanza documents the same channel and why its documented off
+    switch (`--bare`) is not adopted: it also restricts auth to
+    ANTHROPIC_API_KEY, which breaks a subscription-backed stanza.

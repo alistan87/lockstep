@@ -16,6 +16,14 @@
 default = "claude-code"
 
 [executors.claude-code]                    # personal machine, Claude subscription
+# Claude Code auto-loads CLAUDE.md (cwd + parents) into every -p spawn — an
+# unhashed instruction channel, same class as pi's AGENTS.md discovery (see the
+# pi stanza below). `--bare` disables the auto-discovery but is NOT a drop-in:
+# per `claude --help` it also restricts auth to ANTHROPIC_API_KEY (OAuth and
+# keychain are never read), so it breaks a subscription-backed stanza like this
+# one. Until you have verified a shape that works on your install, treat a
+# repo-root CLAUDE.md as part of every node's prompt that `explain` cannot
+# see, and keep node rules in personas/ and spec.context, which are hashed.
 argv = ["claude", "-p", "{prompt}", "--output-format", "json"]
 prompt_via = "argv"                        # "argv" | "stdin"
 json_field = "result"                      # unwrap this envelope field; omit for raw
@@ -35,7 +43,16 @@ readonly_argv = ["--disallowed-tools", "Edit,Write,NotebookEdit,Bash"]  # for sp
 # (contrib/pi-extension/lockstep-guard.ts). _WRITE_SCOPE is spec.writes as a
 # JSON array; _REPO_ROOT is what those relative globs resolve against — an
 # extension that resolves them against cwd instead blocks nothing.
-argv = ["pi", "-p", "--mode", "json", "--no-session", "{prompt}"]
+#
+# `--no-context-files --no-skills` (pi >= 0.83): pi auto-loads AGENTS.md OR
+# CLAUDE.md from ~/.pi/agent/, every parent of cwd, AND cwd itself — and a
+# node's cwd defaults to the repo root. An auto-discovered file is instruction
+# the input_hash cannot see: edit it and every cached result silently stops
+# matching what the node was told. Same for discovered skills. These two flags
+# close both channels; every pi stanza in this file carries them. Adding them
+# to an existing stanza re-bills its nodes once (argv is hashed) — pay it.
+argv = ["pi", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills", "{prompt}"]
 prompt_via = "stdin"                       # not argv: a corrective re-spawn's prompt is
                                            # several times the original and Windows caps
                                            # a command line near 32k (verify --lint says so)
@@ -104,7 +121,7 @@ prompt_via = "stdin"                       # not argv: a corrective re-spawn's p
 # `contrib/cost-fields.toml.example`, `format = "pi-stream"`); until then,
 # telemetry on reviewers costs correctness, and correctness wins.
 [executors.pi-review]
-argv = ["pi", "-p", "--no-session", "{prompt}"]
+argv = ["pi", "-p", "--no-session", "--no-context-files", "--no-skills", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--tools", "read,submit_result"]
 
@@ -134,7 +151,8 @@ argv = ["ollama", "run", "qwen3.6:35b", "--nowordwrap", "--hidethinking", "{prom
 prompt_via = "stdin"
 
 [executors.pi-coder]
-argv = ["pi.cmd", "-p", "--no-session", "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills",
+        "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
 prompt_via = "stdin"          # not argv: a corrective re-spawn's prompt is several times
                               # the original and Windows caps a command line near 32k
 
@@ -149,7 +167,8 @@ prompt_via = "stdin"          # not argv: a corrective re-spawn's prompt is seve
 # `{"type":"agent_settled"}` event as the answer. Same rule as `pi-review`
 # above: the stdout channel and `--mode json` cannot coexist.
 [executors.pi-reasoner]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools", "{prompt}"]
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills",
+        "--no-tools", "{prompt}"]
 prompt_via = "stdin"
 
 # The in-harness scope guard, attached PER NODE from the argv. `--extension` is
@@ -166,6 +185,7 @@ prompt_via = "stdin"
 # reason and with the same loud `readonly-unenforced` failure if you try.
 [executors.pi-guarded]
 argv = ["pi", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills",
         "--extension", "contrib/pi-extension/lockstep-guard.ts", "{prompt}"]
 prompt_via = "stdin"
 
@@ -194,13 +214,13 @@ prompt_via = "stdin"
 # with no tools to go and write a result file it cannot write.
 
 [executors.local-fast]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "--no-tools",
         "--provider", "ollama", "--model", "qwen2.5-coder:7b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
 
 [executors.local-smart]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "--no-tools",
         "--provider", "ollama", "--model", "qwen2.5-coder:14b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
@@ -211,7 +231,7 @@ readonly_argv = ["--no-tools"]
 # the files that are mostly boilerplate. THE MODEL IS PER NODE - that is the
 # whole point of spec.executor.
 [executors.local-strong]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "--no-tools",
         "--provider", "ollama", "--model", "mistral-small:24b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
@@ -231,7 +251,7 @@ readonly_argv = ["--no-tools"]
 # and 90s is still cheap for the one node in the flow that has to be right.
 # That is the argument for `spec.executor` in one table.
 [executors.local-best]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "--no-tools",
         "--provider", "ollama", "--model", "qwen3.6:35b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]
@@ -241,7 +261,7 @@ readonly_argv = ["--no-tools"]
 # VRAM, so a little CPU offload. Used for the frontend nodes, where the 7B
 # cannot produce a module and the 14B forgets two-decimal formatting.
 [executors.local-mid]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools",
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "--no-tools",
         "--provider", "ollama", "--model", "gemma4:26b", "{prompt}"]
 prompt_via = "stdin"
 readonly_argv = ["--no-tools"]

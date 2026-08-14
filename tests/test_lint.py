@@ -269,3 +269,101 @@ def test_w6_also_catches_an_explicit_exclusion():
         argv=["c", "--extension", "g.ts", "--exclude-tools", "write,submit_result", "{prompt}"],
         readonly_argv=["--tools", "read,submit_result"])})
     assert "lint-tools-drops-result-channel" in codes(lint_flow(flow, cfg))
+
+
+# --- consumer report 2026-08-14 --------------------------------------------
+
+
+READONLY_PERSONA = """---
+name: judge
+description: Reads and reports; writes nothing.
+readonly: true
+---
+You are a judge. You read the evidence and report findings.
+"""
+
+WRITER_PERSONA = """---
+name: builder
+description: Writes code.
+---
+You are a builder.
+"""
+
+
+def _repo(tmp_path, **personas):
+    d = tmp_path / "personas"
+    d.mkdir(parents=True)
+    for name, body in personas.items():
+        (d / f"{name}.md").write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def _judge_node(spec_extra=None):
+    spec = {"task": "judge it", "persona": "judge", **(spec_extra or {})}
+    return {"id": "rev", "kind": "harness", "final": True, "spec": spec}
+
+
+def test_w7_readonly_persona_on_a_node_that_never_says_readonly(tmp_path):
+    """Item 1: `spec.persona` and `spec.readonly` are independent fields, so a
+    node can name a persona whose own frontmatter says it is readonly while the
+    node silently keeps the stanza's full write tools AND the exclusive tree
+    token. The persona's restriction is then prose with nothing behind it."""
+    root = _repo(tmp_path, judge=READONLY_PERSONA)
+    flow = tg({"name": "w7", "nodes": [_judge_node()]})
+    found = lint_flow(flow, repo_root=root)
+    assert codes(found).count("lint-persona-not-readonly") == 1
+    msg = next(i.message for i in found if i.code == "lint-persona-not-readonly")
+    assert "spec.readonly" in msg and "tree" in msg
+
+    honest = tg({"name": "w7b", "nodes": [_judge_node({"readonly": True})]})
+    assert "lint-persona-not-readonly" not in codes(lint_flow(honest, repo_root=root))
+
+
+def test_w7_a_declared_write_scope_is_a_deliberate_decision(tmp_path):
+    """`writes: []` (quarantine-enforced write-nothing, e.g. a reviewer that
+    must run `git diff` so cannot drop bash) and a real scope (a reviewer
+    persona reused on a node that writes its report file) are both explicit
+    statements about the tree — the trap is only the node that says NOTHING."""
+    root = _repo(tmp_path, judge=READONLY_PERSONA)
+    empty = tg({"name": "w7c", "nodes": [_judge_node({"writes": []})]})
+    assert "lint-persona-not-readonly" not in codes(lint_flow(empty, repo_root=root))
+    scoped = tg({"name": "w7d", "nodes": [_judge_node({"writes": ["REPORT.md"]})]})
+    assert "lint-persona-not-readonly" not in codes(lint_flow(scoped, repo_root=root))
+    # explicit `readonly: false` is a stated override, not an omission
+    overridden = tg({"name": "w7f", "nodes": [_judge_node({"readonly": False})]})
+    assert "lint-persona-not-readonly" not in codes(lint_flow(overridden, repo_root=root))
+
+
+def test_w7_an_unreadable_persona_file_never_crashes_the_lint(tmp_path):
+    root = _repo(tmp_path)
+    (root / "personas" / "judge.md").write_bytes(b"---\nreadonly: true\n---\n\xff\xfe garbage")
+    flow = tg({"name": "w7g", "nodes": [_judge_node()]})
+    assert "lint-persona-not-readonly" not in codes(lint_flow(flow, repo_root=root))
+
+
+def test_w7_needs_the_frontmatter_key_and_a_repo_root(tmp_path):
+    root = _repo(tmp_path, judge=WRITER_PERSONA.replace("builder", "judge"))
+    flow = tg({"name": "w7e", "nodes": [_judge_node()]})
+    # persona without the key: not declared readonly, no opinion
+    assert "lint-persona-not-readonly" not in codes(lint_flow(flow, repo_root=root))
+    # no repo_root: persona lints skipped, like the config lints without config
+    assert "lint-persona-not-readonly" not in codes(lint_flow(flow))
+    # persona file missing entirely: verify's persona-missing ERROR owns that
+    ghost = _repo(tmp_path / "other")
+    assert "lint-persona-not-readonly" not in codes(lint_flow(flow, repo_root=ghost))
+
+
+def test_w7_this_repos_own_readonly_personas_carry_the_key():
+    """reviewer and arbiter never mutate by contract; their files must say so
+    in frontmatter, or the lint cannot protect the flows that name them."""
+    from pathlib import Path
+
+    from lockstep.taskgraph import persona_declares_readonly
+
+    personas = Path(__file__).resolve().parents[1] / "personas"
+    assert persona_declares_readonly(personas, "reviewer")
+    assert persona_declares_readonly(personas, "arbiter")
+    # planner writes the plan file; implementer writes code; verifier runs
+    # checks (bash is a write vector) — none of them may claim readonly.
+    for name in ("planner", "implementer", "verifier"):
+        assert not persona_declares_readonly(personas, name)

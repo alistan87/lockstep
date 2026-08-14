@@ -325,3 +325,82 @@ snapshot is O(tree bytes) and already measured at 1.4 s on a 47 MB tree —
 polling it during a node multiplies the cost this repo added `kind: "timing"`
 lines to make visible. Revisit only with an OS-level watcher and a measured
 budget.
+
+---
+
+## Consumer report 2026-08-14 (MIMIR, follow-ups from adopting the 08-13 patch)
+
+Three items found while adopting commit b458bb3 and closing that repo's own
+tool-access findings. Smaller than the prior batch and better argued: all
+three were caught by the reporter before they shipped anything broken, by
+re-reading live task text and running empirical controls — the discipline the
+prior write-up asked for, returned. All three are real; two were reshaped.
+
+**1 — `verify --lint` cannot see a persona/executor mismatch (real; reduced
+to two structured fields).** Their nodes set `spec.persona: "verifier"` ("You
+fix nothing") while silently resolving to an unrestricted default stanza. The
+proposed check — compare the resolved stanza's `--tools` against "the
+default" — is not well-defined across harnesses (pi's `--tools`, claude's
+`--disallowedTools`, ollama's nothing). But the enforcement half already
+existed: `readonly-unenforced` is a verify ERROR when `spec.readonly` cannot
+be enforced by the stanza. The only missing link was persona → `spec.readonly`.
+Shipped their own better suggestion: `readonly: true` in persona frontmatter
+(self-documenting, stripped before the body is hashed so adding it re-bills
+nothing) + `lint-persona-not-readonly` when a node wears such a persona while
+setting neither `spec.readonly` nor `spec.writes`. A declared scope stays
+quiet — `writes: []` is the legitimate shape for a reviewer that must run
+`git diff` (readonly's allowlist would drop bash), per `codemod-apply`. Their
+finding also under-stated the cost: such a node holds the exclusive `tree`
+token, so the mismatch was serializing their reviewers, not just unguarding
+them. `personas/reviewer.md` and `arbiter.md` here now carry the key;
+`lint_flow` takes `repo_root` (persona lints skip without it, like the config
+lints without config).
+
+**2 — `--tools read` cannot list a directory, so "every file under `<dir>/`"
+silently breaks (real; lint declined, doc shipped).** Their proposed heuristic
+scans natural-language task text for directory-shaped phrases. Declined on the
+`lint-map-over-manifest` precedent: a lint that misfires on ordinary prose is
+one people learn to skip, and task text has no structure to anchor on. What
+shipped is the fix they said would have sufficed: AUTHORING-FOR-PI-ON-WINDOWS
+§5 now names the trap (a directory reference is a search in disguise; `read`
+takes a named file and errors on a directory — verified against pi 0.83.0),
+with the shell-probe rewrite, and the §7 checklist gained item 7: audit task
+text for directory references, not search verbs, when narrowing `--tools`.
+
+**3 — the doc's AGENTS.md discovery claim was false (real, and the fix is
+argv, not softer prose).** pi 0.83.0's own README: context files load from
+`~/.pi/agent/`, parent directories, AND cwd — and a node's cwd defaults to
+the repo root. Verified against the installed package and `pi --help` before
+editing. The reporter asked for a corrected sentence; a corrected sentence
+still leaves the unhashed channel open, and §2's own rule is that restriction
+goes in argv. Shipped: the correction, plus `--no-context-files --no-skills`
+on every driven pi stanza in AUTHORING §3 and `lockstep.toml.example` (both
+flags verified against the installed binary), which also retires the doc's
+"do skills load headlessly" open item by construction. One-time re-bill per
+stanza, stated in both files. The claude-code stanza gets an honest comment
+instead: CLAUDE.md discovery is the same class of channel, and the documented
+off switch (`--bare`) is not a drop-in — per `claude --help` it also restricts
+auth to ANTHROPIC_API_KEY, breaking subscription-backed stanzas — so the
+comment states the trade and keeps node rules in personas/ and `spec.context`.
+(This sentence itself was corrected during adversarial review: the first draft
+claimed no disable flag was documented, the exact class of error item 3 is
+about.)
+
+**Found by our own adversarial pass on this batch, same method.** Live
+controls on this machine (headless `-p --no-session` spawns from the repo
+root) confirmed all three of the consumer's empirical claims first-hand:
+discovery loaded both `~/.pi/agent/AGENTS.md` and this repo's root CLAUDE.md;
+`--no-context-files --no-skills` reduced that to NONE; `read` on a directory
+returned `EISDIR`. The same pass falsified two of our OWN claims before they
+shipped: the claude-code comment's "no documented disable flag" (`--bare` is
+documented; it also restricts auth to ANTHROPIC_API_KEY, which is why it is
+noted rather than adopted), and — worse, already shipped in b458bb3 —
+AUTHORING §3's `persona_flag = ["--persona"]` on every pi stanza: pi 0.83.0
+has no such flag (`Error: Unknown option`), so every persona-bearing node on
+those example stanzas would have failed at spawn. Removed; the driver's
+prepend fallback (SPEC §8.4, `persona_flag` unset) is the working shape.
+
+**The pattern worth keeping:** both 08-13 wrong items, item 3 here, and both
+of our own falsified claims died the same way — a claim checked against the
+installed artifact rather than the document describing it. The consumer now
+does it to our docs; the docs should keep deserving it.

@@ -26,41 +26,52 @@ A headless node's entire instruction set is these four things. Nothing else.
 
 Plus the driver's own footer, appended automatically. That is the complete list.
 
-**A file not on that list does not reach the node.** `.github/copilot-instructions.md`
-is a VS Code Copilot Chat convention; pi's CLI does not document loading it under
-any name. `.pi/agents.md` is in a directory pi does not search — pi walks up from
-cwd and checks `~/.pi/agent/AGENTS.md`, and that is the whole discovery path. Both
-files are currently dead weight. That is the direct, mechanical explanation for
-why rules written in them reproduced live inside a node anyway.
+**A file not on that list reaches the node only by pi's own discovery — which
+the stanzas below disable.** `.github/copilot-instructions.md` is a VS Code
+Copilot Chat convention; pi's CLI does not document loading it under any name.
+`.pi/agents.md` is in a directory pi does not search. Those two are dead weight,
+and that is the direct, mechanical explanation for why rules written in them
+never reproduced inside a node.
 
-### Do not "fix" this by making AGENTS.md discoverable
+But pi's discovery is wider than this document first claimed (corrected
+2026-08-14 after a consumer verified it against pi 0.83.0's own README and
+confirmed it with a live control): pi loads `AGENTS.md` **or `CLAUDE.md`** from
+`~/.pi/agent/`, from every parent directory walking up from cwd, **and from cwd
+itself** — and a lockstep harness node's cwd defaults to the repo root
+(`spec.cwd: "."`). So a project-root `AGENTS.md` *is* read by a headless
+`-p --no-session` spawn, unhashed. Whether your pi version does this is not the
+load-bearing point; the next section is. But do not repeat the mistake of
+believing a root-level context file is never read.
 
-Moving it to `./AGENTS.md` would make pi load it — and would create a worse
-problem than the one it solves. An auto-discovered file is **not in the input
-hash**. Editing it would change what every node does while every `input_hash`
-stayed identical, which means:
+### Close the channel in argv; do not argue with it in prose
+
+An auto-discovered file is **not in the input hash**. Editing it would change
+what every node does while every `input_hash` stayed identical, which means:
 
 - `lockstep run` reuses cached results that were produced under the old rules.
 - `--replay` and `--seed` serve results that no longer match the instructions.
 - `lockstep explain` cannot tell you why behaviour changed, because nothing moved.
 
-Silent drift is exactly what the hash exists to prevent. Keep `AGENTS.md` for
-humans and interactive pi sessions if you want one. **Node rules go in channels
-2 and 3, never in an auto-discovered file.**
+Silent drift is exactly what the hash exists to prevent — and by §2's own rule,
+the fix is a fact about the process, not a warning in a document. pi ships the
+flags: `--no-context-files` (`-nc`) disables `AGENTS.md`/`CLAUDE.md` discovery,
+and `--no-skills` disables skill discovery. **Every driven stanza in §3 carries
+both.** With them in argv, the four-channel table above is enforced rather than
+asserted, deleting the flags cannot change what a *correct* node can accomplish
+(ADDENDUM-A's enforce-never-enable test), and a root-level `AGENTS.md` is again
+what it should be: a file for humans and interactive pi sessions only.
 
-### Open item: verify whether pi skills load headlessly
+This also settles what used to be an open item here — whether pi skills load
+under `-p --no-session`. With `--no-skills` on every driven stanza the answer
+no longer matters for driven nodes; skills affect interactive sessions only,
+by construction. If you remove the flag to grant a node a skill deliberately,
+you have re-opened an unhashed channel: record the stanza as non-reproducible
+in `docs/spec/DEVIATIONS.md`, or deliver the skill's content through channels
+2 and 3 instead, where it is hashed per file.
 
-`.pi/settings.json` sets `"skills": ["../.github/skills"]`. If pi loads skills
-under `-p --no-session`, that is a **fifth, unhashed channel** with the same
-determinism problem described above. Establish this before adding any more
-skills, with a control: a skill whose only content is an instruction to emit a
-distinctive token, and a node prompted to answer a neutral question.
-
-- **If skills do not load headlessly:** they only affect interactive sessions.
-  Note that in `.pi/settings.json` so nobody later assumes node coverage.
-- **If they do load:** either disable them for driven stanzas, or accept that the
-  affected stanzas are non-reproducible and record it in `docs/spec/DEVIATIONS.md`.
-  Do not leave it undetermined.
+Adding the two flags to an existing stanza re-bills every node on it **once**
+(argv composition is hashed — that is the system noticing the instruction
+channel changed, working as designed). Pay it.
 
 ---
 
@@ -111,14 +122,18 @@ default = "pi-noshell"
 # `--no-extensions` then an explicit `--extension` means only the lockstep
 # guard loads -- keep both flags together; dropping the first silently
 # re-enables whatever is installed in the pi extension directories.
+#
+# `--no-context-files --no-skills` closes pi's two unhashed discovery channels
+# (a root AGENTS.md/CLAUDE.md, and skills) -- see §1. Every driven stanza
+# carries both; a stanza without them has a fifth channel the hash cannot see.
 # ---------------------------------------------------------------------------
 [executors.pi-noshell]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills",
         "--no-extensions", "--extension", ".pi/extensions/lockstep-guard.ts",
         "--tools", "read,edit,write",
         "{prompt}"]
 prompt_via = "stdin"
-persona_flag = ["--persona"]
 
 # ---------------------------------------------------------------------------
 # JUDGEMENT NODES: reviewers, arbiters, triage, estimation, planning.
@@ -135,10 +150,10 @@ persona_flag = ["--persona"]
 # ---------------------------------------------------------------------------
 [executors.pi-review]
 argv = ["pi.cmd", "-p", "--no-session",
+        "--no-context-files", "--no-skills",
         "--no-extensions", "--extension", ".pi/extensions/lockstep-guard.ts",
         "{prompt}"]
 prompt_via = "stdin"
-persona_flag = ["--persona"]
 readonly_argv = ["--tools", "read,submit_result"]
 
 # ---------------------------------------------------------------------------
@@ -148,9 +163,9 @@ readonly_argv = ["--tools", "read,submit_result"]
 # model choice. Use it for summarisation, classification, formatting, drafting.
 # ---------------------------------------------------------------------------
 [executors.pi-reasoner]
-argv = ["pi.cmd", "-p", "--no-session", "--no-tools", "{prompt}"]
+argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills",
+        "--no-tools", "{prompt}"]
 prompt_via = "stdin"
-persona_flag = ["--persona"]
 readonly_argv = ["--no-tools"]
 
 # ---------------------------------------------------------------------------
@@ -161,10 +176,10 @@ readonly_argv = ["--no-tools"]
 # ---------------------------------------------------------------------------
 [executors.pi-shell]
 argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills",
         "--no-extensions", "--extension", ".pi/extensions/lockstep-guard.ts",
         "{prompt}"]
 prompt_via = "stdin"
-persona_flag = ["--persona"]
 ```
 
 Standing rules for this file:
@@ -175,6 +190,18 @@ Standing rules for this file:
 - **Verify every flag against the installed binary** (`pi --help`) and re-run
   `lockstep doctor` after any pi upgrade. A renamed flag is a config edit, never
   a code change.
+- **`--no-context-files --no-skills` on every driven stanza.** They close the
+  unhashed discovery channels (§1). Removing either from a stanza re-opens a
+  channel `input_hash` cannot see; adding them to an existing stanza re-bills
+  its nodes once, which is the correct price for changing what reaches them.
+- **No `persona_flag` on pi stanzas.** pi 0.83.0 has no persona flag — a spawn
+  with `--persona <path>` dies with `Error: Unknown option: --persona`
+  (verified live; an earlier revision of this document showed
+  `persona_flag = ["--persona"]` on every stanza, which would have failed every
+  persona-bearing node). Leave `persona_flag` unset: the driver then prepends
+  the persona body to the prompt itself (SPEC §8.4), which works on any
+  harness. `lockstep doctor` probes a declared `persona_flag` per stanza —
+  another reason to actually run it after upgrades.
 - **Never add `readonly_argv` to a `--mode json` stanza.** Omitting it is what
   makes a misrouted readonly node fail at `verify` time — free — with
   `readonly-unenforced`, instead of failing at runtime after you paid for the spawn.
@@ -268,6 +295,35 @@ This is strictly better than letting the agent search, on four axes: it cannot
 wander, it is deterministic, it is cached across attempts, and you can read
 exactly what the node saw when it gets the answer wrong.
 
+### A directory reference is a search, even when it doesn't look like one
+
+**A task that says "every file under `gates/`" or "each template in
+`src/viz/templates/`" needs the same shell-probe treatment as an explicit
+search — `read` takes a named file and cannot list a directory.** On pi 0.83.0
+a `read` of a directory path errors outright; there is no partial success and
+no fallback, so a node whose only file tool is `read` is simply unable to do
+what its task text asked, and nothing fails until runtime.
+
+This trap is easy to walk into when narrowing a stanza's `--tools`, because the
+phrasing doesn't trip a search-shaped alarm: "every file under `<dir>/`" reads
+like an ordinary instruction to read some files, not like `find` or `grep`. A
+consumer adopting this document's §9 checklist caught it only on a full manual
+re-read of every live task's text — a keyword scan for search vocabulary missed
+all four affected flows. So when you strip `bash` from a stanza, audit its
+nodes' tasks for **directory references, not search verbs**: any phrase that
+names a directory and quantifies over its contents ("every", "each", "all …
+under/in") means the node needs the enumeration handed to it as data:
+
+```json
+{ "id": "list-gates", "kind": "shell",
+  "spec": { "argv": ["python", "-m", "lockstep.probes.command_output",
+                     "--label", "files under gates/",
+                     "ls gates"] } }
+```
+
+…and the consuming task says "the files listed below", interpolating
+`{steps.list-gates.text}`, instead of "every file under `gates/`".
+
 ---
 
 ## 6. Domain skills: split them into method and reference
@@ -331,7 +387,7 @@ Two cautions:
 
 ## 7. Node checklist
 
-Before committing any harness node, confirm all six:
+Before committing any harness node, confirm all seven:
 
 1. **`spec.executor`** names the narrowest stanza that can do the job.
    `pi-reasoner` if the input is fully interpolated; `pi-review` if it does not
@@ -349,6 +405,10 @@ Before committing any harness node, confirm all six:
    Most nodes should be 180–300.
 6. **`spec.persona`** matches the stanza's capability class. A shell-assuming
    persona on a no-shell node produces a confused node, not a safe one.
+7. **The task text names files, not directories-to-enumerate.** "Every file
+   under `<dir>/`" on a `read`-only stanza is a search in disguise (§5) —
+   `read` cannot list a directory. Hand the node the enumeration from a shell
+   probe and say "the files listed below".
 
 ---
 
@@ -388,4 +448,7 @@ that names it, so a plain re-run serves the cached result and skips the probe.
 - Delete `.pi/agents.md` and `.github/agents.md`, or add a header line saying
   they are for humans only and reach no node. Keep
   `.github/copilot-instructions.md` for VS Code Copilot Chat, where it does work.
-- Settle the pi-skills question in §1 with a control before adding more skills.
+- Add `--no-context-files --no-skills` to every driven stanza (§1, §3) and
+  accept the one-time re-bill. This closes both unhashed discovery channels —
+  including a root `AGENTS.md`/`CLAUDE.md`, which pi *does* read from a node's
+  default cwd — and retires the old open question about headless skills.
