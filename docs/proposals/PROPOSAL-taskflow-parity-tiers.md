@@ -1,23 +1,38 @@
 ---
 type: proposal
 title: "Proposal: parity tiers 1–3 — patterns, loop, composition, and declared staleness"
-description: What it takes to close the feature gap with pi-taskflow 0.2.6 for tiers 1–3, after checking each item against this repo's source. Phases A–C (patterns docs, loop, declared staleness) adopted 2026-08-13; composition (§2.2) split out pending its own proposal after a third-pass review; race not built. Includes the adversarial reviews that reshaped it.
+description: What it takes to close the feature gap with pi-taskflow 0.2.6 for tiers 1–3, after checking each item against this repo's source. Phases A–C (patterns docs, loop, declared staleness) adopted 2026-08-13 and BUILT 2026-08-14, five commits each adversarially reviewed; composition (§2.2) split out to PROPOSAL-flow-composition.md; race not built. Includes the adversarial reviews that reshaped it.
 resource: docs/proposals/PROPOSAL-taskflow-parity-tiers.md
 status: stable
 ---
 # Proposal: parity tiers 1–3
 
-**ADOPTED IN PART, 2026-08-13.** Phases **A, B and C** (§4) are adopted as
-written, with one correction applied at adoption: §2.1's Work line contradicted
-finding 17 and has been fixed in place (third pass, finding 23). **Phase D
-(composition, §2.2) is NOT adopted** — an independent third-pass review (below)
-found three unanswered engine questions (findings 24–26: pool dispatch for a
-`flow` kind, the per-engine lock registry, resume-mid-child semantics), each of
-which is a design decision rather than an implementation detail. D returns as
-its own proposal that must answer them before any code. **Race (§1.4) is not
-built**, per the recommendation. This resolves §4's sequencing tension
-(finding 22) by default: C-before-D is now the schedule, not a trade. The
-authority is the commit that adopted this; the document stays as the reasoning.
+**ADOPTED IN PART, 2026-08-13. A–C BUILT, 2026-08-14.** All three adopted
+phases shipped in five working commits, each followed by an adversarial review
+whose blockers were resolved before the next began: **A** `0c894cf`/`676a126`
+(patterns docs, tournament starter + `tournament_pick` gate + `TournamentPick`
+contract; review moved the candidates' answers off the publish argv), **B**
+`9e23fbb`/`ec454c1` (heal-text round number, `heal.on_exhausted`, loop-body
+lint, `refine-loop` starter; review caught the theory doc lagging the engine
+and named the lifetime-rounds edge), **C** `ed15c4c`/`a3910b4`/`894a803`/
+`14785c2` (`spec.reads`, `explain --graph`, `--force-stale`; the memo is
+stat-keyed rather than the adopted text's once-per-process — recorded in
+DEVIATIONS — and `RenderCtx.runs_root` exists because the derived exclusion
+excluded the world for throwaway planners). Exit criteria all met: full pytest
+green throughout, torture suite 6/6, replay fixture unchanged across both
+hash-adjacent phases, DEVIATIONS entries for `reads` and `on_exhausted`, every
+new surface in FLOW-AUTHORING first. The authority is the commits; this
+document stays as the reasoning.
+
+**Phase D (composition, §2.2) was NOT adopted** — an independent third-pass
+review (below) found three unanswered engine questions (findings 24–26: pool
+dispatch for a `flow` kind, the per-engine lock registry, resume-mid-child
+semantics), each a design decision rather than an implementation detail.
+**D's successor proposal now exists:**
+`PROPOSAL-flow-composition.md` answers findings 24–26 (plus 4 and 21) and is
+where any adoption of composition happens. **Race (§1.4) is not built**, per
+the recommendation. §4's sequencing tension (finding 22) resolved by default:
+C-before-D became the schedule, not a trade.
 
 **Standing caveat, stated once.** The recommendation on the record is *not* to
 chase parity: pi-taskflow is a maintained package with a larger surface, and
