@@ -213,6 +213,14 @@ stub (§7, deliberate). Honest, but it means one edit anywhere in a big
 interpolated value re-runs that node and every descendant — interpolate a
 fingerprint or a summary if the payload churns.
 
+**`spec.reads`** (harness/fake only): declared file inputs as hash parts —
+`"reads": ["src/**/*.py"]` re-bills the node when a matched file changes, and
+`explain` names the file. PRECISION, not correctness: an undeclared read stays
+invisible. pathlib globs (`**` crosses dirs — NOT writes' fnmatch);
+`{args.NAME}` only; hashed at every plan incl. resume revalidation
+(`lint-broad-reads` past 200 files; timing in the journal). Absent/empty =
+no-op. See FLOW-AUTHORING "Declared reads".
+
 ## Retry
 
 Harness nodes DEFAULT to `retry: { max: 2, backoff_ms: 60000 }` (AMENDMENTS-r5

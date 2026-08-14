@@ -497,6 +497,43 @@ def verify_flow(
                 f"is off; add exclusive: [\"tree\"] to enable it",
             )
 
+    # Parity 3.1: spec.reads gets the writes checks it can inherit — same
+    # entry grammar ({args.NAME} and nothing else), same repo-root jail. No
+    # map prohibition (reads share nothing) and no serialization concern
+    # (hashing a file needs no token).
+    for n in tg.nodes:
+        if "reads" not in n.spec:
+            continue
+        reads = n.spec.get("reads")
+        if not isinstance(reads, list):
+            err("bad-read-scope", f"node {n.id!r}: spec.reads must be a list of glob patterns")
+            continue
+        for r in reads:
+            if isinstance(r, str):
+                for ref in extract_refs(r):
+                    parts = ref.split(".")
+                    if parts[0] != "args" or len(parts) != 2:
+                        err(
+                            "dynamic-read-scope",
+                            f"node {n.id!r}: spec.reads entry {r!r} references "
+                            f"{{{ref}}} — reads may only interpolate {{args.NAME}}. "
+                            f"A read set resolved from a step's output would let the "
+                            f"graph decide what this node's hash depends on",
+                        )
+            if not isinstance(r, str) or not r.strip():
+                err("bad-read-scope", f"node {n.id!r}: spec.reads has an empty entry")
+            elif r.startswith(("/", "\\")) or PurePosixPath(r.replace("\\", "/")).is_absolute():
+                err(
+                    "bad-read-scope",
+                    f"node {n.id!r}: spec.reads entry {r!r} is absolute; reads are "
+                    f"relative to the repo root",
+                )
+            elif ".." in PurePosixPath(r.replace("\\", "/")).parts:
+                err(
+                    "bad-read-scope",
+                    f"node {n.id!r}: spec.reads entry {r!r} escapes the repo root",
+                )
+
     # §8.1: the Policy seam is consulted at verify time too (audit r6.2 nit).
     if policy is not None:
         for n in tg.nodes:
@@ -961,6 +998,30 @@ def lint_flow(
                     f"write tools and holds the exclusive `tree` token. Set spec.readonly: "
                     f"true (verify then enforces it via readonly_argv, and the node fans out "
                     f"in parallel), or declare spec.writes if writing is intended",
+                )
+
+    # W9 (parity 3.1) — a reads glob that matches a big slice of the tree is
+    # hashed at EVERY plan, including the resume revalidation of every done
+    # node: exactly the 13→32-minute creep shape (lesson 20). The stat-keyed
+    # memo caps repeat cost within a process, but the first pass still reads
+    # every byte, and every resume is a first pass.
+    if repo_root is not None:
+        from .reads import BROAD_READS_THRESHOLD, matched_files
+
+        for n in tg.nodes:
+            reads = n.spec.get("reads")
+            if not isinstance(reads, list) or not reads:
+                continue
+            literal = [r for r in reads if isinstance(r, str) and "{" not in r]
+            count = len(matched_files(
+                Path(repo_root), literal, exclude_roots=(Path(repo_root) / "runs",)))
+            if count > BROAD_READS_THRESHOLD:
+                warn(
+                    "lint-broad-reads",
+                    f"node {n.id!r}: spec.reads matches {count} files "
+                    f"(> {BROAD_READS_THRESHOLD}); every plan hashes them — including the "
+                    f"revalidation of every done node on resume — narrow the globs, or "
+                    f"watch the journal's reads-hash timing lines grow with the tree",
                 )
 
     # W8 (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) — heal.on_exhausted:

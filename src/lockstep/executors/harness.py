@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..contracts import ContractError, describe_contract, resolve_contract
 from ..interpolate import fence_context_file, render_scope, render_template
+from ..reads import apply_reads
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
 from ..state import part_digest
@@ -44,6 +45,12 @@ class HarnessSpec(BaseModel):
     writes_rationale: str = ""
     # role=gate only (E4): baseline gate — see ShellSpec.baseline.
     baseline: bool = False
+    # Declared file inputs (parity 3.1): each matched file's content digest
+    # folds into the input_hash, so editing a declared file invalidates
+    # exactly the nodes that declared it. PRECISION, not correctness — an
+    # undeclared read stays invisible (see reads.py). {args.NAME} only, like
+    # `writes`. Empty/absent contributes nothing (M3 additivity).
+    reads: list[str] = []
 
 
 class HarnessError(Exception):
@@ -277,6 +284,11 @@ class HarnessExecutor:
         if spec.readonly:
             argv_template += list(stanza.readonly_argv or [])
         cwd = resolve_inside(self.repo_root, spec.cwd)
+        # Parity 3.1: declared file inputs. Empty/absent contributes NOTHING —
+        # the parts list below is byte-identical to every release before this
+        # existed (M3 additivity, pinned by test and the replay fixture).
+        reads_parts, reads_detail = apply_reads(spec.reads, ctx, node.id)
+        hash_detail.update(reads_detail)
         return PlannedWork(
             render=prompt,
             # Fingerprint (SPEC §9.2): rendered prompt (FULL pre-spill values),
@@ -289,7 +301,7 @@ class HarnessExecutor:
                 f"argv:{json.dumps(argv_template, ensure_ascii=False)}",
                 # r5 B1: the RESOLVED stanza's digest, not the whole config file.
                 f"config:{stanza_digest(stanza_name, stanza)}",
-            ],
+            ] + reads_parts,
             costs_tokens=True,
             exclusive=[] if spec.readonly else ["tree"],
             meta={

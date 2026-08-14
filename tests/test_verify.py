@@ -389,3 +389,25 @@ def test_on_exhausted_rules(tmp_path):
     ok = healable(
         {"max_rounds": 1, "targets": ["impl"], "rollback": False, "on_exhausted": "pass"})
     assert not [c for c in codes(ok, tmp_path) if c.startswith("on-exhausted")]
+
+
+def test_read_scope_rules(tmp_path):
+    """Parity 3.1: reads inherit the writes entry grammar - {args.NAME} only,
+    repo-root jailed - and land on shell nodes as spec-invalid (ShellSpec has
+    no reads field: a shell node always re-runs, so a declared read set there
+    is a cache key for a cache that does not exist)."""
+    def reader(reads):
+        return flow([
+            {"id": "a", "kind": "fake", "spec": {"reads": reads}, "final": True},
+        ])
+    assert "bad-read-scope" in codes(reader(["/abs/path"]), tmp_path)
+    assert "bad-read-scope" in codes(reader(["../escape.txt"]), tmp_path)
+    assert "bad-read-scope" in codes(reader(["  "]), tmp_path)
+    assert "dynamic-read-scope" in codes(reader(["{steps.a.output}"]), tmp_path)
+    ok = codes(reader(["src/**", "docs/{args.name}"]), tmp_path)
+    assert not [c for c in ok if "read-scope" in c]
+    shell = flow([
+        {"id": "s", "kind": "shell", "final": True,
+         "spec": {"cmd": ["git", "status"], "reads": ["src/**"]}},
+    ])
+    assert "spec-invalid" in codes(shell, tmp_path)

@@ -638,3 +638,24 @@ file records implementation-level departures below that bar.
   entry. The engine also now composes the round number into the heal
   text ("This is repair round N of M") - prompt-and-hash-folded via the
   existing `heal_texts` mechanism, no new 7 reference form.
+
+- **2026-08-14 — `spec.reads`: declared file inputs as hash parts (parity
+  3.1, adopted 2026-08-13).** SPEC 9.2's fingerprint knows prompts, argv,
+  persona, and config; it cannot see files a node opens by itself. `reads`
+  folds each matched file's content digest into the declaring node's
+  input_hash - PRECISION, not correctness: an undeclared read stays
+  invisible, and every document that describes the feature says so (the
+  spec.writes lesson). M3 additivity is the frozen-surface discipline: an
+  absent or empty declaration contributes NOTHING, pinned by a
+  byte-identical-parts test and by the replay fixture passing without
+  re-recording. Two deliberate departures from the adopted text, both
+  toward honesty: the per-process memo is keyed on (mtime_ns, size), not
+  "each path hashed once" - a literal once-per-process memo would serve a
+  digest of a tree a mid-run node has since rewritten; and reads may
+  interpolate {args.NAME} through the same render_scope as writes, because
+  two grammars for two scope-shaped keys is a trap. Glob semantics are
+  pathlib (** crosses directories), NOT writes' fnmatch - reads enumerate
+  the filesystem; the difference is documented where the feature is.
+  Timing rides the journal as kind:"timing"/op:"reads-hash" lines;
+  lint-broad-reads warns past 200 files; .git and the runs root are never
+  hashed.

@@ -143,6 +143,7 @@ reading as clean.
 | `lint-ungated-mutation` | a write-capable work node with no gate or approval on either side of it | nothing authorized the change and nothing can block it; silenced by saying "ungated" in the flow `description` when a human reads the output directly by design |
 | `lint-live-diff-per-phase` | more than one node captures the live tree (`worktree_diff`), or even ONE does so inside a healing gate's loop body | shell nodes re-run on resume, so phase 1's capture re-runs against phase 2's tree and a passed review re-bills contaminated; a loop body re-runs every round, so its capture is wrong from round 2 even alone; use `node_diff --node` (consumer report 2026-08-13; parity 2.1 finding 13) |
 | `lint-on-exhausted-pass` | a gate declares `heal.on_exhausted: "pass"` | it converts a blocking gate into a passing one after N failed repairs — legal for a refinement loop, but every gate that can wave work through gets named so a flow review sees the full list (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) |
+| `lint-broad-reads` *(repo)* | a node's `spec.reads` matches more than 200 files | every plan hashes the declared set — including the resume revalidation of every done node, the 13→32-minute creep shape (lesson 20); narrow the globs or watch the journal's `reads-hash` timing lines grow |
 | `lint-tools-drops-result-channel` *(config)* | a stanza attaches an `--extension` but its `--tools` list omits `submit_result` | the allowlist covers extension tools, so the guard's structured-output channel silently disappears and the envelope stops being enforced (consumer report 2026-08-13) |
 | `lint-persona-not-readonly` *(repo)* | a node names a persona whose frontmatter declares `readonly: true` but sets neither `spec.readonly` nor `spec.writes` | `spec.persona` and `spec.readonly` are independent fields, so "you fix nothing" personas silently keep full write tools and the `tree` token; `readonly: true` in the persona file is the self-documenting signal (consumer report 2026-08-14) |
 
@@ -557,6 +558,52 @@ acceptance is the flow's last words rather than a quiet exit 0.
 - Cache correctness, not reproducibility: a node re-runs iff its inputs
   changed. To make caching honest for file-content work, put a content
   fingerprint IN the item/prompt (see `flows/starter/file-audit.tg.json`).
+
+## Declared reads (`spec.reads`)
+
+```jsonc
+{ "id": "audit", "spec": { "reads": ["src/**/*.py", "pyproject.toml"], "task": "…" } }
+```
+
+Each matched file's content digest folds into the node's `input_hash` (one
+`reads:` part; per-file digests in the recorded detail), so editing a declared
+file re-bills exactly the nodes that declared it — and `lockstep explain`
+names the file (`reads.src/x.py changed`) instead of an opaque part.
+
+**This is a PRECISION feature, not a correctness feature.** lockstep cannot
+observe what an agent subprocess actually opens, so an undeclared read is
+silently stale-blind — the same limitation `spec.writes` had before
+enforcement, and the same discipline applies: declare honestly, and treat the
+declaration as a statement about the flow, not a guarantee about the model.
+Where it earns its keep: a node whose prompt names no upstream output but
+whose answer depends on files (an auditor, a doc checker, a codemod scout)
+today never invalidates when those files change; with `reads` it does.
+
+Mechanics worth knowing before declaring one:
+
+- **Glob semantics are `pathlib` (`**` crosses directories, `*` does not
+  cross `/`)** — reads ENUMERATE the live filesystem, unlike `writes`, whose
+  `fnmatch` patterns test paths the engine already has. `.git` and the runs
+  root are never hashed. Entries may interpolate `{args.NAME}` and nothing
+  else, exactly like a write scope (`bad-read-scope` / `dynamic-read-scope`
+  are the §6 errors).
+- **Cost is paid at every plan**, including the resume revalidation of every
+  done node (the 13→32-minute shape, lesson 20). A stat-keyed per-process
+  memo makes repeat plans cheap; the first pass of each process reads every
+  declared byte, and every resume is a first pass. The journal records each
+  hashing as a `kind: "timing"` line (`op: "reads-hash"`);
+  `python contrib\snapshot_bench.py --reads "src/**" --repo .` measures your
+  tree; `lint-broad-reads` warns past 200 files.
+- **Relationship to external-edit detection (M6/M7):** on resume, ANY
+  out-of-band tree change already re-runs leaf nodes and not-yet-consumed
+  nodes wholesale. `reads` adds what M7 cannot: per-node precision for
+  INTERIOR nodes, mid-lineage invalidation, and the name of the file that
+  moved.
+- Absent and `[]` both contribute nothing — the hash of every existing flow
+  is byte-identical to before this feature existed (M3 additivity, pinned by
+  test and by the replay fixture).
+- A shell node cannot declare reads (`spec-invalid`): shell always re-runs,
+  so a read set there is a cache key for a cache that does not exist.
 
 ## Write scope (`spec.writes`)
 

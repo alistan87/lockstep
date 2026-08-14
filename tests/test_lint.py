@@ -444,3 +444,20 @@ def test_w8_on_exhausted_pass_is_named_per_gate():
     assert found.count("lint-on-exhausted-pass") == 1
     assert "lint-on-exhausted-pass" not in codes(lint_flow(_loop_flow(
         ["python", "-m", "lockstep.probes.node_diff", "--node", "draft"])))
+
+
+def test_w9_broad_reads_warns_and_needs_a_repo_root(tmp_path, monkeypatch):
+    """Parity 3.1: a broad reads glob is hashed at every plan, including the
+    resume revalidation of every done node - the 13->32-minute creep shape."""
+    import lockstep.reads as reads_mod
+    monkeypatch.setattr(reads_mod, "BROAD_READS_THRESHOLD", 2)
+    for i in range(4):
+        (tmp_path / f"f{i}.txt").write_text("x", encoding="utf-8")
+    flow = tg({
+        "name": "broad",
+        "nodes": [{"id": "a", "kind": "fake", "final": True,
+                   "spec": {"reads": ["*.txt"]}}],
+    })
+    found = codes(lint_flow(flow, repo_root=tmp_path))
+    assert found.count("lint-broad-reads") == 1
+    assert "lint-broad-reads" not in codes(lint_flow(flow)), "no repo_root, no count"

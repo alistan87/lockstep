@@ -139,6 +139,30 @@ def bench_repo(repo: Path, rounds: int) -> int:
     return 0
 
 
+def bench_reads(root: Path, pattern: str, rounds: int) -> int:
+    """Parity 3.1's measured ceiling: what one `spec.reads` glob costs at plan
+    time, cold (first plan of a process — every resume starts here) vs warm
+    (the stat-keyed memo, which is what every LATER plan in the same process
+    pays, including the `_settle` revalidation of every done node)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from lockstep import reads as reads_mod
+
+    print(f"hashing reads pattern {pattern!r} under {root.resolve()} ...")
+    print()
+    print("round    files      cold        memo-warm")
+    print("-" * 46)
+    for r in range(rounds):
+        reads_mod.clear_memo()
+        _, _, cold = reads_mod.hash_reads(root, [pattern])
+        _, _, warm = reads_mod.hash_reads(root, [pattern])
+        print(f"{r:>5}    {cold['files']:>5}    {cold['ms']:>7.1f}ms    {warm['ms']:>9.1f}ms")
+    print()
+    print("Cold is what a resume pays per declaring node before the memo warms;")
+    print("warm is every later plan in the same process. The journal's")
+    print('`kind: "timing", op: "reads-hash"` lines are the live view of this.')
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -148,7 +172,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rounds", type=int, default=6, help="snapshots to take")
     ap.add_argument("--churn", type=int, default=5,
                     help="files edited + created between synthetic rounds")
+    ap.add_argument("--reads", metavar="GLOB",
+                    help="time hashing a spec.reads glob (parity 3.1) instead of snapshots; "
+                         "combines with --repo, else uses a synthetic tree")
     ns = ap.parse_args(argv)
+    if ns.reads:
+        if ns.repo:
+            return bench_reads(Path(ns.repo), ns.reads, ns.rounds)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "repo"
+            root.mkdir()
+            print(f"building a {ns.files}-file repo, {ns.kb} KB each ...", flush=True)
+            build_repo(root, ns.files, ns.kb)
+            return bench_reads(root, ns.reads, ns.rounds)
     if ns.repo:
         return bench_repo(Path(ns.repo), ns.rounds)
     return bench_synthetic(ns.files, ns.kb, ns.rounds, ns.churn)

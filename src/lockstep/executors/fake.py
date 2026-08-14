@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..interpolate import render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
+from ..reads import apply_reads
 from ..state import part_digest
 from ..taskgraph import Node
 from .shell import resolve_ctx_of
@@ -49,6 +50,7 @@ class FakeSpec(BaseModel):
     # enforcement layer's deterministic BLOCK records (ADDENDUM-A A.7.5)
     writes_rationale: str = ""  # see ShellSpec.writes_rationale
     baseline: bool = False  # role=gate only (E4); see ShellSpec.baseline
+    reads: list[str] = []  # declared file inputs (parity 3.1); see HarnessSpec.reads
 
 
 @dataclass
@@ -90,12 +92,16 @@ class FakeExecutor:
             hash_detail["prompt.heal"] = part_digest(ctx.heal_text)
         if ctx.steer_text:
             hash_detail["prompt.steer"] = part_digest(ctx.steer_text)
+        # Parity 3.1: same additive rule as the real executor — absent/empty
+        # contributes nothing, so the offline suite exercises the real shape.
+        reads_parts, reads_detail = apply_reads(spec.reads, ctx, node.id)
+        hash_detail.update(reads_detail)
         return PlannedWork(
             render=rendered.prompt_text + heal + steer,
             fingerprint_parts=[
                 f"prompt:{rendered.hash_text}{heal}{steer}",
                 f"config:{ctx.config_digest}",
-            ],
+            ] + reads_parts,
             costs_tokens=spec.costs_tokens,
             exclusive=[] if spec.readonly else ["tree"],
             meta={
