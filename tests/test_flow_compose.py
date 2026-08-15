@@ -311,3 +311,21 @@ def test_child_dirs_are_invisible_to_gc_estimate_and_active(tmp_path, git_repo):
     est = estimate_flow(TaskGraph.model_validate(parent_with_flow()),
                         runs_root, "test-flow-hash")
     assert est is not None, "estimate scans the flat level without tripping on children"
+
+
+def test_steering_a_flow_node_is_refused_with_a_pointer_at_the_child(tmp_path, git_repo, capsys):
+    """Post-build review finding 12: a flow node has no prompt and its hash
+    ignores steering, so accepting the message would re-run the node, serve
+    the cached child, and mark the message consumed having changed NOTHING -
+    the quiet-untruth class. steer refuses and names the child dir."""
+    from lockstep import EXIT_CONFIG
+    from lockstep.cli import main
+
+    h = compose_build(tmp_path, parent_with_flow(), git_repo,
+                      child_files={"child.tg.json": child_two_step()})
+    assert h.engine.run() == 0
+    code = main(["steer", str(h.run_dir), "sub", "prefer the streaming writer"])
+    assert code == EXIT_CONFIG
+    err = capsys.readouterr().err
+    assert "flow node" in err and "children" in err
+    assert not (h.run_dir / "mailbox" / "sub.jsonl").exists(), "nothing was appended"

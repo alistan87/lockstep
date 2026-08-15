@@ -876,6 +876,22 @@ def cmd_steer(ns) -> int:
     state = load_state(run_dir)
     if ns.node_id not in state.nodes:
         return _fail(f"unknown node {ns.node_id!r} (nodes: {sorted(state.nodes)})", EXIT_CONFIG)
+    if state.nodes[ns.node_id].kind == "flow":
+        # Post-build composition review: a flow node has no prompt, and its
+        # hash deliberately ignores steering — accepting the message would
+        # re-run the node, serve the cached child, and mark the message
+        # consumed having changed NOTHING. Refuse loudly instead.
+        children = sorted(p.name for p in (run_dir / "children").glob(f"{ns.node_id}-*"))
+        hint = (f"steer its child directly: lockstep steer "
+                f"{run_dir / 'children' / children[-1]} <node> \"...\""
+                if children else
+                "the child has not started yet; steer its nodes once it exists "
+                f"under {run_dir / 'children'}")
+        return _fail(
+            f"{ns.node_id!r} is a flow node — it has no prompt to steer, and the "
+            f"message would be consumed without changing anything; {hint}",
+            EXIT_CONFIG,
+        )
     append_steer(run_dir, ns.node_id, ns.message)
     status = state.nodes[ns.node_id].status
     print(f"steered {ns.node_id} (currently {status})")

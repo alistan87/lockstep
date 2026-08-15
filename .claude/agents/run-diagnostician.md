@@ -14,7 +14,11 @@ Procedure:
    INCLUDING rotated `*-attempt<n>.*` files (attempt 1 usually explains
    attempt 2) and, for harness nodes, the stdout envelope's `is_error` /
    `api_error_status` / `result` fields. For gates read `result.json`,
-   `attempt-<n>.patch`, and `discarded-<n>/`.
+   `attempt-<n>.patch`, and `discarded-<n>/`. For a failed `kind: "flow"`
+   node, its error names a child run dir under `<run_dir>/children/` —
+   recurse this whole procedure into it (it is a real run dir; a child gate
+   block surfaces as parent exit 3, and the verdict lives in the CHILD's
+   phases).
 3. Distinguish the four failure families before proposing anything:
    infrastructure (429 session limit, AV PermissionError, timeout), contract
    (model emitted non-conforming output), flow authoring (verification or

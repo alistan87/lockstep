@@ -377,3 +377,33 @@ dispatch path of every run, composed or not, and it is ordered FIRST
 precisely because getting it wrong breaks runs that never heard of
 composition. Second target: finding 2's exclusions are stated as sufficient;
 nobody has yet tried to construct a third rollback window they do not cover.
+
+### Post-build review (2026-08-15)
+
+Run after the implementation landed (`39c3ad2`, `8909f02`), against the
+built code. Both standing targets held: the byte-identical claim's pin was
+the whole suite plus torture plus the replay fixture, all green before any
+composition code existed, and no third rollback window has been
+constructed. What the build and this pass found beyond the document:
+
+10. **found by test, fixed in the build** — AMENDMENTS M4's free
+    retry-on-empty-result converted a child gate block into a retried
+    success (the torture test's call counts caught it on first run: the
+    child gate ran twice and the run exited 0). Executors may now opt out
+    (`auto_retry = False`); flow does. DEVIATIONS 2026-08-15.
+11. **found by verify, fixed in the build** — the §6 arg scanner did not
+    know `spec.args` values (or phase C's `spec.reads` entries) were real
+    references; an arg used only there false-fired `unused-arg`.
+12. **applied post-build, material** — steering a flow node was a quiet
+    no-op: the mailbox appended, the done node re-pended (r6 C2), the plan
+    ignored the message, the child served cache, and the message was marked
+    consumed having changed NOTHING. `steer` now refuses flow nodes and
+    points at the child dir.
+13. **refuted** — a crashed composed run was feared unresumable (child lock
+    held by a dead driver); `acquire_lock` self-reclaims same-host dead-pid
+    locks, so parent resume re-enters cleanly.
+14. **accepted, documented** — a flow node cannot declare `spec.reads` in
+    v1, so a cached parent never re-opens its child however the tree moved
+    (M7 covers it like any cacheable node when leaf/unconsumed). The trade
+    is stated in FLOW-AUTHORING; lifting it means deciding what a
+    child-wide read set even means, which is future work, not an oversight.

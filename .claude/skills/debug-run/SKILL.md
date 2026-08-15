@@ -42,6 +42,18 @@ auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
   failed spawn's changed paths are wreckage, not a record.
 - `events.jsonl` — one line per transition; a trailing partial line after a
   crash is normal and tolerated.
+- **Composed runs** (`kind: "flow"` nodes): the child is a REAL run dir at
+  `<run_dir>/children/<node>-<hash12>/` — point `status`/`explain`/this
+  playbook at it directly. A failed flow node's `error` names the child node
+  that blocked/failed and the child dir. A child gate block surfaces as
+  parent exit **3** (node failed), not 2 — the parent's `status` shows the
+  flow node failed with "child gate blocked" in its error; the verdict
+  evidence lives in the CHILD's `phases/<gate>/result.json`. `resume` on the
+  PARENT re-enters the child and re-runs only what blocked. Steering a flow
+  node is refused (no prompt to steer) — steer the child's nodes by the
+  child dir. Two dirs under `children/` for one node = the parent's hash
+  moved (flow/args/config edit); the old dir is the previous lineage's
+  evidence.
 
 ## Failure signatures seen in practice
 

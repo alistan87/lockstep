@@ -304,6 +304,41 @@ does not refuse. You are allowed to edit your own repository.
 
 ---
 
+## 8b. Composition: a saved flow as one node
+
+`kind: "flow"` (PROPOSAL-flow-composition, 2026-08-15) runs a whole saved
+flow inside one `work` node. The design rests on two refusals to invent
+anything:
+
+**A child is a real run**, in a deterministic dir the parent's `input_hash`
+names (`<run>/children/<node>-<hash12>/`) — so every run-dir tool descends
+unchanged, resume-mid-child is just child resume (completed child work
+hash-skips; nothing is re-billed), and a moved parent hash starts a fresh
+child lineage beside the old evidence instead of mutating it. `gc`,
+`estimate` and `active` scan one level and therefore never see a child apart
+from its parent — pinned by test as a choice, not an accident.
+
+**Nothing that matters is engine-scoped anymore; it is RUN-scoped.**
+`RunResources` carries the exclusive-token registry (a child tree-writer
+serializes against a parent-level writer — the shared tree is still one
+tree), a worker semaphore acquired inside each token worker (`--max-workers`
+bounds the whole tree of engines), and the root wallet (a child's spawn
+debits the same budget; a child trip stops the RUN, exit 4, never "node
+failed"). The flow node itself holds no token, no slot, no timeout — it
+parks on its own thread while the child runs.
+
+The boundaries are refusals with names: rollback healing cannot cross the
+composition line in either direction (`rollback-heal-in-child`,
+`flow-in-rollback-cone`) because a rollback restores everything since its
+baseline against the one shared tree, and a composed window brackets work
+that is not its own — `rollback: false` loops compose freely. A child gate
+block is a parent node FAILURE naming the gate and the child dir (only
+gates block, and the parent node is not a gate). Steering a flow node is
+refused — it has no prompt, and the child's nodes steer directly. A flow
+node cannot declare `spec.reads` in v1: the child re-runs when its flow
+file, args, or config change; file-content sensitivity belongs to the
+child's own nodes, and only matters when the child actually re-enters.
+
 ## 9. Steering, and why it is checkpoint-consumed
 
 `lockstep steer <run> <node> "text"` appends to that node's mailbox. The whole

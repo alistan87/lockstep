@@ -570,6 +570,15 @@ What to know before writing one:
   (`flow-cycle`, `flow-depth`, child issues prefixed with the child's path);
   `verify --lint` names approvals hiding inside children
   (`lint-approval-in-child`).
+- **Steering a flow node is refused** (post-build review): it has no prompt,
+  and its hash deliberately ignores steering — the message would be consumed
+  having changed nothing. Steer the child's own nodes by the child dir.
+- **A flow node cannot declare `spec.reads`** (v1): the child re-runs when
+  its flow file, args, or config change. File-content sensitivity belongs to
+  the child's own nodes — and only bites when the child actually re-enters,
+  which is the composition trade to know: a cached parent never re-opens its
+  child, however the tree moved underneath it (M7 re-runs it like any other
+  cacheable node when it is a leaf or unconsumed).
 
 ## Retry, budget, caching
 

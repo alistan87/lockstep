@@ -80,6 +80,14 @@ dead: the same rule `resume` applies before it clears anything.
 | 7 | executor/config error | run `lockstep doctor`; check `lockstep.toml`; not a flow bug |
 | 8 | run-dir lock held | another process owns the run; do not force-unlock without diagnosing |
 
+**Composed runs (`kind: "flow"` nodes) fold the child's meaning into these
+codes:** a child gate block surfaces as parent exit **3** — the flow node
+fails with "child gate blocked" and the child run dir named in its error;
+the verdict evidence is in the CHILD's phases, and a plain `resume` on the
+PARENT re-enters the child and re-runs only what blocked. A child budget
+trip is parent exit **4** (one wallet). Steering a flow node is refused —
+steer the child's own nodes by the child dir under `<run>/children/`.
+
 ## Hard rules
 
 1. **Approvals are not yours.** Under your shell, stdin is non-TTY, so any
