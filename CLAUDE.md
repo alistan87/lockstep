@@ -197,14 +197,22 @@ failure triage).
 `contrib/` holds a layer for running lockstep on behalf of a domain expert:
 detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
-zero dependencies) plus `mission_view.py` — pure render functions shared by
+zero dependencies) plus `mission_view.py` — render functions shared by
 `mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
 MISSION page: a left rail of recent runs (`?run=<name>`, matched against the
 directory listing, unknown = 404) → board → timeline → step drawer → raw
 record, GET routes only, every
 word and time rendered server-side). Two tests pin vocabulary across surfaces —
 `mission_view.GLOSSARY` against `cockpit.ps1`'s, and the page's `L3_GLOSSARY`
-against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. The page's 1 Hz tick
+against COCKPIT-FOR-DOMAIN-EXPERTS.md; keep them in step. The step drawer's
+`agent` block (model, reasoning level, tool policy, tool calls, tokens, cost)
+is `mission_view.node_agent_lines`, and all THREE surfaces call it — the page
+and the TUI in-process, `cockpit.ps1 -Role why` via
+`python contrib/mission_view.py --agent <run> <node>`, which is that module's
+one entry point and exists so the PowerShell pane never re-parses a harness
+envelope in a second language. Its honesty rule: a harness that cannot report
+tool calls prints `not reported by this harness`, never `0`
+(COCKPIT-THEORY-OF-OPERATIONS "The agent block"). The page's 1 Hz tick
 is `/api/events` (cheap: only the lines past the cursor); the full render is
 fetched only when the journal moved, the run token changed, or something is
 running — and never while the reader has text selected. If you are the session

@@ -108,8 +108,11 @@ MISSION shows, and it opens further if you want it to:
   one to look at it. You are only ever looking; opening an old run cannot
   disturb anything, including a run that is going on right now.
 - **click a step** — what that step produced: file names and sizes, what it
-  cost, which checks ran. Never the raw text a worker wrote; that is not
-  something anyone should have to read.
+  cost, which checks ran. It also names the assistant that did the work, what it
+  was allowed to use while doing it, and how many times it reached for a file.
+  Where that count says **not reported by this harness**, it means that
+  assistant cannot tell anyone — never that it did nothing. Never the raw text a
+  worker wrote; that is not something anyone should have to read.
 - **show the raw record** — the machinery's own names for things, each with one
   line saying what it means. Nothing here is ever something you have to act on.
 

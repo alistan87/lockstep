@@ -358,6 +358,34 @@ node writes the file. Two rules —
   uniqueness requirement and a 35B met it first try. Harnesses mix in one
   graph as freely as models do.
 
+**PIN THE MODEL IN ARGV, ALWAYS.** A stanza with no `--model` does not mean
+"the default model" — it means *whatever that harness picks at spawn time*,
+which is its own config and its own last selection. That choice is not in argv,
+so it is not in `input_hash`: two runs can carry identical hashes and have been
+answered by different models, and a stanza the harness resolves differently
+tomorrow silently re-answers a node the cache thinks is settled. It also reads,
+from inside a flow, exactly like lockstep having no per-node model selection at
+all — the flow says nothing about a model because the stanza says nothing
+either. Pin every stanza, including the one you think of as the default.
+
+pi takes `--model provider/id` with no separate `--provider`, and a `:<level>`
+suffix for reasoning effort, so **reasoning level is per stanza too** —
+`--model claude-opus-5:high` and `--model claude-opus-5:low` are two stanzas
+over one model, and a node picks between them like any other:
+
+```toml
+[executors.pi-deep]
+argv = ["pi.cmd", "-p", "--mode", "json", "--no-session",
+        "--no-context-files", "--no-skills",
+        "--model", "anthropic/claude-opus-5:high", "{prompt}"]
+prompt_via = "stdin"
+```
+
+Repointing a node at a different stanza re-bills it — `argv` and the resolved
+stanza's digest are both fingerprint parts. The digest is PER STANZA (r5 B1),
+so *adding* stanzas invalidates nothing that already ran; `lockstep explain
+<run> <node>` names which part moved.
+
 **When the harness HAS tools** (pi, Claude Code) three things change: the
 result arrives on the FILE channel (the footer's `result.txt`, not stdout); the
 phase dir becomes the agent's scratchpad and your step drawer lists what it

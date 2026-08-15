@@ -232,7 +232,9 @@ def test_render_multi_run_deliverable_rollup(tmp_path, fields_file, capsys):
     assert "## deliverable total (all runs)" in out
     assert "token spawns: 10" in out          # 5 + 5
     assert "NOTIONAL" in out                  # units policy
-    assert "| impl | harness | claude-opus-5 +1 | 2 | 0 | 130 | 180 | 30 |" in out
+    # `n/r`: this envelope carries no tool events, and the column says so
+    # rather than printing a zero it cannot stand behind.
+    assert "| impl | harness | claude-opus-5 +1 | n/r | 2 | 0 | 130 | 180 | 30 |" in out
 
 
 def pi_stream(in_tok: int, out_tok: int, cost: float) -> str:

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -603,7 +604,8 @@ def visible_nodes(run_dir: Path, repo_root: Path | None = None) -> list[str]:
 
 
 def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
-                state: dict | None = None, labels: dict[str, str] | None = None) -> list[str]:
+                state: dict | None = None, labels: dict[str, str] | None = None,
+                usage: dict | None = None) -> list[str]:
     """T2.3 — "what does 'stopped with a problem' mean for this step?"
 
     MISSION is a wall with no way in: a domain expert wanting the reason behind
@@ -611,9 +613,10 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     them and an artifact that already exists. This prints the artifact, and says
     where it lives so the answer is checkable rather than merely readable.
 
-    `state` and `labels` let a caller rendering EVERY node hand over the two
-    reads it has already done. `load_labels` runs a recursive `flows/**` glob,
-    and a page that drew one drawer per node was doing that once per node.
+    `state`, `labels` and `usage` let a caller rendering EVERY node hand over
+    the reads it has already done. `load_labels` runs a recursive `flows/**`
+    glob and `usage` walks every phase dir parsing every envelope; a page that
+    drew one drawer per node was doing both once per node.
     """
     run_dir = Path(run_dir)
     if state is None:
@@ -636,6 +639,8 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     for field in ("started_at", "ended_at"):
         if rec.get(field):
             out.append(f"  {field:<11}: {rec[field]}")
+
+    out += node_agent_lines(run_dir, node_id, rec=rec, usage=usage)
 
     if rec.get("error"):
         out += ["", "  what went wrong"]
@@ -665,6 +670,114 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     if sized:
         out += ["", "  artifacts"] + sized
     return out
+
+
+def _tok(v) -> str | None:
+    return f"{v:,.0f}" if isinstance(v, (int, float)) and v else None
+
+
+def node_agent_lines(run_dir: Path, node_id: str, *, rec: dict | None = None,
+                     usage: dict | None = None) -> list[str]:
+    """What the AGENT at this step was asked for and what it did: model,
+    reasoning level, tool policy, tool calls, tokens, cost.
+
+    Two columns of one fact, deliberately kept apart. `asked for` is argv — the
+    spawn the driver actually made, which is the only place a model appears
+    when the harness reports none (every local provider) and the only place a
+    reasoning level appears at all. `answered by` is the envelope — what came
+    back. A stanza asking for one model and an envelope naming another is a
+    real event, and one merged line would hide it.
+
+    `[]` for a step with no agent behind it (a shell gate, an approval), so the
+    drawer grows nothing where there is nothing to say.
+    """
+    run_dir = Path(run_dir)
+    if rec is None:
+        state = read_json(run_dir / "state.json") or {}
+        rec = ((state.get("nodes") or {}).get(node_id)) or {}
+    # The same rule cost_report.collect_run uses to decide a node has spawn
+    # artifacts at all — kept identical so the drawer and the cost panel cannot
+    # disagree about which steps had an agent.
+    if rec.get("kind") == "shell" or not (run_dir / "phases" / node_id).is_dir():
+        return []
+
+    run = usage if usage is not None else _usage(run_dir)
+    if run is None:
+        if _reader_missing():
+            return ["", "  agent",
+                    "    (the part that reads models and cost is not installed here -",
+                    "     contrib/cost_report.py, which needs Python 3.11 or newer)"]
+        return []  # state mid-replace: the next poll has it
+    row = next((r for r in run.get("rows") or [] if r.get("node") == node_id), None)
+    if row is None:
+        return []
+
+    argv = row.get("argv") or {}
+    out: list[str] = []
+
+    # ASCII separators only, like `compact_block`: these lines are read in the
+    # TUI and in cmd.exe consoles, where a middle dot arrives as a question
+    # mark and reads like a rendering fault rather than a separator.
+    def line(key: str, value: str) -> str:
+        return f"    {key:<11}: {value}"
+
+    asked = []
+    if argv.get("binary"):
+        asked.append(argv["binary"])
+    model = argv.get("model")
+    if model:
+        asked.append(f"{argv['provider']}/{model}" if argv.get("provider") else model)
+    elif argv:
+        # argv named no model, so nothing did: the stanza left the choice to the
+        # harness, which makes it whatever that harness resolves at spawn time —
+        # recorded in no artifact and folded into no input_hash.
+        asked.append("no model pinned in the stanza")
+    if argv.get("reasoning"):
+        asked.append(f"reasoning {argv['reasoning']}")
+    if asked:
+        out.append(line("asked for", " | ".join(asked)))
+    if argv.get("tool_policy"):
+        out.append(line("tools", argv["tool_policy"]))
+
+    models = row.get("models") or []
+    if models:
+        answered = _short_model(models[0]) or "?"
+        if len(models) > 1:
+            answered += f" (+{len(models) - 1} more)"
+        # Only worth a line when it ADDS something: on claude the envelope names
+        # the model and argv often does not, and on ollama it is the reverse.
+        if not model or _short_model(models[0]) != _short_model(model):
+            out.append(line("answered by", answered))
+
+    calls = row.get("tool_calls")
+    if calls is None:
+        # Never "0". A harness that cannot report tool calls and one that made
+        # none are different facts, and the run where the difference matters
+        # most is the one where an agent was meant to touch files and did not.
+        out.append(line("tool calls", "not reported by this harness"))
+    else:
+        tools = row.get("tools") or {}
+        top = sorted(tools.items(), key=lambda kv: (-kv[1], kv[0]))
+        detail = ", ".join(f"{k} {v}" for k, v in top)
+        out.append(line("tool calls", f"{calls}" + (f" - {detail}" if detail else "")))
+    if row.get("turns") is not None:
+        out.append(line("turns", f"{row['turns']} (a turn is a model reply, "
+                                 "not a tool call)"))
+    if row.get("denials"):
+        out.append(line("refused", f"{row['denials']} tool call(s) the harness blocked"))
+
+    tokens = [f"{v} {name}" for name, v in (
+        ("in", _tok(row.get("input_tokens"))),
+        ("out", _tok(row.get("output_tokens"))),
+        ("cached", _tok(row.get("cache_read_tokens"))),
+    ) if v]
+    if tokens:
+        out.append(line("tokens", " / ".join(tokens)))
+    money = _cost_str(row.get("cost"))
+    if money:
+        out.append(line("cost", f"{money} notional"))
+
+    return ["", "  agent"] + out if out else []
 
 
 def needs_you(state: dict | None) -> bool:
@@ -1063,3 +1176,31 @@ def cost_lines(run_dir: Path, mode: str = "history",
                         out.append(f"  {' ':<{id_w + 6}}{'  '.join(bits)}")
         prev_layer = set(layer)
     return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python contrib/mission_view.py --agent <run_dir> <node>` — the agent
+    block for one step, on stdout.
+
+    This module is a library of render functions; the one entry point exists
+    because `cockpit.ps1 -Role why` is a SECOND implementation of the step
+    drawer, in PowerShell, for the machines that have no Python worth relying
+    on. Re-deriving the agent block there would mean parsing harness envelopes
+    and pi event streams twice, in two languages — the drift this repo pins
+    glossaries to prevent. It calls this instead, exactly as it already calls
+    `cost_report.py` for the spend pane, and prints its own sentence when the
+    call does not come back.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 3 or args[0] != "--agent":
+        print("usage: mission_view.py --agent <run_dir> <node_id>", file=sys.stderr)
+        return 2
+    lines = node_agent_lines(Path(args[1]), args[2])
+    if not lines:
+        return 1  # no agent behind this step: the caller prints nothing
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

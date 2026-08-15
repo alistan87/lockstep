@@ -1346,6 +1346,39 @@ function Show-Why {
   if ($rec.started_at) { Write-Host "  started    : $($rec.started_at)" }
   if ($rec.ended_at)   { Write-Host "  ended      : $($rec.ended_at)" }
 
+  # The agent block, rendered by mission_view.py rather than re-derived here.
+  # Reading it in PowerShell would mean parsing harness envelopes and pi event
+  # streams a second time, in a second language, to state the same facts — the
+  # drift the glossary tests exist to prevent. Exit 1 means "this step had no
+  # agent" (a shell gate, an approval) and prints nothing; anything else means
+  # the reader did not answer, and that gets a sentence rather than a silence,
+  # because a missing block and a step with no agent look identical otherwise.
+  $viewer = Join-Path $script:RepoRoot 'contrib/mission_view.py'
+  $agent = $null
+  # 99 = the reader never ran, and it is seeded rather than read back, because
+  # PowerShell leaves $LASTEXITCODE at its PREVIOUS value when the command
+  # cannot start at all (no python on the box, no mission_view.py beside this
+  # script). A stale 0 from an earlier native call would take the first branch
+  # with empty output and print nothing — a missing reader reading exactly like
+  # a step that had no agent, which is the one thing this pane may not do.
+  $code = 99
+  if (Test-Path $viewer) {
+    try {
+      $agent = & $script:Python $viewer '--agent' $RunDir $NodeId 2>$null
+      $code = $LASTEXITCODE
+    } catch { $code = 99 }
+  }
+  if ($code -eq 0 -and $agent) {
+    # No blank line here: the block carries its own leading one, so that the
+    # page, the TUI and this pane space it identically.
+    $agent | ForEach-Object { Write-Host $_ }
+  } elseif ($code -ne 1) {   # 1 = this step had no agent; say nothing
+    Write-Host ''
+    Write-Host '  agent' -ForegroundColor DarkGray
+    Write-Host '    (the part that reads models, tools and cost did not answer -' -ForegroundColor DarkGray
+    Write-Host '     contrib/mission_view.py with contrib/cost_report.py beside it)' -ForegroundColor DarkGray
+  }
+
   if ($rec.error) {
     Write-Host ''
     Write-Host '  what went wrong' -ForegroundColor Yellow

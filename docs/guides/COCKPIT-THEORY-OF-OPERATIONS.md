@@ -407,7 +407,7 @@ same URL would see the same page anyway.
 |---|---|---|
 | **L0 board** | everything the old page showed — headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, per-step drawers, and the evidence or the question card when one waits | on load |
 | **L1 timeline** | every step on a shared time axis, **in place of** the step list, with a server-rendered table twin | "show every step" |
-| **L2 step** | a drawer per step: names, sizes, attempts, cost. Never stdout bodies | click a row |
+| **L2 step** | a drawer per step: names, sizes, attempts, the agent block (below), cost. Never stdout bodies | click a row |
 | **L3 raw** | node id, hash parts, what moved, the chain head — each glossed | "show the raw record" |
 
 Four things about it that are decisions, not accidents:
@@ -453,6 +453,51 @@ Four things about it that are decisions, not accidents:
 - **Every response carries a run token.** A meta-refresh page reset its client
   state by construction; a poll does not, so at a segment boundary the client
   would hold segment A's cursor against segment B forever.
+
+### The agent block (L2)
+
+Each step's drawer carries an `agent` block — `mission_view.node_agent_lines`,
+so the TUI overlay and the page draw the same one. It answers the question a
+board cannot: *which model did this step, under what constraints, and what did
+it cost.*
+
+```
+  agent
+    asked for  : claude | claude-opus-5 | reasoning high
+    tools      : all but Edit,Write,NotebookEdit,Bash
+    tool calls : 7 - read 4, grep 2, edit 1
+    tokens     : 26 in / 27,487 out / 1,153,669 cached
+    cost       : $2.41 notional
+```
+
+Four rules it is built on:
+
+- **`asked for` is argv; `answered by` is the envelope.** They are separate
+  lines because they are separate facts. argv is the spawn the driver made — the
+  only place a reasoning level ever appears, and the only place a model appears
+  at all for a local provider, which reports none. The envelope is what came
+  back. A stanza asking for one model and an envelope naming another is a real
+  event worth seeing, and one merged line would hide it. `answered by` is
+  therefore printed only when it says something argv did not.
+- **A stanza that pinned no model says so.** `no model pinned in the stanza`
+  is not a rendering gap: it means the harness chose at spawn time, from its own
+  config, and that choice is in no artifact and in no `input_hash`. It is the
+  one line here that is about the *flow author's* omission rather than the run.
+- **Tool calls are counted from `tool_execution_start`**, which fires once per
+  execution (probed against pi 0.83.0). The `toolCall` content blocks cannot be
+  counted: one `read` call appears as four `message_update` blocks, one
+  `message_end` and one `turn_end` — six for one call, the same repeat that
+  makes `pi_stream_usage` sum `message_end` only.
+- **`not reported by this harness` is never `0`.** A harness with no JSON mode
+  (copilot) and one that made no calls are different facts, and the run where
+  the difference matters most is the one where an agent was supposed to touch
+  files and did not. The same rule catches a *pi* stanza with no `--mode json`:
+  the field map is keyed by binary, so the stream parser is selected for every
+  pi node including the readonly ones that must print prose — `pi_stream_tools`
+  returns `None` for a log with no events, and `{}` only for a real stream that
+  ran nothing. claude's envelope has no tool events at all, so its `num_turns`
+  is reported as `turns`, glossed *a model reply, not a tool call*, rather than
+  dressed up as a count it is not.
 
 **The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick parses only
 the journal lines past the cursor and carries one extra bit (`live` — whether

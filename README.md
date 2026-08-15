@@ -172,8 +172,9 @@ prompt_via = "stdin"          # omit json_field: this harness speaks raw stdout
 ```
 
 **The model is per NODE, not per flow.** One stanza per model, chosen with
-`spec.executor`. pi lists ollama as a provider, so a flow can mix models *and*
-harnesses at zero cost:
+`spec.executor` — resolved node → flow `executor_default` → config `default`.
+pi lists ollama as a provider, so a flow can mix models *and* harnesses at zero
+cost:
 
 ```toml
 [executors.pi-coder]
@@ -181,6 +182,19 @@ argv = ["pi.cmd", "-p", "--no-session", "--provider", "ollama",
         "--model", "qwen2.5-coder:14b", "{prompt}"]
 prompt_via = "stdin"
 ```
+
+Cloud models take the same shape — pi accepts `--model provider/id` with no
+separate `--provider`, plus a `:<level>` suffix, which makes **reasoning effort
+a stanza choice as well** (`--model anthropic/claude-opus-5:high` and
+`…:low` are two stanzas over one model). claude uses `--model`.
+
+**Pin the model in argv on every stanza.** A stanza with no `--model` does not
+select a default — it defers to whatever the harness picks at spawn time, from
+its own config and its own last selection. That is not in argv, so it is not in
+`input_hash`: two runs can carry the same hash and have been answered by
+different models. An unpinned stanza is also why per-node model selection can
+look absent from inside a flow — the flow names no model because the stanza
+names none either.
 
 `flows/demo/sudoku-local.tg.json` is the worked example — a playable sudoku with
 no network, no credential and no token cost, whose solver runs on a 35B through

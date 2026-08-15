@@ -275,21 +275,131 @@ def last_envelope(text: str) -> dict | None:
     return None
 
 
-def binary_of(phase_dir: Path) -> str | None:
-    """argv[0] basename (extension stripped) from argv.json / rotated copies."""
+def _read_argv(phase_dir: Path) -> tuple[list[str], str] | None:
+    """(argv, filename) from the kept attempt's argv.json, else the earliest
+    rotated copy. The executor elides any single arg over 500 chars when it
+    writes this file — that only ever reaches the prompt, so flags, model ids
+    and tool lists are recorded intact."""
     for name in ("argv.json", *sorted(p.name for p in phase_dir.glob("argv-attempt*.json"))):
         p = phase_dir / name
-        if p.is_file():
-            try:
-                argv = json.loads(p.read_text(encoding="utf-8", errors="replace"))
-            except ValueError:
-                continue
-            if isinstance(argv, list) and argv:
-                stem = Path(str(argv[0])).name.lower()
-                for ext in (".exe", ".cmd", ".bat"):
-                    stem = stem.removesuffix(ext)
-                return stem
+        if not p.is_file():
+            continue
+        try:
+            argv = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if isinstance(argv, list) and argv:
+            return [str(a) for a in argv], name
     return None
+
+
+def binary_of(phase_dir: Path) -> str | None:
+    """argv[0] basename (extension stripped) from argv.json / rotated copies."""
+    got = _read_argv(phase_dir)
+    if got is None:
+        return None
+    stem = Path(got[0][0]).name.lower()
+    for ext in (".exe", ".cmd", ".bat"):
+        stem = stem.removesuffix(ext)
+    return stem
+
+
+# pi's reasoning levels (`pi --help`, probed against 0.83.0), reachable two
+# ways: `--thinking <level>` and the `--model <pattern>:<level>` shorthand.
+# The SET matters for more than display. An ollama tag is colon-suffixed too
+# (`qwen3.6:35b`), so splitting a model id on ":" unconditionally would report
+# "35b" as a reasoning level; only a suffix in this set is one.
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+
+# Tool policy as it appears in ARGV. A harness's tool set is argv (README,
+# "Tools are part of the stanza"), which is what makes it readable from the
+# recorded spawn instead of inferred from a flow or a since-edited stanza.
+_TOOL_LIST_FLAGS = {
+    "--tools": "only",
+    "--exclude-tools": "all but",
+    "--disallowed-tools": "all but",
+    "--disallowedTools": "all but",
+}
+_TOOL_SWITCHES = {
+    "--no-tools": "none",
+    "--no-builtin-tools": "no built-ins",
+}
+
+
+def split_thinking(model: str) -> tuple[str, str | None]:
+    """`claude-opus-5:high` -> (`claude-opus-5`, `high`); `qwen3.6:35b` ->
+    (`qwen3.6:35b`, None)."""
+    head, sep, tail = model.rpartition(":")
+    if sep and head and tail.lower() in THINKING_LEVELS:
+        return head, tail.lower()
+    return model, None
+
+
+def argv_facts(phase_dir: Path) -> dict:
+    """What the recorded spawn actually ASKED FOR: harness binary, model,
+    reasoning level, tool policy.
+
+    argv.json is the only artifact that says what ran, as opposed to what the
+    flow or today's lockstep.toml say now — a stanza edited after the run
+    cannot rewrite it, and a stanza that pins no `--model` leaves no model here
+    because it left none in argv either (which is the whole argument for
+    pinning: an unpinned model is not recorded anywhere, including in
+    `input_hash`).
+
+    Keys are ABSENT rather than falsy when unstated, so a caller can tell "not
+    asked for" from "asked for nothing". `{}` for a node that spawned no
+    harness at all (shell, approval) or whose argv is unreadable.
+    """
+    got = _read_argv(phase_dir)
+    if got is None:  # a map node's argv lives per item
+        for item in sorted(phase_dir.glob("items/*")):
+            got = _read_argv(item)
+            if got:
+                break
+    if got is None:
+        return {}
+    argv, source = got
+    out: dict = {"argv_file": source}
+    binary = Path(argv[0]).name.lower()
+    for ext in (".exe", ".cmd", ".bat"):
+        binary = binary.removesuffix(ext)
+    out["binary"] = binary
+
+    policy: list[str] = []
+    thinking_flag: str | None = None
+    for i, arg in enumerate(argv):
+        nxt = argv[i + 1] if i + 1 < len(argv) else None
+        if arg == "--model" and nxt:
+            model, level = split_thinking(nxt)
+            out["model"] = model
+            if level:
+                out["reasoning"] = level
+        elif arg == "--thinking" and nxt:
+            thinking_flag = nxt.lower()
+        elif arg == "--provider" and nxt:
+            out["provider"] = nxt
+        elif arg in _TOOL_LIST_FLAGS and nxt:
+            policy.append(f"{_TOOL_LIST_FLAGS[arg]} {nxt}")
+        elif arg in _TOOL_SWITCHES:
+            policy.append(_TOOL_SWITCHES[arg])
+    if thinking_flag:
+        # Applied AFTER the loop so the answer does not depend on argv order.
+        # This is the READER's rule where a stanza states both forms, not a
+        # claim about pi's own precedence, which `pi --help` does not document:
+        # a stanza saying `--model x:low --thinking high` is ambiguous at the
+        # source, and the fix belongs in the stanza. Showing the explicit flag
+        # is the choice least likely to hide that someone set it.
+        out["reasoning"] = thinking_flag
+    if policy:
+        # Deduped in order: `readonly_argv` deliberately repeats `--no-tools`
+        # already in the base argv (ops notes), so the raw list says "none,
+        # none" on exactly the stanzas that are most careful.
+        seen: list[str] = []
+        for clause in policy:
+            if clause not in seen:
+                seen.append(clause)
+        out["tool_policy"] = ", ".join(seen)
+    return out
 
 
 # --- per-run collection --------------------------------------------------------
@@ -430,6 +540,67 @@ def pi_stream_usage(text: str) -> tuple[dict[str, float], int, dict[str, float]]
     return sums, seen, models
 
 
+def pi_stream_tools(text: str) -> dict[str, int] | None:
+    """tool name -> executions, from a pi `--mode json` stream. `None` when
+    this is not an event stream at all; `{}` when it is one and no tool ran.
+
+    That distinction is the whole point of the return type. The field map is
+    keyed by BINARY, so `[pi] format = "pi-stream"` selects this parser for
+    every pi stanza — including the many that omit `--mode json` and print
+    prose (every readonly stanza must omit it, §8.3). Returning `{}` for those
+    made the drawer report "0 tool calls" for a node whose harness never said
+    anything about tools, which is the fabricated zero the rest of this file
+    exists to avoid.
+
+    Counted from `tool_execution_start`, which fires exactly once per call
+    (probed against pi 0.83.0, 2026-08-15). The `toolCall` CONTENT BLOCKS are
+    NOT countable: one `read` call appeared as four `message_update` blocks
+    (its arguments streaming in), once more at `message_end` and again at
+    `turn_end` — six blocks for one execution. Same repeat that makes
+    `pi_stream_usage` sum `message_end` only.
+    """
+    out: dict[str, int] = {}
+    events = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
+            continue
+        events += 1
+        if obj["type"] != "tool_execution_start":
+            continue
+        name = obj.get("toolName")
+        if isinstance(name, str) and name:
+            out[name] = out.get(name, 0) + 1
+    return out if events else None
+
+
+def envelope_turns(env: dict) -> dict:
+    """Turn and refusal counts from a single-envelope harness (claude
+    `--output-format json`, probed 2026-08-15).
+
+    Deliberately NOT reported as a tool-call count: that envelope carries no
+    tool events at all. `num_turns` counts assistant turns, which MOVES with
+    tool use without measuring it, and calling it "tool calls" would put a
+    confident wrong number on the page. `permission_denials` is the list of
+    tool calls the harness refused — the readonly/write-scope story, and the
+    one thing here worth a line of its own.
+    """
+    out: dict[str, int] = {}
+    turns = dig(env, "num_turns")
+    if turns is not None:
+        out["turns"] = int(turns)
+    denials = env.get("permission_denials")
+    if isinstance(denials, list):
+        out["denials"] = len(denials)
+    return out
+
+
 _ATTEMPT_RE = re.compile(r"^stdout-attempt(\d+)\.log$")
 
 
@@ -442,14 +613,24 @@ def _attempt_order(path: Path) -> tuple[int, int]:
 
 def _log_usage(
     text: str, fmap: dict[str, str] | None, stream_mode: bool
-) -> tuple[dict[str, float], dict[str, float], bool]:
-    """(sums, model weights, envelope seen) for ONE attempt's stdout."""
+) -> tuple[dict[str, float], dict[str, float], bool, dict]:
+    """(sums, model weights, envelope seen, activity) for ONE attempt's stdout.
+
+    `activity` is what the harness said about its own work beyond usage:
+    `{"tools": {name: n}}` from a pi stream, `{"turns": n, "denials": n}` from
+    a claude envelope. Absent keys mean the harness does not report that fact —
+    never that the fact was zero.
+    """
     if stream_mode:
         got, seen, models = pi_stream_usage(text)
-        return got, models, bool(seen)
+        # The tool tally is a property of the STREAM, not of the usage events:
+        # a spawn can call tools and settle with no assistant message_end that
+        # carries usage (a local provider reports none), so it is read whenever
+        # the stream mode is selected rather than only when `seen`.
+        return got, models, bool(seen), {"tools": pi_stream_tools(text)}
     env = last_envelope(text)
     if env is None:
-        return {}, {}, False
+        return {}, {}, False, {}
     sums: dict[str, float] = {}
     if fmap:
         for field, path in fmap.items():
@@ -458,7 +639,7 @@ def _log_usage(
             v = dig(env, path)
             if v is not None:
                 sums[field] = sums.get(field, 0.0) + v
-    return sums, envelope_models(env, fmap), True
+    return sums, envelope_models(env, fmap), True, envelope_turns(env)
 
 
 def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
@@ -472,9 +653,17 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
       plus each item's) — what the kept result cost, the other half of the
       history/head toggle
     - attempts: per-attempt records, oldest first within a scope, the kept
-      attempt last — {scope, log, final, model, <KNOWN_FIELDS>}. This is the
-      node's recorded history: each rotated log is one spawn that happened.
+      attempt last — {scope, log, final, model, tools, turns, <KNOWN_FIELDS>}.
+      This is the node's recorded history: each rotated log is one spawn.
     - models: model ids seen, dominant first
+    - tools: tool name -> executions over every attempt, or None where the
+      harness reports no tool events. `{}` means it reported them and there
+      were none — a distinction the caller must keep, because printing "0 tool
+      calls" for a harness that cannot count them is a made-up number.
+    - turns / denials: assistant turns and refused tool calls, where the
+      envelope carries them (claude). None otherwise.
+    - argv: `argv_facts` — the model, reasoning level and tool policy the
+      spawn was actually given.
     - note: same honest-limits notes as before ("no envelope" / "no field map")
     """
     binary = binary_of(phase_dir)
@@ -493,6 +682,9 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
     head: dict[str, float] = {}
     model_w: dict[str, float] = {}
     attempts: list[dict] = []
+    tools: dict[str, int] = {}
+    tools_reported = False
+    turns = denials = None
     envelopes = 0
     logs_seen = 0
     for scope, d in scopes:
@@ -500,7 +692,7 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
         logs_seen += len(logs)
         for log in logs:
             text = log.read_text(encoding="utf-8", errors="replace")
-            got, models, seen = _log_usage(text, fmap, stream_mode)
+            got, models, seen, activity = _log_usage(text, fmap, stream_mode)
             if seen:
                 envelopes += 1
             final = log is logs[-1]
@@ -510,12 +702,26 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
                     head[k] = head.get(k, 0.0) + v
             for m, w in models.items():
                 model_w[m] = model_w.get(m, 0.0) + w
+            # Tools and turns sum over EVERY attempt, like the token columns: a
+            # corrective re-spawn's tool calls happened, and a tally that hid
+            # them would understate exactly the nodes that went wrong twice.
+            got_tools = activity.get("tools")
+            if got_tools is not None:
+                tools_reported = True
+                for name, n in got_tools.items():
+                    tools[name] = tools.get(name, 0) + n
+            if activity.get("turns") is not None:
+                turns = (turns or 0) + activity["turns"]
+            if activity.get("denials") is not None:
+                denials = (denials or 0) + activity["denials"]
             rec_models = dominant_models(models)
             attempts.append({
                 "scope": scope,
                 "log": (f"items/{d.name}/{log.name}" if scope else log.name),
                 "final": final,
                 "model": rec_models[0] if rec_models else None,
+                "tools": got_tools,
+                "turns": activity.get("turns"),
                 **{f: got.get(f) for f in KNOWN_FIELDS},
             })
     note = ""
@@ -524,7 +730,10 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
     elif envelopes and not fmap:
         note = f"no field map ({binary or 'unknown'})"
     return {"sums": sums, "head": head, "attempts": attempts,
-            "models": dominant_models(model_w), "note": note}
+            "models": dominant_models(model_w), "note": note,
+            "tools": tools if tools_reported else None,
+            "turns": turns, "denials": denials,
+            "argv": argv_facts(phase_dir)}
 
 
 def read_state(run_dir: Path, retries: int = 3) -> dict | None:
@@ -558,7 +767,8 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
         tokens = (
             node_tokens(phase_dir, maps)
             if rec.get("kind") != "shell" and phase_dir.is_dir()
-            else {"sums": {}, "head": {}, "attempts": [], "models": [], "note": ""}
+            else {"sums": {}, "head": {}, "attempts": [], "models": [], "note": "",
+                  "tools": None, "turns": None, "denials": None, "argv": {}}
         )
         note = tokens["note"]
         if status == RUNNING:
@@ -579,6 +789,17 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
             "attempts_detail": tokens["attempts"],
             "models": tokens["models"],
             "model": tokens["models"][0] if tokens["models"] else None,
+            # What the spawn was ASKED for (argv) beside what it REPORTED
+            # (envelope). They can differ, and the difference is diagnostic: a
+            # stanza naming `sonnet` whose envelope names `haiku` means the
+            # harness overrode the request, which nothing else on any surface
+            # would show.
+            "argv": tokens["argv"],
+            "tools": tokens["tools"],
+            "tool_calls": (sum(tokens["tools"].values())
+                           if tokens["tools"] is not None else None),
+            "turns": tokens["turns"],
+            "denials": tokens["denials"],
             "note": note,
         })
     return {
@@ -622,6 +843,36 @@ def short_model(model: str | None) -> str:
     return model.split("/")[-1]
 
 
+def model_cell(row: dict) -> str:
+    """The model as one cell: what the envelope REPORTED, falling back to what
+    argv ASKED FOR, plus the reasoning level argv named. A local provider
+    reports no model at all, so without the argv fallback the whole ollama half
+    of a mixed flow renders as a column of dashes."""
+    models = row.get("models") or []
+    argv = row.get("argv") or {}
+    name = short_model(models[0]) if models else short_model(argv.get("model"))
+    if name == "-":
+        return "-"
+    if len(models) > 1:
+        name += f" +{len(models) - 1}"
+    level = argv.get("reasoning")
+    return f"{name}:{level}" if level else name
+
+
+def tools_cell(row: dict) -> str:
+    """Tool executions, or the reason there is no number. `-` never means zero
+    here: a harness with no JSON mode and a harness that made no calls are
+    different facts and the table says which."""
+    n = row.get("tool_calls")
+    if n is None:
+        return "n/r"  # not reported by this harness
+    tools = row.get("tools") or {}
+    if not n:
+        return "0"
+    top = sorted(tools.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    return f"{n} ({', '.join(f'{k} {v}' for k, v in top)})"
+
+
 def render(runs: list[dict]) -> str:
     out: list[str] = ["# lockstep cost report", ""]
     grand: dict[str, float] = {}
@@ -629,25 +880,22 @@ def render(runs: list[dict]) -> str:
     for run in runs:
         out.append(f"## {run['flow']}  `{run['run_dir']}`")
         out.append("")
-        out.append("| node | kind | model | attempts | heal | wall s | in tok | out tok | cache r | cache w | cost* | note |")
-        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        out.append("| node | kind | model | tools | attempts | heal | wall s | in tok | out tok | cache r | cache w | cost* | note |")
+        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         totals: dict[str, float] = {}
         for r in run["rows"]:
             for f in KNOWN_FIELDS:
                 if r[f] is not None:
                     totals[f] = totals.get(f, 0.0) + r[f]
-            models = r.get("models") or []
-            model_cell = short_model(models[0]) if models else "-"
-            if len(models) > 1:
-                model_cell += f" +{len(models) - 1}"
             out.append(
-                f"| {r['node']} | {r['kind']} | {model_cell} | {r['attempts']} | {r['heal_rounds']} "
+                f"| {r['node']} | {r['kind']} | {model_cell(r)} | {tools_cell(r)} "
+                f"| {r['attempts']} | {r['heal_rounds']} "
                 f"| {_fmt(r['wall_s'])} | {_fmt(r['input_tokens'])} | {_fmt(r['output_tokens'])} "
                 f"| {_fmt(r['cache_read_tokens'])} | {_fmt(r['cache_write_tokens'])} "
                 f"| {_fmt(r['cost'], money=True)} | {r['note']} |"
             )
         out.append(
-            f"| **total** |  |  |  |  |  | {_fmt(totals.get('input_tokens'))} "
+            f"| **total** |  |  |  |  |  |  | {_fmt(totals.get('input_tokens'))} "
             f"| {_fmt(totals.get('output_tokens'))} | {_fmt(totals.get('cache_read_tokens'))} "
             f"| {_fmt(totals.get('cache_write_tokens'))} | {_fmt(totals.get('cost'), money=True)} "
             f"| token spawns: {run['token_spawns']} |"

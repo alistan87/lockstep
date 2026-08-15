@@ -603,7 +603,8 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
 
 
 def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
-                state: dict | None = None, labels: dict[str, str] | None = None) -> dict:
+                state: dict | None = None, labels: dict[str, str] | None = None,
+                usage: dict | None = None) -> dict:
     """L2. `node_detail`'s body, named in L0's words — the FULL label, without
     the board's 33-character truncation and without the `(step id: …)` suffix.
     The identifier lives at L3.
@@ -613,7 +614,8 @@ def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     reason.
     """
     labels = labels if labels is not None else mv.load_labels(run_dir, repo_root)
-    lines = mv.node_detail(run_dir, node_id, repo_root, state=state, labels=labels)
+    lines = mv.node_detail(run_dir, node_id, repo_root, state=state, labels=labels,
+                           usage=usage)
     body = [ln for ln in lines
             if not ln.startswith("=") and not ln.strip().startswith("(step id:")]
     # The label line node_detail prints as its heading is now the drawer title.
@@ -1346,16 +1348,22 @@ def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
 
 
 def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
-             state: dict | None = None, labels: dict[str, str] | None = None) -> str:
+             state: dict | None = None, labels: dict[str, str] | None = None,
+             usage: dict | None = None) -> str:
     """L2, one per step, reached by clicking a row in either view.
 
     The link is a fragment, not a fetch: a `<details>` a browser jumps into
     opens itself, so the drawer works with JavaScript off — and `/api/node/<id>`
     stays a route rather than the only way in.
+
+    `usage` is the page's already-computed `collect_run`, passed for the same
+    reason `state` and `labels` are: the agent block in each drawer reads it,
+    and without it one page render walks every phase dir once per step.
     """
     out = ['<div class="card"><h2>what happened at each step</h2>']
     for node_id in node_ids:
-        drawer = node_drawer(run_dir, node_id, repo_root, state=state, labels=labels)
+        drawer = node_drawer(run_dir, node_id, repo_root, state=state, labels=labels,
+                             usage=usage)
         body = "\n".join(drawer["lines"])
         out.append(f'<details id="step-{e(node_id)}">'
                    f'<summary>{e(drawer["label"])}</summary>'
@@ -1519,7 +1527,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         + "</pre></div>",
 
         _feed_card(run_dir, events, labels, _focus_node(state), repo_root),
-        _drawers(run_dir, node_ids, repo_root, state=state, labels=labels),
+        _drawers(run_dir, node_ids, repo_root, state=state, labels=labels, usage=run),
 
         '<p class="foot">This page only reads files. It never changes the run.</p>',
     ]
