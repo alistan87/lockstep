@@ -17,7 +17,7 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [PROPOSAL-domain-cockpit-rev6.md](PROPOSAL-domain-cockpit-rev6.md) | `proposal` | superseded by [PROPOSAL-domain-cockpit-rev7.md](PROPOSAL-domain-cockpit-rev7.md) | Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and unattended mode |
 | [PROPOSAL-domain-cockpit-rev7.md](PROPOSAL-domain-cockpit-rev7.md) | `proposal` | current | Proposal: the domain-expert cockpit — cost tracking, gate-driven improvement, and shippable setup |
 | [PROPOSAL-domain-cockpit.md](PROPOSAL-domain-cockpit.md) | `proposal` | superseded by [PROPOSAL-domain-cockpit-rev7.md](PROPOSAL-domain-cockpit-rev7.md) | Proposal: the domain-expert cockpit — cost tracking and gate-driven improvement |
-| [PROPOSAL-flow-composition.md](PROPOSAL-flow-composition.md) | `proposal` | draft | Proposal: flow composition — run a saved flow as one node (kind: "flow") |
+| [PROPOSAL-flow-composition.md](PROPOSAL-flow-composition.md) | `proposal` | stable | Proposal: flow composition — run a saved flow as one node (kind: "flow") |
 | [PROPOSAL-taskflow-parity-tiers.md](PROPOSAL-taskflow-parity-tiers.md) | `proposal` | stable | Proposal: parity tiers 1–3 — patterns, loop, composition, and declared staleness |
 | [PROPOSAL-unattended-mode.md](PROPOSAL-unattended-mode.md) | `proposal` | draft | Proposal: unattended mode (deferred) |
 | [repo-hygiene-work-order.md](repo-hygiene-work-order.md) | `plan` | stable | Work order: `repo-hygiene` — audit, weekly maintenance, and consolidation flows for the work repo |

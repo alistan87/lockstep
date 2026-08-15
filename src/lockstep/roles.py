@@ -657,6 +657,13 @@ class Engine:
         self._record_gate_baselines()
         token_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="lockstep-tok")
         other_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lockstep-oth")
+        # Composition review finding 4: flow nodes park for their child's whole
+        # duration, and 8 of them on other_pool would queue a 5-second shell
+        # probe behind an hour of children. A parked thread costs nothing worth
+        # rationing, so they get their own pool, sized by the graph.
+        flow_pool = ThreadPoolExecutor(
+            max_workers=max(1, sum(1 for n in self.tg.nodes if n.kind == "flow")),
+            thread_name_prefix="lockstep-flow")
         tailer = _ProgressTailer(self.store.run_dir)
         tailer.start()
         try:
@@ -689,7 +696,9 @@ class Engine:
                 futures = []
                 for node in wave:
                     self._set_status(node.id, "running")
-                    if self._costs_tokens_hint(node):
+                    if node.kind == "flow":
+                        futures.append(flow_pool.submit(self._run_node_safe, node))
+                    elif self._costs_tokens_hint(node):
                         # The slot is acquired INSIDE the worker (composition
                         # §1): acquiring before submit would serialize wave
                         # dispatch. For a lone engine the pool has exactly as
@@ -705,6 +714,7 @@ class Engine:
         finally:
             token_pool.shutdown(wait=True)
             other_pool.shutdown(wait=True)
+            flow_pool.shutdown(wait=True)
             tailer.stop()
             self.store.mutate(lambda s: None)
         return self._exit_code()
@@ -1265,7 +1275,17 @@ class Engine:
             ok = (not raw.timed_out) and raw.exit_code == 0 and raw.result_text is not None
             if ok:
                 return raw
-            if (raw.timed_out or raw.result_text is None) and not auto_used:
+            if (
+                (raw.timed_out or raw.result_text is None)
+                and not auto_used
+                # The M4 auto-retry exists for spawns that PRODUCED NOTHING
+                # (a flaky harness). An executor may opt out: a flow node's
+                # result-less failure is a child that genuinely blocked, and
+                # re-entering it would silently convert a child gate block
+                # into a retried success — the exact outcome the composition
+                # table freezes as a parent failure (flow-composition §3).
+                and getattr(executor, "auto_retry", True)
+            ):
                 auto_used = True
                 continue
             if retries_left > 0 and (raw.exit_code != 0 or raw.timed_out):

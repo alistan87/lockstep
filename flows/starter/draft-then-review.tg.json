@@ -1,0 +1,44 @@
+{
+  "format_version": "1.0",
+  "name": "draft-then-review",
+  "description": "Composition (kind: 'flow'): two saved flows as two nodes, one wallet, one tree. refine-loop drafts and iterates the artifact at --arg file= against --arg task=; proposal-gate then reviews the same file as a human-owned document. Both children compose LEGALLY: refine-loop heals with rollback: false (the loop pattern) and proposal-gate does not heal at all - a rollback-healing gate inside a composed child is the verify error rollback-heal-in-child until scope-narrowing exists, which is why sdlc-e2e's phases (rollback heals) cannot be composed yet. Each child runs in a real run dir under <run>/children/ that status, explain and steer take directly; a resume after a child block re-enters the child and re-runs only what blocked.",
+  "budget": {
+    "max_agent_spawns": 25,
+    "max_run_minutes": 90
+  },
+  "args": {
+    "file": null,
+    "task": null
+  },
+  "nodes": [
+    {
+      "id": "draft",
+      "role": "work",
+      "kind": "flow",
+      "spec": {
+        "flow": "flows/starter/refine-loop.tg.json",
+        "args": {
+          "file": "{args.file}",
+          "task": "{args.task}"
+        }
+      },
+      "output": "text"
+    },
+    {
+      "id": "review",
+      "role": "work",
+      "kind": "flow",
+      "depends_on": [
+        "draft"
+      ],
+      "spec": {
+        "flow": "flows/starter/proposal-gate.tg.json",
+        "args": {
+          "file": "{args.file}"
+        }
+      },
+      "output": "text",
+      "final": true
+    }
+  ]
+}

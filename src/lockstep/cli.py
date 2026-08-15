@@ -67,6 +67,14 @@ def _load(flow_path: str):
 def _registry_for(config: LockstepConfig, repo_root: Path) -> Registry:
     reg = build_registry(config, repo_root)
     reg.register(FakeExecutor(repo_root=repo_root))  # offline test double, kind="fake"
+    from .executors.flow import FlowExecutor
+
+    # Composition (kind="flow"): children resolve every kind the parent can —
+    # the factory recurses, and RunResources.depth caps how far.
+    reg.register(FlowExecutor(
+        config=config, repo_root=repo_root,
+        make_registry=lambda: _registry_for(config, repo_root),
+    ))
     return reg
 
 

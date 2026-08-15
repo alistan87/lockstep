@@ -26,13 +26,20 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
 ```jsonc
 { "id": "impl",                  // ^[a-z0-9][a-z0-9-]*$
   "role": "work",                // work | gate | approval | map
-  "kind": "harness",             // harness | shell (fake = test double)
+  "kind": "harness",             // harness | shell | flow (fake = test double)
   "spec": { "task": "…prompt…", "persona": "implementer", "readonly": false },
   "depends_on": [], "output": "text", "timeout_s": 900 }
 ```
 
 - `kind: "shell"` spec is `{ "cmd": ["pytest", "-q"], "cwd": "." }` — argv list,
   never a shell string. Shell nodes ALWAYS re-run on resume (by design).
+- `kind: "flow"` runs a saved flow as one node: `{ "flow":
+  "flows/x.tg.json", "args": {"k": "{args.k}"} }` — literal path, child =
+  a real run under `<run>/children/`, one wallet/tree/worker-cap, child's
+  final result = the node's result. No token, no writes, no timeout on the
+  node itself; rollback-healing gates cannot compose (all §6 errors). See
+  FLOW-AUTHORING "Composition"; worked example
+  `flows/starter/draft-then-review.tg.json`.
 - Exactly one node should set `"final": true` (else the last node is assumed,
   with a warning).
 

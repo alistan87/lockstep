@@ -659,3 +659,26 @@ file records implementation-level departures below that bar.
   Timing rides the journal as kind:"timing"/op:"reads-hash" lines;
   lint-broad-reads warns past 200 files; .git and the runs root are never
   hashed.
+
+- **2026-08-15 — composition (`kind: "flow"`) and its two protocol
+  extensions** (PROPOSAL-flow-composition, adopted with the build). SPEC 8.1
+  freezes the Executor protocol''s core; two additive, optional hooks were
+  needed and are recorded here: (1) an executor MAY define
+  `bind_run(resources)` - the engine calls it once per registered executor at
+  construction, and the seed/replay wrappers delegate it EXPLICITLY because
+  they forward nothing dynamically; without the delegation a --seed run''s
+  children would get unshared locks. (2) `BudgetTripped` may now escape
+  `execute()` as a RUN-level stop - `_run_node_safe` re-pends the node AND
+  flags its engine''s loop (a no-op for plain nodes, whose own _spend_spawn
+  flags first; load-bearing for a flow node whose CHILD tripped the root
+  wallet). A third, smaller opt-out rides with them: `auto_retry = False` on
+  an executor suppresses AMENDMENTS M4''s one free retry-on-empty-result -
+  M4''s retry exists for spawns that produced nothing, and a flow node''s
+  result-less failure is a child that genuinely blocked; the free retry was
+  observed converting a child gate block into a retried success, the exact
+  outcome the composition table freezes as a parent failure. One exit
+  criterion was superseded by the proposal''s own review: sdlc-e2e cannot be
+  recomposed because both its phases heal with rollback: true, which
+  rollback-heal-in-child now forbids - flows/starter/draft-then-review
+  (refine-loop -> proposal-gate, both legally composable) carries the
+  criterion''s purpose instead.

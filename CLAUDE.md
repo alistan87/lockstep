@@ -46,6 +46,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe explain <run_dir> --graph  # whole-graph staleness dry run vs the current tree; plans into a throwaway dir, zero spawns
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
 .venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
+.venv\Scripts\lockstep.exe run flows\demo\compose-smoke.tg.json  # zero-token composition smoke (kind:"flow" end to end); run after touching executors\flow.py or RunResources
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
 python contrib\torture_suite.py                    # zero-token ENGINE regression: heal/rollback/cascade, corrective re-spawn, quarantine, timeout — the paths a recording never takes (flows\demo\torture\README.md)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
@@ -99,7 +100,7 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
   `render_scope` (write scopes take `{args.NAME}` and nothing else)
 - `contracts.py` — built-in output contracts (Verdict, Finding, …) + resolver
 - `protocols.py`, `registry.py`, `policy.py` — seams (Executor/Workspace/Store/Policy; AllowAllPolicy is the v1 no-op); kind → executor
-- `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `proc.py` (spawn + kill_tree; Windows Job Object containment on top of taskkill)
+- `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `flow.py` (composition: a saved flow as one node; child = real run under `<run>/children/`), `proc.py` (spawn + kill_tree; Windows Job Object containment on top of taskkill)
 - `workspace.py` — GitWorkspace (temp-index write-tree snapshots AND restores; restore never deletes; `staged_paths`/`unstage` for quarantine), NullWorkspace
 - `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
 - `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine; `_writes_of` is the ONE reader of a

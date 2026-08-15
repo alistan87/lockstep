@@ -1,0 +1,16 @@
+{
+  "format_version": "1.0",
+  "name": "compose-smoke",
+  "description": "Zero-token composition smoke: one flow node running the shell-only doc self-check (selftest-replay) as a child. Proves the whole kind:'flow' path - registry factory, hash-named child dir under <run>/children/, result surfacing, status descending into the child - without spending a token. Run it after any change to executors/flow.py or the RunResources seam.",
+  "nodes": [
+    {
+      "id": "sub",
+      "role": "work",
+      "kind": "flow",
+      "final": true,
+      "spec": {
+        "flow": "flows/selftest-replay.tg.json"
+      }
+    }
+  ]
+}

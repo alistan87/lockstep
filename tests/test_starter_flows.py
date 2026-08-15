@@ -378,3 +378,35 @@ def test_node_diff_targets_are_scoped_and_serialized():
         spec = ns[target]["spec"]
         assert "writes" in spec, target
         assert not spec.get("readonly"), target
+
+
+# --------------------------- the composition template (2026-08-15)
+
+
+def test_draft_then_review_composes_only_legally_composable_children():
+    """rollback-heal-in-child is a verify error, so this template must point
+    at children that do not rollback-heal: refine-loop (rollback: false by
+    design) and proposal-gate (no heal at all). If someone repoints a child
+    at a rollback-healing flow, verify catches it - this pins the CHOICE."""
+    ns = nodes("draft-then-review")
+    child_paths = [ns[n]["spec"]["flow"] for n in ("draft", "review")]
+    assert child_paths == ["flows/starter/refine-loop.tg.json",
+                           "flows/starter/proposal-gate.tg.json"]
+    root = STARTER.parent.parent
+    for rel in child_paths:
+        child = json.loads((root / rel).read_text(encoding="utf-8"))
+        for cn in child["nodes"]:
+            heal = cn.get("heal") or {}
+            assert not (heal.get("max_rounds", 0) > 0
+                        and heal.get("rollback", True)), (
+                f"{rel}:{cn['id']} rollback-heals; it cannot compose")
+
+
+def test_draft_then_review_threads_the_same_file_to_both_phases():
+    """The composition's point: the drafting child and the reviewing child
+    look at the SAME artifact, or the review judges a file nobody wrote."""
+    ns = nodes("draft-then-review")
+    assert ns["draft"]["spec"]["args"]["file"] == "{args.file}"
+    assert ns["review"]["spec"]["args"]["file"] == "{args.file}"
+    assert "review" not in ns["draft"].get("depends_on", [])
+    assert ns["review"]["depends_on"] == ["draft"]

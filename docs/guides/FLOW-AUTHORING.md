@@ -525,6 +525,52 @@ the worked example: `node_diff --node draft` per round, deterministic
 severity gate, and a final node that prints the gate's reason so an exhausted
 acceptance is the flow's last words rather than a quiet exit 0.
 
+## Composition (`kind: "flow"`)
+
+```jsonc
+{ "id": "cut", "role": "work", "kind": "flow",
+  "spec": { "flow": "flows/factory/release-cut.tg.json",
+            "args": { "version": "{args.version}" } } }
+```
+
+Run a saved flow as one node (PROPOSAL-flow-composition, adopted 2026-08-14).
+The child is a REAL run in `<run>/children/<node>-<hash12>/` — `status`,
+`explain` and `steer` take that dir directly, and `gc`/`estimate`/`active`
+never see it (collected only with its parent). The child's `final` node's
+result is the node's result, validated against the node's contract. One
+wallet, one tree, one `--max-workers` across however deep it goes. Worked
+examples: `flows/starter/draft-then-review.tg.json` (refine-loop →
+proposal-gate), `flows/demo/compose-smoke.tg.json` (the zero-token smoke).
+
+What to know before writing one:
+
+- **`spec.flow` is literal** (`dynamic-flow-path`); `spec.args` VALUES may
+  interpolate freely — child args are data, and every rendered value folds
+  into the node's hash. **Editing the child flow re-bills the parent node and
+  everything downstream** — the child file's own hash is a fingerprint part,
+  and a moved parent hash starts a fresh child lineage beside the old
+  evidence.
+- **A flow node takes no token, no scope, no timeout**: `exclusive-on-flow`,
+  `write-scope-on-flow` and `timeout-on-flow` are §6 errors. The child's own
+  nodes declare and enforce their scopes exactly as they do standalone; the
+  child is bounded by its own `budget.max_run_minutes` plus the root wall
+  clock and the root spawn wallet (a child budget trip stops the RUN, exit 4
+  — it never reads as a node failure).
+- **Rollback healing and composition do not mix** (`rollback-heal-in-child`,
+  `flow-in-rollback-cone`): rollback restores everything since its baseline
+  against the ONE shared tree, and a composed child's window brackets work
+  that is not its own. `rollback: false` loops compose freely — which is why
+  sdlc-e2e's phases (rollback heals) cannot be composed yet, and
+  draft-then-review's can.
+- **A child gate block fails the parent node** with the gate and the child
+  dir named; a parent `resume` re-enters the child and re-runs only what
+  blocked — completed child work is never re-billed. `cancel <run> <node>`
+  on a flow node stops the child cooperatively between waves.
+- Cycles, depth (> 5) and a child's own §6 errors are verify-time findings
+  (`flow-cycle`, `flow-depth`, child issues prefixed with the child's path);
+  `verify --lint` names approvals hiding inside children
+  (`lint-approval-in-child`).
+
 ## Retry, budget, caching
 
 - Harness nodes DEFAULT to `retry: {"max": 2, "backoff_ms": 60000}` (absorbs

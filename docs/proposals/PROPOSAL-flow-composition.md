@@ -1,14 +1,31 @@
 ---
 type: proposal
 title: "Proposal: flow composition — run a saved flow as one node (kind: \"flow\")"
-description: The successor to PROPOSAL-taskflow-parity-tiers §2.2, written because its third-pass review (findings 24–26) found three engine questions the sketch never answered. This proposal answers them — a shared worker semaphore, a RunResources seam bound to executors at engine start, and resume-as-child-resume via a hash-named child run dir — then survived its own adversarial review (nine findings, three material: the wrapper-forwarding lie, rollback-x-composition excluded in v1, the impossible cancel story). Not adopted; adoption is a commit that says so.
+description: The successor to PROPOSAL-taskflow-parity-tiers §2.2, written because its third-pass review (findings 24–26) found three engine questions the sketch never answered. This proposal answers them — a shared worker semaphore, a RunResources seam bound to executors at engine start, and resume-as-child-resume via a hash-named child run dir — survived its own adversarial review (nine findings, three material), and was ADOPTED AND BUILT 2026-08-15 in its own prescribed order. The sdlc-e2e exit criterion was superseded by the review's rollback exclusion; draft-then-review carries its purpose.
 resource: docs/proposals/PROPOSAL-flow-composition.md
-status: draft
+status: stable
 ---
 # Proposal: flow composition (`kind: "flow"`)
 
-**Status: draft, not adopted.** A proposal carries no authority; adoption is a
-commit that says so. This document supersedes PROPOSAL-taskflow-parity-tiers
+**ADOPTED AND BUILT, 2026-08-15.** Adoption and implementation landed
+together at the owner's instruction, in the order §6 prescribes:
+`RunResources` first and alone with the whole suite as its byte-identical
+pin, then `executors/flow.py` + the §6 rules + the torture cases as pytest
+(`tests/test_flow_compose.py`), then the zero-token CLI smoke
+(`flows/demo/compose-smoke.tg.json`, kept as a permanent regression) and the
+`draft-then-review` starter. Two findings from the build, recorded in
+DEVIATIONS 2026-08-15: AMENDMENTS M4's free retry-on-empty-result was
+observed converting a child gate block into a retried success — executors
+may now opt out (`auto_retry = False`), and flow does; and the §6 arg
+scanner had to learn `spec.args` values and `spec.reads` entries as real
+references. **One exit criterion was superseded by this document's own
+review**: sdlc-e2e cannot be recomposed — both its phases heal with
+`rollback: true`, which finding 2's `rollback-heal-in-child` forbids —
+so `draft-then-review` (refine-loop → proposal-gate, both legally
+composable) carries that criterion's purpose. The authority is the commits;
+this document stays as the reasoning.
+
+This document supersedes PROPOSAL-taskflow-parity-tiers
 §2.2, which was deliberately NOT adopted with the rest of that plan: its
 third-pass review (findings 23–27, 2026-08-13) found that the sketch's three
 hardest questions were design decisions it had listed as implementation

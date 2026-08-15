@@ -254,6 +254,22 @@ def _node_templates(node: Node) -> list[tuple[str, str]]:
         for i, w in enumerate(writes):
             if isinstance(w, str):
                 out.append((f"spec.writes[{i}]", w))
+    reads = node.spec.get("reads")
+    if isinstance(reads, list):
+        # Same rule for read scopes (parity 3.1): rendered with args, so an
+        # arg used only in a reads glob is a real reference.
+        for i, r in enumerate(reads):
+            if isinstance(r, str):
+                out.append((f"spec.reads[{i}]", r))
+    if node.kind == "flow":
+        # Child-arg VALUES render like any template (composition §4), so
+        # {args.K} there is a real reference and {steps.X...} needs the dep.
+        child_args = node.spec.get("args")
+        if isinstance(child_args, dict):
+            for key in sorted(child_args):
+                v = child_args[key]
+                if isinstance(v, str):
+                    out.append((f"spec.args[{key}]", v))
     return out
 
 
@@ -280,6 +296,7 @@ def verify_flow(
     config: Any = None,  # registry.LockstepConfig | None
     repo_root: Path | None = None,
     policy: Any = None,  # Policy; §8.1: consulted at verify time AND pre-execute
+    _flow_stack: tuple = (),  # composition: ancestor flow FILES, for cycle/depth
 ) -> list[VerifyIssue]:
     """All §6 findings at once. Errors ⇒ exit 5."""
     issues: list[VerifyIssue] = []
@@ -533,6 +550,110 @@ def verify_flow(
                     "bad-read-scope",
                     f"node {n.id!r}: spec.reads entry {r!r} escapes the repo root",
                 )
+
+    # PROPOSAL-flow-composition §4: rules for kind="flow" nodes. String-keyed
+    # on the kind (the registry check above already errors when no executor
+    # claims it); the file walk needs repo_root and is skipped without one.
+    flow_nodes = [n for n in tg.nodes if n.kind == "flow"]
+    for n in flow_nodes:
+        if n.role == "map":
+            err("flow-in-map",
+                f"map node {n.id!r} has kind \"flow\"; a fan-out of engines is deferred — "
+                f"if a map item needs a subgraph, the subgraph wants to be the flow")
+        if n.exclusive:
+            err("exclusive-on-flow",
+                f"flow node {n.id!r} declares exclusive: {n.exclusive} — a parked parent "
+                f"holding a token its child's nodes need is the composition deadlock; "
+                f"the child's own nodes acquire what they declare")
+        if "writes" in n.spec:
+            err("write-scope-on-flow",
+                f"flow node {n.id!r} declares spec.writes; scopes belong to the child's "
+                f"own nodes, which declare and enforce them exactly as they do standalone")
+        if n.timeout_s != 900:
+            err("timeout-on-flow",
+                f"flow node {n.id!r} sets timeout_s; an in-process child engine has no "
+                f"process to kill, so the limit would not limit — the child's own "
+                f"budget.max_run_minutes and the root wall clock are what bound it")
+        spec_flow = n.spec.get("flow")
+        if isinstance(spec_flow, str) and "{" in spec_flow:
+            err("dynamic-flow-path",
+                f"flow node {n.id!r}: spec.flow {spec_flow!r} interpolates; the path must "
+                f"be literal — flow-cycle and flow-depth must stay decidable at verify "
+                f"time (spec.args VALUES may interpolate freely)")
+    if flow_nodes:
+        # flow-in-rollback-cone: the cone is descendants(targets), exactly as
+        # the W5b lint computes it. A parent rollback's cascade would re-attach
+        # a child whose records say done for tree work the rollback removed.
+        children_of: dict[str, list[str]] = {}
+        for n in tg.nodes:
+            for d in n.depends_on:
+                children_of.setdefault(d, []).append(n.id)
+        flow_ids = {n.id for n in flow_nodes}
+        for g in tg.nodes:
+            if g.role != "gate" or g.heal.max_rounds == 0 or not g.heal.rollback:
+                continue
+            cone: set[str] = set()
+            frontier = list(g.heal.targets)
+            while frontier:
+                nid = frontier.pop()
+                for c in children_of.get(nid, []):
+                    if c not in cone:
+                        cone.add(c)
+                        frontier.append(c)
+            for fid in sorted(cone & flow_ids):
+                err("flow-in-rollback-cone",
+                    f"flow node {fid!r} is downstream of gate {g.id!r}'s rollback heal "
+                    f"targets; a rollback would restore tree work the child's records "
+                    f"still call done — rollback healing and composition do not mix "
+                    f"until scope-narrowing exists (r7)")
+    if flow_nodes and repo_root is not None:
+        for n in flow_nodes:
+            spec_flow = n.spec.get("flow")
+            if not isinstance(spec_flow, str) or "{" in spec_flow:
+                continue  # dynamic-flow-path already fired
+            child_path = (Path(repo_root) / spec_flow).resolve()
+            key = str(child_path)
+            if key in _flow_stack:
+                err("flow-cycle",
+                    f"flow node {n.id!r}: {spec_flow} is already on the composition "
+                    f"path ({' -> '.join(Path(p).name for p in _flow_stack)})")
+                continue
+            if len(_flow_stack) + 1 > 5:
+                err("flow-depth",
+                    f"flow node {n.id!r}: composition deeper than 5 at {spec_flow}")
+                continue
+            if not child_path.is_file():
+                err("flow-file-missing", f"flow node {n.id!r}: {spec_flow} does not exist")
+                continue
+            try:
+                child_tg, _ = load_flow(child_path)
+            except FlowError as e:
+                err("flow-file-invalid", f"flow node {n.id!r}: {e}")
+                continue
+            # rollback-heal-in-child: a child rollback's restore scope brackets
+            # parent-sibling writes on the ONE shared tree.
+            for cn in child_tg.nodes:
+                if cn.role == "gate" and cn.heal.max_rounds > 0 and cn.heal.rollback:
+                    err("rollback-heal-in-child",
+                        f"flow node {n.id!r}: child {spec_flow} gate {cn.id!r} heals with "
+                        f"rollback: true — a child rollback restores everything since its "
+                        f"baseline, including a parent-level sibling's completed writes; "
+                        f"use rollback: false (the loop pattern) or run the flow standalone")
+            declared = set((n.spec.get("args") or {}))
+            required = {k for k, v in child_tg.args.items() if v is None}
+            missing = sorted(required - declared)
+            if missing:
+                err("flow-args-missing",
+                    f"flow node {n.id!r}: child {spec_flow} requires arg(s) "
+                    f"{', '.join(missing)} that spec.args does not pass")
+            # Recursive §6 over the child, its issues prefixed with the child's
+            # path; the stack makes cycles terminate before recursion.
+            for issue in verify_flow(
+                child_tg, registry=registry, config=config, repo_root=repo_root,
+                policy=policy, _flow_stack=_flow_stack + (key,),
+            ):
+                issues.append(VerifyIssue(issue.level, issue.code,
+                                          f"[{spec_flow}] {issue.message}"))
 
     # §8.1: the Policy seam is consulted at verify time too (audit r6.2 nit).
     if policy is not None:
@@ -1022,6 +1143,35 @@ def lint_flow(
                     f"(> {BROAD_READS_THRESHOLD}); every plan hashes them — including the "
                     f"revalidation of every done node on resume — narrow the globs, or "
                     f"watch the journal's reads-hash timing lines grow with the tree",
+                )
+
+    # W10 (PROPOSAL-flow-composition §5) — an approval buried in a composed
+    # child is an approval the operator did not see coming: the TTY prompt
+    # appears mid-run, one level removed from what was launched. Direct
+    # children only; deeper levels get their own warning when the child is
+    # itself verified.
+    if repo_root is not None:
+        for n in tg.nodes:
+            if n.kind != "flow":
+                continue
+            spec_flow = n.spec.get("flow")
+            if not isinstance(spec_flow, str) or "{" in spec_flow:
+                continue
+            p = Path(repo_root) / spec_flow
+            if not p.is_file():
+                continue
+            try:
+                child_tg, _ = load_flow(p)
+            except FlowError:
+                continue
+            approvals = [cn.id for cn in child_tg.nodes if cn.role == "approval"]
+            if approvals:
+                warn(
+                    "lint-approval-in-child",
+                    f"flow node {n.id!r}: child {spec_flow} contains approval node(s) "
+                    f"{', '.join(approvals)} — the prompt appears mid-run on the parent's "
+                    f"TTY, one level removed from what the operator launched; run attended, "
+                    f"or lift the approval to the top level",
                 )
 
     # W8 (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) — heal.on_exhausted:

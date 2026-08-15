@@ -411,3 +411,110 @@ def test_read_scope_rules(tmp_path):
          "spec": {"cmd": ["git", "status"], "reads": ["src/**"]}},
     ])
     assert "spec-invalid" in codes(shell, tmp_path)
+
+
+def test_flow_composition_rules(tmp_path):
+    """PROPOSAL-flow-composition 4: the static rules, each one preventing a
+    named failure (deadlock, undecidable cycle walk, rollback windows,
+    a limit that does not limit)."""
+    import json as _json
+
+    def fnode(**over):
+        node = {"id": "sub", "kind": "flow", "final": True,
+                "spec": {"flow": "child.tg.json"}}
+        node.update(over)
+        return node
+
+    child = {"name": "child", "nodes": [
+        {"id": "w", "kind": "fake", "final": True, "spec": {}}]}
+    (tmp_path / "child.tg.json").write_text(_json.dumps(child), encoding="utf-8")
+
+    assert "exclusive-on-flow" in codes(flow([fnode(exclusive=["tree"])]), tmp_path)
+    assert "write-scope-on-flow" in codes(
+        flow([fnode(spec={"flow": "child.tg.json", "writes": ["x"]})]), tmp_path)
+    assert "timeout-on-flow" in codes(flow([fnode(timeout_s=600)]), tmp_path)
+    assert "dynamic-flow-path" in codes(
+        flow([fnode(spec={"flow": "flows/{args.which}.tg.json"})],
+             args={"which": "a"}), tmp_path)
+    assert "flow-file-missing" in codes(
+        flow([fnode(spec={"flow": "nope.tg.json"})]), tmp_path)
+    clean = codes(flow([fnode()]), tmp_path)
+    assert not [c for c in clean if "flow" in c and c != "unknown-kind"], clean
+
+
+def test_flow_cycle_and_depth_are_verify_errors(tmp_path):
+    import json as _json
+
+    def flow_file(name, child=None):
+        nodes = ([{"id": "sub", "kind": "flow", "final": True,
+                   "spec": {"flow": child}}] if child
+                 else [{"id": "w", "kind": "fake", "final": True, "spec": {}}])
+        (tmp_path / name).write_text(
+            _json.dumps({"name": name.split(".")[0], "nodes": nodes}), encoding="utf-8")
+
+    flow_file("a.tg.json", "b.tg.json")
+    flow_file("b.tg.json", "a.tg.json")
+    got = codes(flow([{"id": "top", "kind": "flow", "final": True,
+                       "spec": {"flow": "a.tg.json"}}]), tmp_path)
+    assert "flow-cycle" in got
+
+    for i in range(7):
+        flow_file(f"d{i}.tg.json", f"d{i + 1}.tg.json" if i < 6 else None)
+    got = codes(flow([{"id": "top", "kind": "flow", "final": True,
+                       "spec": {"flow": "d0.tg.json"}}]), tmp_path)
+    assert "flow-depth" in got
+
+
+def test_rollback_windows_are_excluded_from_composition(tmp_path):
+    """Review finding 2: a child rollback restores parent-sibling writes; a
+    parent rollback cascade re-attaches a child whose records say done for
+    tree work the rollback removed. Both directions are 6-level errors."""
+    import json as _json
+
+    healing_child = {"name": "child", "nodes": [
+        {"id": "impl", "kind": "fake", "spec": {}},
+        {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["impl"],
+         "output": "json", "contract": "Verdict", "spec": {},
+         "heal": {"max_rounds": 1, "targets": ["impl"], "rollback": True}},
+        {"id": "z", "kind": "fake", "final": True, "depends_on": ["g"], "spec": {}},
+    ]}
+    (tmp_path / "healing.tg.json").write_text(
+        _json.dumps(healing_child), encoding="utf-8")
+    got = codes(flow([{"id": "sub", "kind": "flow", "final": True,
+                       "spec": {"flow": "healing.tg.json"}}]), tmp_path)
+    assert "rollback-heal-in-child" in got
+
+    plain_child = {"name": "child", "nodes": [
+        {"id": "w", "kind": "fake", "final": True, "spec": {}}]}
+    (tmp_path / "plain.tg.json").write_text(_json.dumps(plain_child), encoding="utf-8")
+    cone = flow([
+        {"id": "impl", "kind": "fake", "spec": {}},
+        {"id": "sub", "kind": "flow", "depends_on": ["impl"],
+         "spec": {"flow": "plain.tg.json"}},
+        {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["sub"],
+         "output": "json", "contract": "Verdict", "spec": {},
+         "heal": {"max_rounds": 1, "targets": ["impl"], "rollback": True}},
+        {"id": "z", "kind": "fake", "final": True, "depends_on": ["g"], "spec": {}},
+    ])
+    assert "flow-in-rollback-cone" in codes(cone, tmp_path)
+    # rollback: false — the loop pattern — is legal in both positions.
+    loop_child = _json.loads(_json.dumps(healing_child))
+    loop_child["nodes"][1]["heal"]["rollback"] = False
+    (tmp_path / "healing.tg.json").write_text(_json.dumps(loop_child), encoding="utf-8")
+    got = codes(flow([{"id": "sub", "kind": "flow", "final": True,
+                       "spec": {"flow": "healing.tg.json"}}]), tmp_path)
+    assert "rollback-heal-in-child" not in got
+
+
+def test_child_flows_are_recursively_verified_and_args_checked(tmp_path):
+    import json as _json
+
+    bad_child = {"name": "child", "args": {"topic": None}, "nodes": [
+        {"id": "w", "kind": "fake", "final": True,
+         "spec": {"task": "about {args.topic} and {steps.ghost.output}"},
+         "depends_on": []}]}
+    (tmp_path / "child.tg.json").write_text(_json.dumps(bad_child), encoding="utf-8")
+    got = codes(flow([{"id": "sub", "kind": "flow", "final": True,
+                       "spec": {"flow": "child.tg.json"}}]), tmp_path)
+    assert "flow-args-missing" in got, "child requires topic; the node passes nothing"
+    assert "unlisted-step-ref" in got, "the child's own 6-level errors surface"
