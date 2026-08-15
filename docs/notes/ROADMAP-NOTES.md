@@ -216,3 +216,13 @@ items); until then the honest guidance is the factory pattern: readonly items
 that EMIT orders + one serialized, scoped applier. A lint was considered and
 rejected — it would fire on the canonical codemod-apply flow (the W2 rule:
 a warning that is wrong on the flow it teaches is one people learn to skip).
+
+- **2026-08-15 (whole-implementation review): per-stanza `default_retry`.**
+  Retry defaults are per-KIND (`HarnessExecutor.default_retry` = 2 x 60s),
+  so every copilot node must carry `"retry": {"max": 0}` by hand forever -
+  the request-metered posture cannot live in the stanza where it belongs.
+  The trap in fixing it: `stanza_digest` hashes `model_dump()`, so ADDING a
+  field to ExecutorStanza changes every stanza''s digest and re-bills every
+  cached harness node on upgrade. Doing this needs a digest-migration story
+  (e.g. exclude-if-default serialization) decided FIRST - which is why it is
+  a note and not a patch.

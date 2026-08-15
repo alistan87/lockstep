@@ -167,3 +167,18 @@ def test_shell_attempts_rotate(tmp_path, git_repo):
     phase = h.run_dir / "phases" / "s"
     assert (phase / "stdout-attempt1.log").exists(), "prior shell attempt preserved"
     assert (phase / "stdout.log").exists()
+
+
+def test_provider_limit_diagnosis_works_without_an_envelope():
+    """copilot-cli has no JSON mode, so the r5 B3 "wait, then resume" hint
+    was unreachable on the one harness where a 429 usually means quota
+    (2026-08-15 review). No envelope -> scan both raw streams."""
+    from lockstep.executors.harness import diagnose_provider_error
+
+    assert diagnose_provider_error("", "Error: Rate limit exceeded, try again later") \
+        .startswith("provider limit/overload (no envelope)")
+    assert "quota" in diagnose_provider_error("You have reached your quota for the month.", "")
+    assert diagnose_provider_error("ordinary failure text", "traceback: boom") is None
+    # The envelope path is unchanged: a parsed envelope still wins.
+    env = '{"api_error_status": 429, "result": "session limit reached"}'
+    assert "429" in diagnose_provider_error(env, "")

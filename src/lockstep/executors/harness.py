@@ -150,11 +150,22 @@ _PROVIDER_LIMIT_STATUSES = {429, 529}
 _PROVIDER_LIMIT_MARKERS = ("session limit", "overloaded", "rate limit")
 
 
-def diagnose_provider_error(stdout: str) -> str | None:
+def diagnose_provider_error(stdout: str, stderr: str = "") -> str | None:
     """Best-effort: read a harness stdout envelope for a limit/overload signal.
-    Returns a human-facing error string, or None."""
+    Returns a human-facing error string, or None.
+
+    Falls back to a raw-text scan of both streams when no envelope parses —
+    copilot-cli has NO JSON mode (INSTALL-WORK-MACHINE §4), so on the one
+    harness where a 429 usually means QUOTA rather than a blip, the r5 B3
+    "wait, then resume" hint used to be unreachable and the operator got a
+    bare exit code (2026-08-15 whole-implementation review)."""
     candidate = extract_last_json(stdout)
     if candidate is None:
+        blob = f"{stdout[-2000:]}\n{stderr[-2000:]}".lower()
+        for marker in (*_PROVIDER_LIMIT_MARKERS, "quota", "usage limit", "too many requests"):
+            if marker in blob:
+                line = next((ln.strip() for ln in blob.splitlines() if marker in ln), marker)
+                return f"provider limit/overload (no envelope): {line[:160]}"
         return None
     try:
         env = json.loads(candidate)
@@ -387,11 +398,16 @@ class HarnessExecutor:
         stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
         # r5 B3 (diagnosis only): name a provider limit/overload on failure so
         # the operator sees "wait, then resume" instead of a bare exit code.
+        # stderr participates: an envelope-less harness (copilot) reports its
+        # quota errors there, and a diagnosis that only reads stdout misses
+        # the one harness whose 429 is usually a wall, not a blip.
         err: str | None = None
         if timed_out:
             err = "timeout"
         elif exit_code != 0:
-            err = diagnose_provider_error(stdout)
+            stderr_text = (stderr_path.read_text(encoding="utf-8", errors="replace")
+                           if stderr_path.exists() else "")
+            err = diagnose_provider_error(stdout, stderr_text)
         # Result channel (SPEC §8.3): file first — harness-independent, robust to
         # chatty output, debuggable after the fact.
         for name in ("result.json", "result.txt"):

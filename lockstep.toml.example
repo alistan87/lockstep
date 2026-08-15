@@ -125,6 +125,42 @@ argv = ["pi", "-p", "--no-session", "--no-context-files", "--no-skills", "{promp
 prompt_via = "stdin"
 readonly_argv = ["--tools", "read,submit_result"]
 
+# COPILOT CLI — the stub below runs, but know four things before pointing real
+# nodes at it (2026-08-15 review; verify each against YOUR installed copilot
+# with `copilot --help`, then `lockstep doctor` — flags drift):
+#
+# 1. TOOL APPROVAL. Recent copilot builds DENY tool use in programmatic (-p)
+#    mode unless approved from argv (--allow-all-tools / --allow-tool /
+#    --deny-tool on the builds we have seen). A WRITER node gets the standard
+#    footer ("write result.json") — with no approved write tool that is an
+#    empty result, one free M4 auto-retry, and a failed node: TWO metered
+#    requests for nothing. Probe a writer node with `doctor` before trusting
+#    the stanza, and pin whatever approval flags your build takes here.
+# 2. NO READONLY SHAPE IS PINNED YET. Every judgement node in the starter
+#    flows is `readonly: true`, and without a `readonly_argv` this stanza
+#    fails them at verify (`readonly-unenforced` — free, by design). If your
+#    build has deny flags, a `copilot-review` stanza with
+#    readonly_argv = ["--deny-tool", "write", "--deny-tool", "shell"] (names
+#    UNVERIFIED — check them) would make copilot legal for reviewers; record
+#    what you verify, the way the pi-review stanza above records its probe.
+# 3. REQUEST METERING. A copilot 429 usually means QUOTA, not a blip: set
+#    `"retry": {"max": 0}` on every node using this stanza (the harness-kind
+#    default of 2×60s retries burns two more requests against the same wall;
+#    a per-stanza retry default is a recorded roadmap item, not yet real).
+#    The driver names quota errors from raw output ("provider limit/overload
+#    (no envelope)") — wait, then `resume`.
+# 4. UNHASHED INSTRUCTION CHANNEL. Copilot reads repo instruction files
+#    (.github/copilot-instructions.md and friends) into every spawn — same
+#    class as claude's CLAUDE.md and pi's AGENTS.md discovery above. No
+#    verified off switch is pinned here: treat those files as part of every
+#    prompt that `explain` cannot see, and keep node rules in personas/ and
+#    spec.context, which are hashed.
+#
+# prompt_via stays "argv" only because stdin prompting is UNVERIFIED on
+# copilot; if your build reads a piped prompt, switch to "stdin" — corrective
+# re-spawn prompts are several times the original and Windows caps a command
+# line near 32k (`verify --lint` warns; ArgvTooLong fails cleanly).
+# No JSON mode: these nodes report `no envelope` in cost views, permanently.
 [executors.copilot-cli]
 argv = ["copilot", "-p", "{prompt}"]
 prompt_via = "argv"

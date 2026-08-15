@@ -139,7 +139,15 @@ argv = ["pi.cmd", "-p", "--no-session", "--no-context-files", "--no-skills", "{p
 prompt_via = "stdin"
 readonly_argv = ["--tools", "read,submit_result"]
 
-# The work order's `bulk` class: high-volume classification.
+# The work order's `bulk` class: high-volume classification. Before trusting
+# it: (a) recent copilot builds DENY tools in -p mode unless approved from
+# argv — probe a WRITER node with `doctor` and pin the approval flags your
+# build takes, or keep this stanza for interpolated-input nodes that need no
+# tools at all (the biggest saving on a request-metered plan anyway);
+# (b) no readonly shape is pinned — if your build has deny-tool flags, build
+# a `copilot-review` stanza the way `pi-review` was built, and record the
+# probe; (c) set `"retry": {"max": 0}` on every node here (§4's 429 note).
+# The full checklist lives on the copilot-cli stanza in lockstep.toml.example.
 [executors.bulk]
 argv = ["copilot", "-p", "{prompt}"]
 prompt_via = "argv"
