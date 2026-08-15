@@ -40,8 +40,10 @@ $ lockstep wait runs/<run>/ --timeout 600       # block until the driver exits; 
 $ lockstep verify flows/x.tg.json --lint        # + advisory anti-pattern warnings
 $ lockstep verify flows/x.tg.json --config c.toml     # the SAME config the run will use
 $ lockstep explain runs/<run>/ implement        # which hash inputs moved; why it re-billed
+$ lockstep explain runs/<run>/ --graph          # whole-graph staleness dry run vs the current tree; zero spawns
 $ lockstep run flows/x.tg.json --replay runs/<run>/   # recorded results; no spawns, no tokens
 $ lockstep run flows/x.tg.json --seed runs/<run>/     # edited flow, new lineage, inherit what did not change
+$ lockstep run flows/x.tg.json --seed runs/<run>/ --force-stale judge   # ...except judge + descendants: recompute
 $ lockstep verify-trace runs/<run>/             # recompute the journal's hash chain
 $ lockstep gc                                   # runs/ retention plan; dry-run unless --apply
 ```
@@ -65,7 +67,12 @@ On `block`, the driver preserves the failed attempt as a patch, restores a
 proactively-taken git baseline (untracked files included; created files are
 moved aside, never deleted), re-marks every completed descendant of the heal
 targets pending, appends the gate's findings (fenced as data) to the targets'
-prompts, and re-runs. Rounds exhausted ⇒ exit 2.
+prompts, and re-runs — naming the round ("This is repair round N of M").
+Rounds exhausted ⇒ exit 2, unless the gate declares
+`heal.on_exhausted: "pass"`: the LOOP pattern accepts the best-so-far, with
+the recorded verdict saying exactly that ("accepted after N rounds without
+resolving: …") — never a plain pass. With `rollback: false` each round builds
+on the last instead of undoing it (`flows/starter/refine-loop.tg.json`).
 
 A heal round is the expensive unit in this system — a rollback plus a full
 re-run of whatever produced the work — so two mechanisms exist to stop gates
@@ -80,8 +87,8 @@ second attempt does not re-derive what the first established.
 
 ## Starter flows
 
-`flows/starter/` ships eleven portable, adversarially-reviewed templates — see
-its README for the full table and per-flow caveats:
+`flows/starter/` ships fourteen portable, adversarially-reviewed templates —
+see its README for the full table and per-flow caveats:
 
 - **SDLC**: `plan-adversarial` (author → two attacking reviewers → healing
   arbiter gate → human approval), `implement-heal` (implementer → deterministic
@@ -96,6 +103,13 @@ its README for the full table and per-flow caveats:
 - **Cockpit fragments**: `clarify-gate` (a non-healing gate that asks a human
   what only they can settle), `evidence-approval` (the evidence-bearing terminal
   approval, with its labels sidecar).
+- **Patterns** (0.9.0): `tournament-judge` (three readonly rivals answer one
+  brief in parallel, a judge crowns at most one — or blocks rather than crown
+  the least-bad), `refine-loop` (a healing gate as a LOOP: `rollback: false`
+  builds on each round, `on_exhausted: "pass"` accepts the best-so-far on the
+  record), `draft-then-review` (COMPOSITION: two saved flows as two
+  `kind: "flow"` nodes — each child a real run under `<run>/children/`, one
+  wallet, one tree, one worker cap).
 - **Ops**: `pi-guard-smoke` (live-verifies the pi extension on a new machine),
   `retrospect` (gate-driven improvement from the friction report).
 

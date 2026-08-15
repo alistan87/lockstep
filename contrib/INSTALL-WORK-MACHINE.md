@@ -27,7 +27,7 @@ Two things are being installed, and they go to different places:
 
 ```powershell
 .venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
-.venv\Scripts\python.exe contrib\build_bundle.py --version 0.8.0
+.venv\Scripts\python.exe contrib\build_bundle.py --version 0.9.0
 ```
 
 Use the version in `pyproject.toml`, not the one written here — the wheel is
@@ -48,7 +48,7 @@ machine ends up on documentation that no longer matches the code.
 ```powershell
 cd <your-work-repo>
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install lockstep-0.8.0-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install lockstep-0.9.0-py3-none-any.whl
 .venv\Scripts\lockstep.exe --help
 ```
 
