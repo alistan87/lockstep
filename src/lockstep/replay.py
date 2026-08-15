@@ -110,6 +110,13 @@ class ReplayExecutor:
         self.supports_corrective_respawn = False
         self.SpecModel = inner.SpecModel
 
+    def bind_run(self, resources) -> None:
+        """Same explicit delegation as SeedExecutor.bind_run, same reason
+        (composition review finding 1): the wrapper forwards nothing."""
+        bind = getattr(self.inner, "bind_run", None)
+        if callable(bind):
+            bind(resources)
+
     def plan(self, node: Node, ctx: RenderCtx) -> PlannedWork:
         work = self.inner.plan(node, ctx)
         work.meta = {

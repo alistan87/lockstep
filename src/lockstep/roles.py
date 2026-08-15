@@ -58,6 +58,56 @@ class BudgetTripped(Exception):
     pass
 
 
+class RunResources:
+    """Everything that is RUN-scoped rather than engine-scoped
+    (PROPOSAL-flow-composition §2). A single engine builds one for itself and
+    behaves byte-identically to before this existed; a composed child engine
+    receives its parent's, so exclusive tokens, the worker cap, and the spawn
+    wallet are shared across the whole tree of engines — the alternative is
+    the silent failure the composition review named: a child tree-writer
+    running beside a parent-level `tree` holder.
+
+    - `locks`/`locks_guard`: the exclusive-token registry (`tree` included).
+    - `worker_slots`: a BoundedSemaphore(max_workers) acquired INSIDE each
+      token-costing worker thread (never in the dispatch loop — that would
+      serialize wave dispatch). For a single engine the token pool has
+      exactly as many threads as there are slots, so it never blocks.
+    - `snapshot_guard`: serializes whole-tree snapshot work across engines
+      for the same reason it is serialized within one.
+    - `root_engine`: the wallet owner. A child's `_spend_spawn` routes here,
+      so `token_spawns`, `max_agent_spawns` and the root wall clock are ONE
+      budget however deep the composition goes.
+    - `abort`: cooperative stop for THIS engine's wave loop. Per-engine by
+      construction (a child gets a fresh one chained by its watcher), because
+      one shared event would make cancelling one flow node cancel the world.
+    - `depth`: composition depth, capped by verify (`flow-depth`).
+    """
+
+    def __init__(self, max_workers: int):
+        self.locks: dict[str, threading.Lock] = {}
+        self.locks_guard = threading.Lock()
+        self.worker_slots = threading.BoundedSemaphore(max_workers)
+        self.snapshot_guard = threading.Lock()
+        self.max_workers = max_workers
+        self.root_engine = None  # set by the engine that creates the wallet
+        self.abort = threading.Event()
+        self.depth = 0
+
+    def for_child(self) -> "RunResources":
+        """Same run, one level down: shared locks, slots, guard and wallet;
+        a FRESH abort (the parent's watcher chains into it); depth + 1."""
+        child = RunResources.__new__(RunResources)
+        child.locks = self.locks
+        child.locks_guard = self.locks_guard
+        child.worker_slots = self.worker_slots
+        child.snapshot_guard = self.snapshot_guard
+        child.max_workers = self.max_workers
+        child.root_engine = self.root_engine
+        child.abort = threading.Event()
+        child.depth = self.depth + 1
+        return child
+
+
 class RunRefusal(Exception):
     """Run-time refusal (exit 7), e.g. heal.rollback on a non-git tree."""
 
@@ -159,6 +209,7 @@ class Engine:
         log=print,
         cockpit: bool = False,
         check_dirty_scope: bool = False,
+        resources: RunResources | None = None,
     ):
         self.tg = tg
         self.registry = registry
@@ -185,10 +236,18 @@ class Engine:
         # all: skipping preserves the recording's own verdicts exactly.
         self.replaying = False
 
-        self._locks: dict[str, threading.Lock] = {}
-        self._locks_guard = threading.Lock()
+        # RUN-scoped state lives in RunResources (PROPOSAL-flow-composition
+        # §2): a root engine creates its own and owns the wallet; a composed
+        # child receives its parent's. The aliases keep every existing call
+        # site byte-identical.
+        if resources is None:
+            resources = RunResources(max_workers)
+            resources.root_engine = self
+        self.resources = resources
+        self._locks = resources.locks
+        self._locks_guard = resources.locks_guard
         self._budget_guard = threading.Lock()
-        self._snapshot_guard = threading.Lock()
+        self._snapshot_guard = resources.snapshot_guard
         self.needs_check: set[str] = set()
         self._gate_outcomes: list[_GateOutcome] = []
         self._outcomes_guard = threading.Lock()
@@ -214,6 +273,16 @@ class Engine:
         for n in tg.nodes:
             for dep in n.depends_on:
                 self._dependents[dep].append(n.id)
+
+        # PROPOSAL-flow-composition §2: an executor MAY define
+        # `bind_run(resources)`; it is called once, here, for every registered
+        # executor that does. The seed/replay wrappers delegate it explicitly
+        # (they forward NOTHING dynamically — composition review finding 1).
+        for kind in registry.kinds():
+            ex = registry.get(kind)
+            bind = getattr(ex, "bind_run", None)
+            if callable(bind):
+                bind(self.resources)
 
     # ------------------------------------------------------------------ helpers
 
@@ -257,8 +326,19 @@ class Engine:
 
     def _spend_spawn(self, work: PlannedWork) -> None:
         """Budget accounting (SPEC §9.5): counts every spawn whose work costs
-        tokens — corrective re-spawns and heal rounds included."""
+        tokens — corrective re-spawns and heal rounds included. A composed
+        child engine routes here to the ROOT's wallet (one budget for the
+        whole tree of engines), flagging its own loop on a trip so it stops
+        dispatching instead of re-pending the same nodes forever."""
         if not work.costs_tokens:
+            return
+        root = self.resources.root_engine
+        if root is not None and root is not self:
+            try:
+                root._spend_spawn(work)
+            except BudgetTripped:
+                self.flags["budget"] = True
+                raise
             return
         with self._budget_guard:
             if self.flags["budget"] or self.store.state.token_spawns >= self.tg.budget.max_agent_spawns:
@@ -582,6 +662,13 @@ class Engine:
         try:
             while True:
                 self._settle()
+                if self.resources.abort.is_set():
+                    # Cooperative stop (composition §2): set by a flow node's
+                    # cancel watcher, never for a plain root run. Between
+                    # waves only — in-flight work finishes, nothing new
+                    # dispatches; the FlowExecutor translates the marker to
+                    # the engine's existing cancelled handling.
+                    break
                 if self.flags["budget"]:
                     break
                 if self._wall_exceeded():
@@ -602,8 +689,17 @@ class Engine:
                 futures = []
                 for node in wave:
                     self._set_status(node.id, "running")
-                    pool = token_pool if self._costs_tokens_hint(node) else other_pool
-                    futures.append(pool.submit(self._run_node_safe, node))
+                    if self._costs_tokens_hint(node):
+                        # The slot is acquired INSIDE the worker (composition
+                        # §1): acquiring before submit would serialize wave
+                        # dispatch. For a lone engine the pool has exactly as
+                        # many threads as there are slots, so this never
+                        # blocks; across composed engines the shared
+                        # semaphore is what makes --max-workers bound the
+                        # whole tree.
+                        futures.append(token_pool.submit(self._run_slotted, node))
+                    else:
+                        futures.append(other_pool.submit(self._run_node_safe, node))
                 futures_wait(futures)
                 self._process_gate_outcomes()
         finally:
@@ -748,11 +844,21 @@ class Engine:
 
     # ------------------------------------------------------------------ node run
 
+    def _run_slotted(self, node: Node) -> None:
+        with self.resources.worker_slots:
+            self._run_node_safe(node)
+
     def _run_node_safe(self, node: Node) -> None:
         try:
             self._run_node(node)
         except BudgetTripped:
             # No new spawns; this node goes back to pending; in-flight peers finish.
+            # Setting the flag here is a no-op for a plain node (its own
+            # _spend_spawn already set it) and load-bearing for a flow node,
+            # whose child tripped the ROOT wallet: without it this engine
+            # would re-dispatch the pending flow node forever
+            # (PROPOSAL-flow-composition §1).
+            self.flags["budget"] = True
             rec = self._rec(node.id)
             rec.status = "pending"
             rec.error = None  # e.g. a mid-corrective trip must not leave stale error text

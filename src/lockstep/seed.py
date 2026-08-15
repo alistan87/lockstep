@@ -90,6 +90,14 @@ class SeedExecutor:
         self.supports_corrective_respawn = inner.supports_corrective_respawn
         self.SpecModel = inner.SpecModel
 
+    def bind_run(self, resources) -> None:
+        """Composition review finding 1: this wrapper forwards NOTHING
+        dynamically, so without this explicit delegation a --seed run's
+        children would silently get unshared locks — two writers, one tree."""
+        bind = getattr(self.inner, "bind_run", None)
+        if callable(bind):
+            bind(resources)
+
     def plan(self, node: Node, ctx: RenderCtx) -> PlannedWork:
         work = self.inner.plan(node, ctx)
         if not self.cacheable:
