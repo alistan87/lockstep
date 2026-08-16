@@ -222,7 +222,36 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   so every copilot node must carry `"retry": {"max": 0}` by hand forever -
   the request-metered posture cannot live in the stanza where it belongs.
   The trap in fixing it: `stanza_digest` hashes `model_dump()`, so ADDING a
-  field to ExecutorStanza changes every stanza''s digest and re-bills every
+  field to ExecutorStanza changes every stanza's digest and re-bills every
   cached harness node on upgrade. Doing this needs a digest-migration story
   (e.g. exclude-if-default serialization) decided FIRST - which is why it is
   a note and not a patch.
+
+- **2026-08-15 (chronicle composition adoption): flow-node config digest is
+  whole-file, not per-stanza.** `FlowExecutor.plan()` folds `ctx.config_digest`
+  (sha256 of the raw bytes of the entire `lockstep.toml`) into every flow
+  node's hash, where a harness node folds only its own stanza's digest
+  (AMENDMENTS-r5 B1). A client that composes N children (chronicle: one per
+  book chunk) therefore re-bills ALL of them when any byte of the config
+  moves - a comment, an unrelated stanza - which is exactly the class of
+  no-op edit B1 made free for flat flows. Chronicle guards it with a
+  preflight tripwire (loud stop + explicit ack), but the seam is lockstep's:
+  a flow node cannot know which stanzas its child uses without loading the
+  child at plan time - which it already does. Narrowing the digest to the
+  union of the child's referenced stanzas (+ default) would restore B1
+  parity; the trap is the same digest-migration story as per-stanza
+  `default_retry` above - decide that first.
+
+- **2026-08-15 (pi-gemma chronicle run forensics): corrective re-spawns can
+  feed the model fence-salvaged rubble instead of its own output.** When a
+  spawn's outer JSON object fails raw_decode from one corrupted token (live
+  instances: `"char_span": [4177, 418ff]`, a key mangled to `larance_span`),
+  `extract_last_json` falls through to the last balanced INNER value - here
+  `"schema_observations": []` - and the corrective prompt then fences `[]`
+  as "previous invalid output" for a ~200-line delta that was 99% good. The
+  model recovers by full re-derivation, not correction, and the operator
+  reads "produced nothing" in the logs when it produced nearly everything.
+  Candidate fix: when the salvaged value validates as NOTHING against the
+  contract but raw stdout contains a longer near-object, embed the raw text
+  (or the longest decode prefix) in the corrective fence instead. Needs care:
+  the fence must stay within max_interp_chars and the §7 fencing contract.
