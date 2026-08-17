@@ -15,6 +15,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,38 @@ def test_start_lock_stale_clear_and_timeout(tmp_path):
     lock.unlink()
 
 
+# ------------------------------------------------------- run-dir attribution
+
+def test_confirm_run_dir_matches_by_recorded_root_only(tmp_path):
+    """The identity check is the run's recorded root — a decoy run for the
+    same flow with another root never matches, two claimants refuse, and a
+    timeout KEEPS the worktree (AbortKeepWorktree) instead of deleting a
+    tree a slow-starting driver may be about to use."""
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    decoy = runs / "fleet-decoy"
+    decoy.mkdir()
+    (decoy / "state.json").write_text(
+        json.dumps({"repo_root": str(tmp_path / "another-tree")}), encoding="utf-8"
+    )
+    with pytest.raises(lane.AbortKeepWorktree, match="KEPT"):
+        lane._confirm_run_dir(runs, set(), wt, timeout=1.0)
+    mine = runs / "fleet-mine"
+    mine.mkdir()
+    (mine / "state.json").write_text(json.dumps({"repo_root": str(wt)}), encoding="utf-8")
+    assert lane._confirm_run_dir(runs, set(), wt, timeout=5.0) == mine
+    # A pre-existing dir (in `before`) is never a candidate.
+    with pytest.raises(lane.AbortKeepWorktree, match="KEPT"):
+        lane._confirm_run_dir(runs, {mine.name}, wt, timeout=1.0)
+    clone = runs / "fleet-clone"
+    clone.mkdir()
+    (clone / "state.json").write_text(json.dumps({"repo_root": str(wt)}), encoding="utf-8")
+    with pytest.raises(lane.AbortKeepWorktree, match="claim"):
+        lane._confirm_run_dir(runs, set(), wt, timeout=5.0)
+
+
 # -------------------------------------------------------------- start (e2e)
 
 def _main_repo(tmp_path: Path) -> Path:
@@ -99,7 +132,7 @@ def test_start_end_to_end_records_the_lane(tmp_path, capsys):
     flow.write_text(json.dumps(FLOW), encoding="utf-8")
     rc = lane.main([
         "start", str(flow), "--main-repo", str(repo),
-        "--lockstep-exe", f"{PY} -m lockstep",
+        "--lockstep-exe", f'"{PY}" -m lockstep',  # quoted: spaced paths must survive
     ])
     out = capsys.readouterr()
     assert rc == 0, out.err
@@ -125,6 +158,46 @@ def test_start_end_to_end_records_the_lane(tmp_path, capsys):
     assert not worktree.exists()
     assert "lane/" not in subprocess.run(
         ["git", "-C", str(repo), "branch"], capture_output=True, text=True).stdout
+
+
+def test_two_concurrent_starts_attribute_their_own_runs(tmp_path):
+    """The work-order test: two simultaneous starts of the SAME flow produce
+    two lane records, each pointing at the run that recorded ITS worktree —
+    the start-lock serializes the launches and the recorded-root confirm
+    makes cross-wiring structurally impossible."""
+    repo = _main_repo(tmp_path)
+    flow = repo / "lane-smoke.tg.json"
+    flow.write_text(json.dumps(FLOW), encoding="utf-8")
+    lane_script = _here / "lane.py"
+
+    def spawn(branch: str) -> subprocess.Popen:
+        return subprocess.Popen(
+            [sys.executable, str(lane_script), "start", str(flow),
+             "--main-repo", str(repo), "--lockstep-exe", f'"{PY}" -m lockstep',
+             "--branch", branch],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    p1, p2 = spawn("lane/one"), spawn("lane/two")
+    out1, err1 = p1.communicate(timeout=300)
+    out2, err2 = p2.communicate(timeout=300)
+    assert p1.returncode == 0, err1
+    assert p2.returncode == 0, err2
+    r1 = json.loads(out1.strip().splitlines()[-1])
+    r2 = json.loads(out2.strip().splitlines()[-1])
+    assert r1["run_dir"] != r2["run_dir"]
+    assert r1["worktree"] != r2["worktree"]
+    for rec in (r1, r2):
+        state = json.loads(
+            (Path(rec["run_dir"]) / "state.json").read_text(encoding="utf-8")
+        )
+        assert os.path.normcase(state["repo_root"]) == os.path.normcase(rec["worktree"]), (
+            "a lane record must point at the run that recorded ITS worktree"
+        )
+    for rec in (r1, r2):
+        subprocess.run([PY, "-m", "lockstep", "wait", rec["run_dir"], "--timeout", "120"],
+                       capture_output=True)
+        assert lane.main(["abandon", rec["worktree"], "--main-repo", str(repo)]) == 0
 
 
 # ------------------------------------------------------------------- harvest

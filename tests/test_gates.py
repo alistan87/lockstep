@@ -618,3 +618,25 @@ def test_lock_held_stale_holder_passes_and_names_it(tmp_path, capsys):
     v = run_gate(lock_held, [str(db)], capsys)
     assert v["verdict"] == "pass"
     assert "STALE" in v["reason"]
+
+
+def test_lock_held_zero_byte_file_passes(tmp_path, capsys):
+    db = tmp_path / "empty.duckdb"
+    db.touch()
+    v = run_gate(lock_held, [str(db)], capsys)
+    assert v["verdict"] == "pass", "locking beyond EOF is legal; empty is not held"
+
+
+def test_lock_held_foreign_holder_blocks(tmp_path, capsys):
+    # Liveness of a remote pid is unknowable from here — failing open would
+    # pass a file a remote writer may hold. Mirrors who_holds's FOREIGN.
+    db = tmp_path / "data.duckdb"
+    db.write_text("x", encoding="utf-8")
+    (tmp_path / "data.duckdb.holder.json").write_text(
+        json.dumps({"pid": 1, "hostname": "elsewhere", "purpose": "remote-writer"}),
+        encoding="utf-8",
+    )
+    v = run_gate(lock_held, [str(db)], capsys)
+    assert v["verdict"] == "block"
+    assert v["findings"][0]["category"] == "holder-live"
+    assert "FOREIGN" in v["findings"][0]["evidence"]

@@ -11,6 +11,32 @@ from pathlib import Path
 SEVERITIES = ("blocker", "major", "minor", "nit")  # most to least severe
 
 
+def pid_alive(pid: int) -> bool:
+    """Mirrors lockstep.state._pid_alive (and contrib/who_holds.py) rather
+    than importing it: gates import ._common + stdlib only, never engine
+    privates. Inherits the same accepted weakness: a recycled pid reads as
+    alive."""
+    if sys.platform == "win32":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            still_active = ctypes.c_ulong()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(still_active))
+            kernel32.CloseHandle(handle)
+            return bool(ok) and still_active.value == 259  # STILL_ACTIVE
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def finding(
     severity: str,
     category: str,

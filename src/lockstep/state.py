@@ -692,7 +692,11 @@ def new_run_dir(runs_dir: Path, flow_name: str) -> Path:
 def find_attachable_run(runs_dir: Path, flow_hash: str, args: dict[str, str]) -> Path | None:
     """An identical `run` attaches to the existing run dir for the same
     (flow_hash, args) lineage; editing the flow file changes flow_hash and thus
-    starts a new lineage by design (SPEC §0.3 loop D)."""
+    starts a new lineage by design (SPEC §0.3 loop D). Returns the NEWEST
+    candidate only — and since 2026-08-16 the caller also compares the
+    candidate's recorded repo_root and falls through to a new lineage on a
+    mismatch (DEVIATIONS: the fleet guardrail), so "attachable" here means
+    "same lineage", not "will be attached"."""
     runs_dir = Path(runs_dir)
     if not runs_dir.exists():
         return None

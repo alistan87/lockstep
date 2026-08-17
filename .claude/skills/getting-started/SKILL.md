@@ -64,6 +64,12 @@ wonder whether something is broken:
   discovered skills) into headless spawns, and none of that is in the input
   hash — an invisible instruction channel that breaks caching, replay, and
   `explain`. Trimming flags you don't recognise is how it comes back.
+- **`git config gc.auto 0` in this repo, once per machine.** Lockstep records
+  workspace snapshots as git objects nothing points at; git's automatic
+  garbage collection can eventually prune them, which quietly breaks
+  replaying or diffing old runs. Per-clone config, so a new machine (or a
+  fresh clone) needs the line again — `contrib\lane.py` warns when it is
+  missing (docs/guides/FLEET-OPERATIONS.md).
 
 ## Step 3 — the paid check
 

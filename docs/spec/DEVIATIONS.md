@@ -682,3 +682,28 @@ file records implementation-level departures below that bar.
   rollback-heal-in-child now forbids - flows/starter/draft-then-review
   (refine-loop -> proposal-gate, both legally composable) carries the
   criterion''s purpose instead.
+
+- **2026-08-16 — the fleet guardrail: a run records its resume root, and two
+  §9.2 behaviors narrow around it** (concurrent-orchestration work order,
+  Batch 1; found unlogged by the post-build spec audit — this entry is the
+  correction). `RunState` gains `repo_root`, the resolved `--repo-root` the
+  run was created against: RECORDED, never hashed (M3 untouched — it rides
+  `PlannedWork.meta` and state.json only), additive with default `""` so
+  pre-field state loads and "empty = unknown, never a mismatch". Child
+  (`kind:"flow"`) runs record their parent's root. Two stated behaviors
+  deviate, both for the same reason — with one worktree per concurrent run,
+  the tree a run belongs to is no longer "the tree you are standing in":
+  (1) **`resume` with a mismatched root refuses, exit 7** (config-error
+  precedent, same as the flow-hash mismatch refusal), where §9.2's
+  warn-and-proceed text assumed external EDITS to the right tree, not the
+  WRONG TREE — the M7 fingerprint would be computed against, and heal
+  rollback applied to, a tree the run never ran in, i.e. someone else's
+  work. (2) **an identical `run` attaches only when the recorded root also
+  matches**; on a mismatch it prints a note and starts a new lineage exactly
+  as `--fresh` would, because `find_attachable_run` returns only the newest
+  candidate and a fleet's newest lineage often lives in a harvested, deleted
+  worktree — refusing (or attaching) would brick plain `lockstep run` from
+  the main checkout forever. Comparisons are resolve + normcase (Windows
+  case is not a different tree). Pinned by tests/test_fleet.py; surfaced in
+  `status`/`active`; an r7 amendment should fold the root into §9.2's
+  attach/resume text.

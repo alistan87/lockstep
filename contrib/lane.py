@@ -90,9 +90,14 @@ def _lockstep_argv(main_repo: Path, override: str | None) -> list[str]:
     the main venv's console script > this interpreter's `-m lockstep`."""
     if override:
         # posix=False: POSIX-mode shlex eats Windows backslashes. Non-POSIX
-        # mode keeps quote characters in the token, so strip them — a quoted
-        # spaced path survives both.
-        return [tok.strip('"') for tok in shlex.split(override, posix=False)]
+        # mode keeps quote characters in the token, so strip them (either
+        # kind) — a quoted spaced path survives both. An unbalanced quote is
+        # a user error, not a traceback.
+        try:
+            toks = shlex.split(override, posix=False)
+        except ValueError as e:
+            raise LaneError(f"--lockstep-exe is unparseable: {e}")
+        return [tok.strip('"').strip("'") for tok in toks]
     for candidate in (
         main_repo / ".venv" / "Scripts" / "lockstep.exe",  # Windows venv
         main_repo / ".venv" / "bin" / "lockstep",  # POSIX venv
@@ -124,12 +129,92 @@ def _run_dirs(runs_dir: Path) -> set[str]:
     return {d.name for d in runs_dir.iterdir() if (d / "state.json").exists()}
 
 
+def _confirm_run_dir(runs_dir: Path, before: set[str], worktree: Path,
+                     timeout: float) -> Path:
+    """Which new run dir is OURS? By the run's own recorded root — which is
+    unforgeable by construction: only our child was launched with
+    `--repo-root <worktree>`, and the driver records the resolved root in
+    state.json (Batch 1). A concurrent launch of the same flow, by another
+    lane or by a human outside lane.py, records a DIFFERENT root and simply
+    never matches — no name-prefix heuristics, no trust in the detach
+    parent's newest-match stdout.
+
+    Raises AbortKeepWorktree on timeout: an unidentified driver may still be
+    starting (AV cold-start makes that slow on this machine), and deleting
+    the worktree under it would have it running against a vanished root."""
+    want = os.path.normcase(str(worktree))
+    deadline = time.monotonic() + timeout
+    while True:
+        matches: list[Path] = []
+        for name in _run_dirs(runs_dir) - before:
+            d = runs_dir / name
+            try:
+                root = json.loads(
+                    (d / "state.json").read_text(encoding="utf-8")
+                ).get("repo_root") or ""
+            except (OSError, ValueError):
+                continue  # torn write mid-poll; the next pass reads it whole
+            if root and os.path.normcase(str(Path(root))) == want:
+                matches.append(d)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            # Only our child knows this worktree; two claimants means the
+            # runs dir is being manipulated. Touch nothing, say everything.
+            raise AbortKeepWorktree(
+                f"{len(matches)} run dirs claim worktree {worktree} "
+                f"({', '.join(sorted(m.name for m in matches))}) — refusing to "
+                f"guess; nothing was killed or removed"
+            )
+        if time.monotonic() >= deadline:
+            raise AbortKeepWorktree(
+                f"no run dir under {runs_dir} recorded root {worktree} within "
+                f"{timeout:.0f}s. The worktree was KEPT and nothing was killed — "
+                f"a slow-starting driver may still register; check the newest "
+                f"detached-*.log there and `lockstep active {runs_dir}`, then "
+                f"either write {LANE_RECORD} by hand or `lane.py abandon` the "
+                f"worktree"
+            )
+        time.sleep(0.5)
+
+
 class LaneError(Exception):
     """A refusal or failure whose message is the whole diagnosis."""
 
 
+class AbortKeepWorktree(LaneError):
+    """A start failure where the worktree (and possibly a live driver) must
+    be LEFT IN PLACE: either the driver could not be identified — deleting
+    the tree under a slow-starting driver would have it running against a
+    vanished root — or the launch succeeded and only the record failed."""
+
+
 class RecordMissing(Exception):
     """No .lockstep-lane.json — exit 2, distinct from a refusal (exit 1)."""
+
+
+def _write_retry(path: Path, text: str) -> None:
+    """Write with one retry on PermissionError — the AV quirk covers plain
+    file writes, not just git object writes."""
+    for attempt in (0, 1):
+        try:
+            path.write_text(text, encoding="utf-8")
+            return
+        except PermissionError:
+            if attempt == 1:
+                raise
+            time.sleep(1.0)
+
+
+def _unlink_retry(path: Path) -> None:
+    for attempt in (0, 1):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if attempt == 1:
+                raise
+            time.sleep(1.0)
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -251,50 +336,26 @@ def cmd_start(ns) -> int:
             elif line.startswith("driver pid:"):
                 printed_pid = int(line.split(":", 1)[1].strip())
 
-        # Confirm which run dir is OURS — by listing diff under the start-lock,
-        # never by trusting the parent's newest-match lookup alone.
-        prefix = f"{_slug(flow_name)}-"
-        candidate: Path | None = None
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            fresh = [n for n in _run_dirs(runs_dir) - before if n.startswith(prefix)]
-            if len(fresh) > 1:
-                raise LaneError(
-                    f"ambiguous launch: {len(fresh)} new run dirs appeared for "
-                    f"{flow_name!r} ({', '.join(sorted(fresh))}) — something else is "
-                    f"launching this flow outside lane.py; aborting"
-                )
-            if fresh:
-                candidate = runs_dir / fresh[0]
-                break
-            time.sleep(0.5)
-        if candidate is None:
-            raise LaneError(
-                f"the detached driver never registered a run dir under {runs_dir} "
-                f"within 15s — see the newest detached-*.log there"
-            )
-        if printed_run and Path(printed_run).name != candidate.name:
-            driver_pid = printed_pid
-            raise LaneError(
-                f"cross-wired lane: --detach printed {Path(printed_run).name} but the "
-                f"listing diff says {candidate.name} — aborting rather than filing a "
-                f"record that points at someone else's run"
-            )
+        # Confirm which run dir is OURS by its recorded root (see
+        # _confirm_run_dir) — the detach parent's printed run dir / driver
+        # pid are newest-match lookups that can point at ANOTHER launch under
+        # concurrency, so they are diagnostics, never identity.
+        candidate = _confirm_run_dir(runs_dir, before, worktree, ns.confirm_timeout)
         lock_file = candidate / "lock"
+        lock_pid = None
         if lock_file.exists():
             try:
                 lock_pid = json.loads(lock_file.read_text(encoding="utf-8")).get("pid")
             except (OSError, ValueError):
                 lock_pid = None
-            if printed_pid is not None and lock_pid is not None and lock_pid != printed_pid:
-                driver_pid = printed_pid
-                raise LaneError(
-                    f"cross-wired lane: run dir {candidate.name} is locked by pid "
-                    f"{lock_pid} but --detach printed driver pid {printed_pid} — aborting"
-                )
-            driver_pid = lock_pid or printed_pid
-        else:
-            driver_pid = printed_pid  # already finished — a fast flow is not an error
+        if printed_run and Path(printed_run).name != candidate.name:
+            print(
+                f"note: --detach printed {Path(printed_run).name}, but the run that "
+                f"recorded our worktree as its root is {candidate.name} — trusting "
+                f"the root (the printed line is a newest-match lookup)",
+                file=sys.stderr,
+            )
+        driver_pid = lock_pid or printed_pid  # no lock = already finished; not an error
 
         record = {
             "worktree": str(worktree),
@@ -306,23 +367,34 @@ def cmd_start(ns) -> int:
             "args": list(ns.arg or []),
             "started": _utcstamp(),
         }
-        (worktree / LANE_RECORD).write_text(
-            json.dumps(record, indent=2), encoding="utf-8"
-        )
+        try:
+            _write_retry(worktree / LANE_RECORD, json.dumps(record, indent=2))
+        except OSError as e:
+            # The launch SUCCEEDED; only the record failed. Killing the run
+            # over its paperwork would be absurd — keep everything, hand the
+            # operator the record's contents to write by hand.
+            raise AbortKeepWorktree(
+                f"the run is up (run dir {candidate}, driver pid {driver_pid}) but "
+                f"the lane record could not be written ({e}); worktree kept — write "
+                f"{LANE_RECORD} yourself from this, or `lane.py abandon`:\n"
+                f"{json.dumps(record)}"
+            )
         print(f"lane up. attention: pwsh -File contrib\\attention.ps1 -RunDir {candidate}",
               file=sys.stderr)
         print(f"         block:     {' '.join(exe)} wait {candidate}", file=sys.stderr)
         print(json.dumps(record))  # the one machine line, last on stdout
         return 0
-    except LaneError:
-        if driver_pid:
-            _kill_pid_tree(driver_pid)
-        if worktree_made:
+    except BaseException as e:
+        # Cleanup runs for ANY failure (a transient PermissionError must not
+        # skip it and orphan the launch), but never deletes a tree a live
+        # driver may be using: AbortKeepWorktree paths identified no killable
+        # driver of ours (or the run is healthy and only paperwork failed).
+        if worktree_made and not isinstance(e, AbortKeepWorktree):
             _git(main_repo, "worktree", "remove", "--force", str(worktree), retry=True)
             _git(main_repo, "branch", "-D", branch)
         raise
     finally:
-        lock.unlink(missing_ok=True)
+        _unlink_retry(lock)
 
 
 # ------------------------------------------------------------------- harvest
@@ -374,7 +446,7 @@ def cmd_harvest(ns) -> int:
         if ns.patch:
             patch_path = str(Path(ns.patch).resolve())
             diff = _git(worktree, "diff", "--cached")
-            Path(patch_path).write_text(diff.stdout, encoding="utf-8")
+            _write_retry(Path(patch_path), diff.stdout)
             _git(worktree, "reset", "-q")
         else:
             msg = f"lane harvest: {record.get('flow_name', '?')} ({Path(record['run_dir']).name})"
@@ -382,17 +454,29 @@ def cmd_harvest(ns) -> int:
             if cp.returncode != 0:
                 raise LaneError(f"commit failed: {cp.stderr.strip()}")
             commit_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    (worktree / LANE_RECORD).unlink(missing_ok=True)
 
-    dirty = _git(worktree, "status", "--porcelain").stdout.strip()
+    # Clean check BEFORE the record is touched, with the record's own
+    # untracked line filtered out — so a refusal leaves the lane fully
+    # intact (record included) for diagnosis and a later retry.
+    porcelain = _git(worktree, "status", "--porcelain").stdout.splitlines()
+    dirty = [ln for ln in porcelain if not ln.strip().endswith(LANE_RECORD)]
     if dirty and not ns.patch:
         raise LaneError(
-            f"worktree still dirty after commit — refusing to remove it:\n{dirty}"
+            "worktree still dirty after commit — refusing to remove it:\n"
+            + "\n".join(dirty)
         )
+    record_json = json.dumps(record, indent=2)
+    _unlink_retry(worktree / LANE_RECORD)
     cp = _git(main_repo, "worktree", "remove",
               *(["--force"] if ns.patch else []), str(worktree), retry=True)
     if cp.returncode != 0:
-        raise LaneError(f"git worktree remove failed: {cp.stderr.strip()}")
+        # The worktree survived; put its identity back so a re-harvest is
+        # still a harvest and abandon still knows the run dir.
+        _write_retry(worktree / LANE_RECORD, record_json)
+        raise LaneError(
+            f"git worktree remove failed (the lane record was restored): "
+            f"{cp.stderr.strip()}"
+        )
     print(json.dumps({
         "harvested": True, "branch": record["branch"], "commit": commit_sha,
         "patch": patch_path, "run_dir": record["run_dir"],
@@ -451,6 +535,9 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("--lockstep-exe", default=None,
                     help="override the driver command (tests; odd layouts)")
     ps.add_argument("--lock-timeout", type=float, default=120.0, help=argparse.SUPPRESS)
+    ps.add_argument("--confirm-timeout", type=float, default=60.0,
+                    help="how long to wait for the run dir to record our root "
+                         "(AV cold-starts are slow here; timeout KEEPS the worktree)")
     ps.set_defaults(fn=cmd_start)
 
     ph = sub.add_parser("harvest", help="commit the branch and remove the worktree")

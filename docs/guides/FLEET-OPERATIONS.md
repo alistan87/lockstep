@@ -48,11 +48,15 @@ a fresh worktree and the detached driver's cwd is wherever lane.py ran.
 
 It also owns the one subtle failure: `--detach` locates its run by newest
 (flow_hash, args) match, so two simultaneous same-flow launches could each
-print the other's run dir. `start` serializes launches with a start-lock
-under the runs dir, diffs the runs-dir listing before/after, and
-cross-checks the run's lock-holder pid against the printed driver pid — on
-any mismatch it aborts loudly, kills the driver, and removes the worktree
-rather than filing a record that points at someone else's run.
+print the other's run dir. `start` therefore identifies its run by the one
+thing no other launch can fake — **the run's own recorded root** (Batch 1):
+only our child was told `--repo-root <worktree>`, so the new run dir whose
+state.json records that root is ours, whatever the printed lines say (they
+are kept as diagnostics). A start-lock under the runs dir serializes
+launches besides. And an abort never guesses with a kill: if the run cannot
+be identified within the confirm window, the worktree — and any
+slow-starting driver — is **left in place and named**, because deleting a
+tree under a live driver would have it running against a vanished root.
 
 ## The engine guardrails under this (Batch 1)
 
@@ -92,11 +96,22 @@ exits 6 — by design, that IS the notification. The protocol:
 1. The lane-runner returns a **decision packet**: run dir + parked node,
    `approval-evidence.txt` verbatim through its impact/reversible lines,
    `question_card.py` output verbatim, `quiescent.py` exit 0 confirmed,
-   token spawns. (Exit 6 with `rejection.txt` present is the OTHER case: the
-   human already said no — quote their words, stop the lane.)
-2. The orchestrator relays it — evidence verbatim, never narration — and the
-   human answers in their own terminal: `lockstep resume <run_dir>` **from
-   the lane's worktree**.
+   token spawns. (The approval record's `error` distinguishes the cases:
+   "auto-rejected" = a decision is needed; "approval rejected" — or
+   `rejection.txt` present, which only the cockpit pane writes — = the human
+   already said no; quote their words, stop the lane.) If `quiescent.py` is
+   nonzero the lane-runner reports NOT-READY instead, and the orchestrator
+   clears it with a detached resume (below) before any handoff.
+2. The orchestrator relays the packet — evidence verbatim, never narration —
+   and the human answers through the **cockpit approval pane**
+   (`cockpit.ps1 -RunDir <run> -Approve`): evidence first, a/r, and the pane
+   passes the run's recorded root and the main repo's config to `resume`
+   itself. Working without the cockpit, the full command is
+   `<main>\.venv\Scripts\lockstep.exe resume <run_dir> --repo-root
+   <worktree> --config <main>\lockstep.toml` — a bare `lockstep resume`
+   typed in the worktree cannot work (no `.venv`, no `lockstep.toml` there,
+   both gitignored), and a bare resume from the main checkout refuses with
+   exit 7 (wrong root).
 3. `attention.ps1` runs per lane from launch, so the human hears about
    decisions even if every agent is wedged.
 4. Money is never quoted from memory or from `status` (which counts token
@@ -104,23 +119,32 @@ exits 6 — by design, that IS the notification. The protocol:
 
 ## Harvest: park, then walk it through (owner decision §6.2)
 
-Lane branches never merge automatically. When a lane is done, the
-orchestrator walks the domain expert through what was delivered — plain
-terms, grounded in the lane's evidence (`git -C <wt> diff main`, the run
-record, `node_diff` for scoped nodes), never a summary standing in for it —
-and merges only on the expert's approval. Then `lane.py harvest <worktree>`:
-refuses under a live driver, commits the branch (lane record excluded),
-removes the worktree only when clean. The run dir stays; `gc` owns run
-retention.
+Lane branches never merge automatically — and **the branch has no commit
+until harvest creates it** (the run's work sits uncommitted in the
+worktree), so the order is walkthrough → harvest → merge:
+
+1. When a lane is done, the orchestrator walks the domain expert through
+   what was delivered — plain terms, grounded in the lane's evidence
+   (`git -C <wt> status --porcelain` and `git -C <wt> diff HEAD` for the
+   uncommitted delivery, the run record, `node_diff` for scoped nodes),
+   never a summary standing in for it.
+2. On the expert's approval: `lane.py harvest <worktree>` — refuses under a
+   live driver, commits the branch (lane record excluded), removes the
+   worktree only when clean. The delivery is now the parked branch.
+3. Merge the parked branch. Review form: `git diff main...<branch>`
+   (three-dot, against the fork point — other lanes' already-merged work
+   must not appear as spurious reversals).
+
+The run dir stays; `gc` owns run retention.
 
 ## Recovery
 
 | what died | recovery |
 |---|---|
 | watcher agent | new agent, same lane record |
-| driver | `active` shows STALE → resume from the lane's worktree |
-| launch | lane.py already killed the driver and removed the worktree; re-run `start` |
-| provider limit | wait it out (envelope evidence), resume from the worktree |
+| driver | `active` shows STALE → `resume <run_dir> --repo-root <worktree> --config <main>\lockstep.toml` (main venv's binary; wrong root = exit 7, by design) |
+| launch | verify/launch failures remove the worktree (no driver existed); an unconfirmed launch KEEPS worktree and driver and says so — check `active` and the detached log, then hand-write the lane record or `abandon` |
+| provider limit | wait it out (envelope evidence), resume as above |
 | worktree gone, lineage wanted | `lockstep run <flow>` from the main checkout — the root mismatch falls through to a new lineage; `--seed <old_run>` warm-starts it |
 
 ## What the fleet layer refuses to build

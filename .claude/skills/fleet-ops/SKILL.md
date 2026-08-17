@@ -50,31 +50,55 @@ The lane-runner returns a decision packet; your job is RELAY, not judgment:
   **verbatim** — never narration in place of evidence, never a paraphrase of
   a rejection (`rejection.txt` is quoted, in the human's own words).
 - Hand over only with `contrib\quiescent.py` at exit 0 (the packet states
-  it; verify if stale).
-- The human answers in THEIR terminal (`lockstep resume <run_dir>` from the
-  lane's worktree). You never answer, and there is no channel by which you
-  could.
-- After the human's interactive resume settles the decision, re-message the
-  SAME lane-runner to continue `wait` — its context holds the lane.
+  it; verify if stale). A **not-ready report** (`reason: blockers`) is yours
+  to clear, not the lane-runner's: resume detached from the main repo —
+  `.venv\Scripts\lockstep.exe resume <run_dir> --repo-root <worktree>
+  --config lockstep.toml --detach` — then re-message the lane-runner to
+  re-check.
+- The human answers through the COCKPIT APPROVAL PANE
+  (`cockpit.ps1 -RunDir <run> -Approve` → `approve.ps1`): evidence first,
+  a/r prompt, and on `r` it writes `rejection.txt` — the pane reads the
+  run's recorded root from state.json and passes `--repo-root` plus the
+  main repo's `--config` itself. You never answer, and there is no channel
+  by which you could. Manual fallback (a human working without the
+  cockpit): the exact command is
+  `<main>\.venv\Scripts\lockstep.exe resume <run_dir> --repo-root
+  <worktree> --config <main>\lockstep.toml` — quote it in the relay; a bare
+  `lockstep resume` in the worktree cannot work (no `.venv`, no
+  `lockstep.toml` there), and a rejection this way leaves NO
+  `rejection.txt` (the lane-runner falls back to the recorded error).
+- After the human's answer settles, re-message the SAME lane-runner to
+  continue `wait` — its context holds the lane.
 
 ## Recovery
 
 | what died          | what to do                                                       |
 |--------------------|------------------------------------------------------------------|
 | lane-runner agent  | new agent on the SAME lane record; nothing was lost              |
-| driver             | `lockstep status`/`active` says STALE → resume **from the lane's worktree** (wrong root = exit 7 refusal, by design) |
-| launch (lane.py aborted) | it already killed the driver and removed the worktree; re-run `start` |
-| provider limit     | wait it out, then resume from the worktree (quote the envelope evidence) |
+| driver             | `lockstep status`/`active` says STALE → resume with the lane's root: `.venv\Scripts\lockstep.exe resume <run_dir> --repo-root <worktree> --config lockstep.toml` (wrong root = exit 7 refusal, by design) |
+| launch (lane.py aborted) | verify/launch failures remove the worktree (no driver existed); an unconfirmed launch KEEPS worktree and driver and says so — check `lockstep active` and the detached log, then hand-write the lane record or `abandon` |
+| provider limit     | wait it out, then resume as above (quote the envelope evidence)  |
 
 ## Harvest (owner decision §6.2: always park, then walk it through)
 
-When a lane reports done: run the **harvest walkthrough** with the domain
-expert — what was delivered, in plain terms, grounded in the lane's evidence
-(`git -C <worktree> diff main`, the run record, `node_diff` for a scoped
-node) and never in your summary of it. Park the branch. Merge only on the
-expert's explicit approval; then `python contrib\lane.py harvest <worktree>`
-(it refuses under a live driver, excludes the lane record, removes the
-worktree). `lane.py abandon` is the discard path and says what it deletes.
+Order matters — **the branch has no commit until harvest creates it** (the
+run's work sits uncommitted in the worktree), so merging before harvesting
+merges nothing:
+
+1. Lane reports done → run the **harvest walkthrough** with the domain
+   expert: what was delivered, in plain terms, grounded in the lane's
+   evidence — `git -C <worktree> status --porcelain` and
+   `git -C <worktree> diff HEAD` (the uncommitted delivery), the run
+   record, `node_diff` for a scoped node — never in your summary of it.
+2. Expert approves → `python contrib\lane.py harvest <worktree>` (refuses
+   under a live driver, COMMITS the branch with the lane record excluded,
+   removes the worktree). The branch now carries the delivery, parked.
+3. Merge the parked branch — the expert's call, made in step 2's
+   discussion. Review form: `git diff main...<branch>` (three-dot: against
+   the fork point, so other lanes' already-merged work does not appear as
+   spurious reversals).
+
+`lane.py abandon` is the discard path and says what it deletes.
 
 ## Never
 

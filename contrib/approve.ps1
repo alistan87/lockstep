@@ -176,6 +176,22 @@ Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
 $resumeArgs = @('resume', $RunDir)
+# Fleet: a lane run records the worktree it must resume against, and the
+# engine refuses a wrong-root resume (exit 7). Pass the recorded root
+# through, with the MAIN repo's config — the worktree has neither .venv nor
+# lockstep.toml (both gitignored), and resume's --config default would
+# otherwise silently swap the run onto built-in stanzas (a different
+# executor-config digest: done harness nodes re-bill, pi loses its guard
+# flags). For a main-checkout run this adds the same values the defaults
+# resolve to — a no-op by construction.
+try {
+  $state = Get-Content -LiteralPath (Join-Path $RunDir 'state.json') -Raw | ConvertFrom-Json
+  if ($state.repo_root) {
+    $resumeArgs += @('--repo-root', $state.repo_root)
+    $mainToml = Join-Path $repoRoot 'lockstep.toml'
+    if (Test-Path $mainToml) { $resumeArgs += @('--config', $mainToml) }
+  }
+} catch { }
 if ($Cockpit) { $resumeArgs += '--cockpit' }
 & $Lockstep @resumeArgs
 $rc = $LASTEXITCODE

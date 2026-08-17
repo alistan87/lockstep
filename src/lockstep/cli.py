@@ -620,10 +620,10 @@ def cmd_active(ns) -> int:
                 continue
         rows += 1
         print(f"{tag:<10} {d.name}   flow: {state.flow_name}")
-        if state.repo_root:
-            # Batch 1: which tree this run belongs to — a fleet's runs share
-            # this listing and differ only here.
-            print(f"  root: {state.repo_root}")
+        # Batch 1: which tree this run belongs to — a fleet's runs share this
+        # listing and differ only here. Unknown is printed, not omitted: a
+        # silently missing line reads as "same tree as mine".
+        print(f"  root: {state.repo_root or '(unknown — recorded by newer drivers only)'}")
         print(f"  {info.describe()}")
         print(f"  unfinished: {len(unfinished)} node(s)"
               + (f"; running: {', '.join(running)}" if running else ""))

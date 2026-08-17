@@ -8,6 +8,35 @@ status: draft
 
 # Work order: concurrent lockstep
 
+**BUILT, 2026-08-16.** Batches 1–5 shipped in order, each green, then a
+three-reviewer adversarial round (code, docs, spec-audit). What the build
+changed from this document:
+
+- **Batch 2's run-dir confirmation shipped STRONGER than specified.** The
+  listing-diff + lock-pid cross-check described in step 4 was defeatable
+  (both sides of the pid check come from newest-match lookups); the build
+  identifies the run by its **recorded repo_root** — unforgeable, since only
+  our child is told `--repo-root <worktree>` — and demotes `--detach`'s
+  printed lines to diagnostics. The start-lock stays. Abort semantics also
+  hardened: an unconfirmed launch KEEPS the worktree (a slow-starting driver
+  must not find its root deleted) and nothing is ever killed unless
+  identified as ours.
+- **Batch 1 required a DEVIATIONS.md entry the plan never ordered** (found
+  by the spec audit): the wrong-root resume refusal and the attach
+  fall-through are §9.2 narrowings and are now logged there.
+- **`lock_held` grew four honesty fixes from review:** the open is retried
+  once (the AV transient would otherwise read as a holder), an open-refusal
+  is its own category (`open-refused` — an ACL or read-only attribute is not
+  a lock), the range covers the whole file, and a FOREIGN holder file
+  blocks. `pid_alive` lives in `gates/_common` — a gate never imports an
+  engine private.
+- **The decision channel is the cockpit pane, not a bare resume:**
+  `approve.ps1` now passes the run's recorded root and the main repo's
+  config itself, `rejection.txt` remains the pane's artifact (the
+  lane-runner falls back to the approval record's error when a human
+  answered outside it), and the harvest order is walkthrough → harvest →
+  merge — the branch has no commit until harvest creates it.
+
 **Execute in order. Each batch is a commit; full pytest is green before the
 next one starts.** Design rationale lives in the conversation that produced
 this order and in `copilot-work-order-mimir-db-concurrency.md` (the work-repo

@@ -137,3 +137,17 @@ def test_status_and_active_print_recorded_root(tmp_path, git_repo, monkeypatch, 
     )
     assert main(["active", str(runs)]) == 0
     assert str(git_repo.resolve()) in capsys.readouterr().out
+
+
+def test_same_root_mechanism_unknown_and_normcase():
+    # The helper itself, on paths that need not exist — resolve() cannot
+    # canonicalize a nonexistent path's case, so normcase must (work order:
+    # "resolve() then os.path.normcase").
+    from lockstep.cli import _same_root
+
+    assert _same_root("", Path("C:/anything")), "unknown never mismatches"
+    if os.name == "nt":
+        assert _same_root(r"C:\NoSuch\Tree", Path(r"C:\nosuch\TREE"))
+        assert not _same_root(r"C:\NoSuch\Tree", Path(r"C:\nosuch\other"))
+    else:
+        assert not _same_root("/NoSuch/Tree", Path("/nosuch/tree"))
