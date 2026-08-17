@@ -22,4 +22,5 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [PROPOSAL-unattended-mode.md](PROPOSAL-unattended-mode.md) | `proposal` | draft | Proposal: unattended mode (deferred) |
 | [repo-hygiene-work-order.md](repo-hygiene-work-order.md) | `plan` | stable | Work order: `repo-hygiene` — audit, weekly maintenance, and consolidation flows for the work repo |
 | [copilot-work-order-mimir-db-concurrency.md](copilot-work-order-mimir-db-concurrency.md) | `plan` | draft | Work order (for Copilot, work repo): MIMIR DuckDB concurrency — audit and fix |
-| [concurrent-orchestration-work-order.md](concurrent-orchestration-work-order.md) | `plan` | draft | Work order: concurrent lockstep — guardrails, tooling, and the lane contract |
+| [concurrent-orchestration-work-order.md](concurrent-orchestration-work-order.md) | `plan` | stable | Work order: concurrent lockstep — guardrails, tooling, and the lane contract (BUILT 2026-08-16) |
+| [passdown-0.10.0-work-repo.md](passdown-0.10.0-work-repo.md) | `notes` | stable | Passdown: 0.9.0 → 0.10.0 (the fleet release) — work-repo integration |

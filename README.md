@@ -306,6 +306,26 @@ Read `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` if you are the session
 driving it, and `docs/guides/COCKPIT-FOR-DOMAIN-EXPERTS.md` — which is what the
 human was told, so it binds what you may say.
 
+## Running several at once (fleets, 0.10.0)
+
+The engine tolerates many drivers — per-run-dir locks — and deliberately
+arbitrates nothing between them, so the fleet layer does: **one worktree per
+writing run** (readonly flows share the main checkout), launched only through
+`contrib\lane.py start`, which owns the whole recipe (fresh worktree +
+branch, verify, the MAIN repo's config/runs-dir/binary, `--fresh --detach`)
+and identifies its run by the one thing no other launch can fake — the run's
+own recorded root. Every run records the resolved `--repo-root` it was
+created against: `resume` from any other tree refuses (exit 7, both paths
+named), and a plain `run` whose newest lineage lived in a since-deleted
+worktree falls through to a new lineage instead of bricking.
+`lockstep.gates.lock_held` fronts a held shared file with a named refusal;
+`contrib\who_holds.py` reports who claims it. The roles — cockpit / main
+conversation / **dispatcher** / lane-runner — are contracts in
+`docs/guides/FLEET-OPERATIONS.md`: delegation moves information, never
+authority (the human's approval channel is enforced by code), evidence
+passes every hop verbatim, and every tier above the run dir is disposable
+because the fleet is readable from disk.
+
 ## Tools are part of the stanza (pi, and cost on a metered plan)
 
 A harness's tool set is **argv**, which means it is configuration the driver
@@ -371,6 +391,12 @@ skipped when nothing did — and an auditable record. **Not reproducibility**:
 harness nodes are nondeterministic; re-running one legitimately yields
 different output and correctly invalidates its dependents. Shell nodes always
 re-run, deliberately. Map nodes resume per item.
+
+Since 0.10.0 resume also promises the **right tree**: a run records the
+resolved `--repo-root` it was created against, and resuming from any other
+tree is a refusal (exit 7) rather than a rollback of someone else's work —
+`status` prints the recorded root to go back to. Runs recorded before the
+field are never refused.
 
 Editing the flow file is a different act: it changes `flow_hash` and starts a
 new lineage, so `resume` refuses it and every completed node would re-run.
