@@ -45,6 +45,9 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
 .venv\Scripts\lockstep.exe explain <run_dir> --graph  # whole-graph staleness dry run vs the current tree; plans into a throwaway dir, zero spawns
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
+python contrib\lane.py start <flow>                # fleet lane: fresh worktree + branch, verify, detached run, lane record (docs/guides/FLEET-OPERATIONS.md)
+python contrib\lane.py harvest <worktree>          # commit the lane branch (record excluded), remove the worktree; refuses a live driver
+python contrib\who_holds.py <file>                 # LIVE/STALE/NONE over <file>.holder.json; reports, never decides (the deciding gate is lockstep.gates.lock_held)
 .venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
 .venv\Scripts\lockstep.exe run flows\demo\compose-smoke.tg.json  # zero-token composition smoke (kind:"flow" end to end); run after touching executors\flow.py or RunResources
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
@@ -173,6 +176,14 @@ a feature over adding a dependency. Full pytest after every change.
   nothing.
 - This machine's AV causes transient `PermissionError` on file replaces and
   git object writes — retry once before investigating.
+- **Concurrent runs (fleets):** every run records the resolved `--repo-root`
+  it was created against. `resume` from any other tree refuses (exit 7, both
+  paths named); `run`-attach with a root mismatch falls through to a new
+  lineage instead — after a harvested worktree the newest lineage's root no
+  longer exists, and plain `run` must keep working. One worktree per writing
+  run, launched via `contrib\lane.py`; `gc.auto` stays 0 in this repo
+  (snapshot trees are unreferenced loose objects). The model is
+  `docs/guides/FLEET-OPERATIONS.md`.
 - `runs/` holds prompts, diffs, and model output: sensitive, gitignored,
   never committed. `lockstep.toml` is local (gitignored); the committed
   template is `lockstep.toml.example`.
@@ -188,9 +199,11 @@ a feature over adding a dependency. Full pytest after every change.
   edits to its own `state.json`.
 
 Project skills: `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
-a run dir), `/getting-started` (first-run setup on a new machine). Subagents:
+a run dir), `/getting-started` (first-run setup on a new machine),
+`/fleet-ops` (orchestrate concurrent runs). Subagents:
 `spec-auditor` (read-only spec-vs-code audit), `run-diagnostician` (run-dir
-failure triage).
+failure triage), `lane-runner` (watch one fleet lane; decision packets, never
+answers).
 
 ## Driving for a non-programmer (the cockpit)
 
@@ -240,3 +253,7 @@ what you may say. Three rules that are enforced by code, not discretion:
 - **Never quote a cost from memory.** `contrib/plan_card.py` computes it from
   prior runs; that used to be the one number in the protocol with no artifact
   behind it.
+
+A fleet lane-runner's decision packet is subject to the same evidence rules —
+verbatim `approval-evidence.txt`, verbatim `rejection.txt`, `quiescent.py` 0
+before any handoff (`.claude/agents/lane-runner.md`).

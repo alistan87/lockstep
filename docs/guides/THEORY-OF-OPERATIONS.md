@@ -397,6 +397,20 @@ hostname. A **same-host dead pid is auto-cleared** on a plain resume, which make
 crash recovery mechanical rather than a judgment call. `--force-unlock` exists
 for the cross-host case and should be rare enough to be suspicious.
 
+**Multiple drivers.** The engine guarantees exactly two things about
+concurrent drivers: run-dir locking (one driver per run, attach under a live
+lock refuses with exit 8 having written nothing) and per-driver job
+containment (nothing outlives its own run). It deliberately guarantees
+nothing ACROSS runs — no cross-run exclusive tokens, no shared-resource
+serialization, no tree arbitration. Two writing runs on one working tree will
+corrupt each other's snapshots by design, which is why a fleet gives every
+writing run its own worktree; each run records the resolved root it was
+created against, a resume against any other tree is a refusal (exit 7), and
+a `run` whose newest lineage lives in a vanished worktree falls through to a
+new lineage instead of bricking. Everything else a fleet needs — worktree
+lifecycle, resource lanes, spawn ceilings, the decision relay — lives above
+the engine, in `docs/guides/FLEET-OPERATIONS.md`.
+
 ---
 
 ## 12. Observation

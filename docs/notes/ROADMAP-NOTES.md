@@ -255,3 +255,24 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   contract but raw stdout contains a longer near-object, embed the raw text
   (or the longest decode prefix) in the corrective fence instead. Needs care:
   the fence must stay within max_interp_chars and the §7 fencing contract.
+
+- **2026-08-16 (fleet build, concurrent-orchestration work order): three
+  seams recorded, none built.** (1) **Cross-run exclusive tokens** — r7
+  candidate. Tokens are per-driver (`RunResources`), so a fleet serializes
+  shared resources by lane assignment, with `gates/lock_held` as the named
+  failure and holder files as the diagnostic. An engine-level machine-wide
+  token namespace needs spec surface before code: where the registry lives,
+  what releases a token when its driver dies (the lockfile's dead-pid answer
+  does not transfer — a token may guard an external resource that outlives
+  the pid), and how `verify` sees cross-flow token collisions it cannot know
+  about. (2) **The runs root as config, not flag** — every fleet invocation
+  repeats `--runs-dir <main>\runs`; a `[driver] runs_dir` in lockstep.toml
+  would remove the repetition, but the flag-vs-config precedence and the
+  hash-neutrality of the choice (run dirs are excluded from hashing today)
+  need one deliberate decision, not a drive-by. (3) **`gc` and
+  `explain --graph` are ignorant of vanished worktrees** — a harvested
+  lane's runs record a `repo_root` that no longer exists. Batch 1 makes that
+  harmless for attach (fall-through) and loud for resume (exit 7), but `gc`
+  retention could weight such runs differently and `explain --graph` planned
+  against the CURRENT tree will report every node of a vanished-root run as
+  moved without saying why; both could simply say "root gone".
