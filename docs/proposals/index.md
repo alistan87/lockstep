@@ -21,3 +21,5 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [PROPOSAL-taskflow-parity-tiers.md](PROPOSAL-taskflow-parity-tiers.md) | `proposal` | stable | Proposal: parity tiers 1–3 — patterns, loop, composition, and declared staleness |
 | [PROPOSAL-unattended-mode.md](PROPOSAL-unattended-mode.md) | `proposal` | draft | Proposal: unattended mode (deferred) |
 | [repo-hygiene-work-order.md](repo-hygiene-work-order.md) | `plan` | stable | Work order: `repo-hygiene` — audit, weekly maintenance, and consolidation flows for the work repo |
+| [copilot-work-order-mimir-db-concurrency.md](copilot-work-order-mimir-db-concurrency.md) | `plan` | draft | Work order (for Copilot, work repo): MIMIR DuckDB concurrency — audit and fix |
+| [concurrent-orchestration-work-order.md](concurrent-orchestration-work-order.md) | `plan` | draft | Work order: concurrent lockstep — guardrails, tooling, and the lane contract |
