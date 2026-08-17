@@ -200,10 +200,11 @@ a feature over adding a dependency. Full pytest after every change.
 
 Project skills: `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
 a run dir), `/getting-started` (first-run setup on a new machine),
-`/fleet-ops` (orchestrate concurrent runs). Subagents:
+`/fleet-ops` (orchestrate concurrent runs, inline or delegated). Subagents:
 `spec-auditor` (read-only spec-vs-code audit), `run-diagnostician` (run-dir
-failure triage), `lane-runner` (watch one fleet lane; decision packets, never
-answers).
+failure triage), `fleet-dispatcher` (owns one whole fleet — launches lanes,
+watches, bubbles evidence up verbatim; FLEET-OPERATIONS "The roles"),
+`lane-runner` (watch one fleet lane; decision packets, never answers).
 
 ## Driving for a non-programmer (the cockpit)
 

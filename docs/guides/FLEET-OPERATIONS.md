@@ -15,6 +15,41 @@ decisions reach the human, and how work comes back. The approval rules of
 `COCKPIT-THEORY-OF-OPERATIONS.md` bind every lane exactly as they bind a
 single run.
 
+## The roles
+
+Four roles, named so a delegation chain stays legible. Each is a CONTRACT,
+not a harness feature — at home the main agent is Claude Code and the
+dispatcher is the `fleet-dispatcher` subagent; at work the main agent may be
+Copilot and the dispatcher whatever holds this contract there (a custom
+agent, a pi session, or the main agent itself running the fleet inline).
+The contract does not care who holds it.
+
+| role | held by | owns | never |
+|---|---|---|---|
+| **the cockpit** | the human | every decision (approvals in their own terminal, the merge) | — |
+| **the main conversation** | the agent the human talks to | domain language, the harvest walkthrough, relaying decisions down and evidence up | touches lanes directly while a dispatcher holds the fleet |
+| **the dispatcher** | one delegate per fleet | launching lanes (`lane.py`), the spawn ceiling, resource-lane assignment, watching, bubbling events up | answers approvals; merges; rewords evidence |
+| **lane-runner** | optional, one per lane | watching ONE run dir, decision packets | everything else (see `.claude/agents/lane-runner.md`) |
+
+"Dispatcher" is the railway sense: sequences departures, enforces
+single-occupancy blocks, never drives a train. Three properties make the
+delegation safe:
+
+- **Delegation moves information, never authority.** The human's channel —
+  the cockpit approval pane, exit 6, the merge decision — is enforced by
+  code, so no depth of agent stack can answer on their behalf.
+- **Evidence survives every hop verbatim.** Each relay adds routing (which
+  lane, what it means for the plan) and never rewording — the one rule that
+  degrades with depth is therefore stated at every tier.
+- **Every tier above the run dir is disposable.** Lane records + the
+  central runs dir + `lockstep active` ARE the fleet state; a dispatcher or
+  lane-runner killed by a session limit is respawned and inventories from
+  disk. Nothing above the driver holds state that matters.
+
+The lane-runner tier is an optimization, not a requirement: a dispatcher
+that cannot spawn agents polls its lanes directly (`wait --timeout`
+round-robin) — watching is cheap and the run dir is the truth either way.
+
 ## The shape
 
 - **One worktree per writing run.** Fresh, on its own branch, removed after

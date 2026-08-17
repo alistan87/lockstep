@@ -11,6 +11,24 @@ decision protocol. The model is `docs/guides/FLEET-OPERATIONS.md`; the
 approval rules are `docs/guides/COCKPIT-THEORY-OF-OPERATIONS.md` and bind a
 fleet exactly as they bind one run. This skill is the operating order.
 
+## Two ways to hold the fleet
+
+- **Inline** — you are the dispatcher: run this order yourself. Right for a
+  small fleet or when the conversation IS mostly about the fleet.
+- **Delegated** — spawn ONE `fleet-dispatcher` agent per fleet (lanes root +
+  runs dir as its identity) and stay conversational: it launches, watches,
+  and bubbles events up; you relay evidence to the human verbatim, run the
+  harvest walkthrough, and relay decisions back down. Rules that keep the
+  chain honest: never touch its lanes directly while it holds the fleet
+  (one owner per fleet — the same single-writer principle as the DB lanes);
+  a dead dispatcher is respawned, not mourned — its first duty is inventory
+  from disk (lane records + `active`), because no tier above the run dir
+  holds state that matters; and evidence passes through EVERY hop
+  byte-for-byte — each relay adds routing, never rewording.
+
+The rest of this order reads the same either way; "you" below is whoever
+holds the dispatcher role.
+
 ## Launch
 
 - **A run that writes gets a worktree; a readonly flow shares the main
