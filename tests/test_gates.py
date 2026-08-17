@@ -14,6 +14,7 @@ from lockstep.gates import (
     block_on_severity,
     citation_check,
     coverage_delta,
+    lock_held,
     numbers_check,
     pi_guard_smoke,
     pytest_verdict,
@@ -540,3 +541,80 @@ def test_scoped_checks_runs_only_on_changed_files(git_repo, capsys, monkeypatch)
     # the suffix filter takes it back out of scope -> skipped, pass
     v = run_gate(scoped_checks, ["--run", fail_cmd, "--suffix", ".md"], capsys)
     assert v["verdict"] == "pass"
+
+
+# ------------------------------------------------------------- lock_held
+
+
+def test_lock_held_free_file_passes(tmp_path, capsys):
+    db = tmp_path / "data.duckdb"
+    db.write_text("x", encoding="utf-8")
+    v = run_gate(lock_held, [str(db)], capsys)
+    assert v["verdict"] == "pass"
+    assert "data.duckdb" in v["reason"]
+
+
+def test_lock_held_missing_file_passes(tmp_path, capsys):
+    v = run_gate(lock_held, [str(tmp_path / "not-yet.duckdb")], capsys)
+    assert v["verdict"] == "pass"
+    assert "does not exist" in v["reason"]
+
+
+def test_lock_held_blocks_under_a_real_lock(tmp_path, capsys):
+    # The holder is a SUBPROCESS: POSIX advisory locks do not conflict within
+    # one process, so an in-process holder would vacuously pass off-Windows.
+    import subprocess
+    import sys as _sys
+
+    db = tmp_path / "data.duckdb"
+    db.write_text("x", encoding="utf-8")
+    holder_src = (
+        "import sys, os, time\n"
+        "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+        "if sys.platform == 'win32':\n"
+        "    import msvcrt\n"
+        "    os.lseek(fd, 0, os.SEEK_SET)\n"
+        "    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)\n"
+        "else:\n"
+        "    import fcntl\n"
+        "    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "print('locked', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    proc = subprocess.Popen(
+        [_sys.executable, "-c", holder_src, str(db)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert proc.stdout.readline().strip() == "locked"
+        v = run_gate(lock_held, [str(db)], capsys)
+        assert v["verdict"] == "block"
+        assert v["findings"][0]["category"] == "lock-held"
+        # No holder file was written: the verdict says so instead of inventing one.
+        assert "holder" in v["findings"][0]["evidence"]
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_lock_held_live_holder_file_blocks_without_os_lock(tmp_path, capsys):
+    db = tmp_path / "data.duckdb"
+    db.write_text("x", encoding="utf-8")
+    (tmp_path / "data.duckdb.holder.json").write_text(
+        json.dumps({"pid": os.getpid(), "purpose": "unit-test"}), encoding="utf-8"
+    )
+    v = run_gate(lock_held, [str(db)], capsys)
+    assert v["verdict"] == "block"
+    assert v["findings"][0]["category"] == "holder-live"
+    assert "unit-test" in v["findings"][0]["evidence"]
+
+
+def test_lock_held_stale_holder_passes_and_names_it(tmp_path, capsys):
+    db = tmp_path / "data.duckdb"
+    db.write_text("x", encoding="utf-8")
+    (tmp_path / "data.duckdb.holder.json").write_text(
+        json.dumps({"pid": 999999999, "purpose": "crashed-writer"}), encoding="utf-8"
+    )
+    v = run_gate(lock_held, [str(db)], capsys)
+    assert v["verdict"] == "pass"
+    assert "STALE" in v["reason"]
