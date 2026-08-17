@@ -124,7 +124,8 @@ Tested programs, not inline recipes — the cockpit precedent.
      a fresh worktree; AV `PermissionError` retry-once on worktree add and
      remove; **every path passed onward is absolute** (the detached driver
      re-runs the argv with `cwd=Path.cwd()` — cli.py:274,284 — so relative
-     paths resolve against wherever lane.py ran).
+     paths resolve against wherever lane.py ran). Also verifies the main
+     repo has `gc.auto` disabled (§6.3) and warns when it is not.
   2. Runs `verify <flow> --repo-root <wt> --config <main>\lockstep.toml` —
      `--repo-root` included because verify resolves personas and child flows
      against it (taskgraph.py:414,614).
@@ -210,8 +211,13 @@ import on this Windows machine, and full pytest must stay green here.
   resources; relay decision packets with evidence verbatim + the existing
   handover rules (`quiescent.py` 0 before any handoff); `doctor` once before
   a fleet, never per-agent; total in-flight spawn cap across the fleet, not
-  per run; recovery table (agent dead → new agent on same lane record;
-  driver dead → `status`/STALE → resume from the recorded root).
+  per run (default: eight, §6.1); recovery table (agent dead → new agent on
+  same lane record; driver dead → `status`/STALE → resume from the recorded
+  root); and the **harvest walkthrough** (§6.2): after a green run, present
+  what was delivered to the domain expert in plain terms grounded in the
+  lane's evidence (branch diff, run record), and park the branch until that
+  discussion approves the merge — the merge itself is the expert's decision,
+  never the orchestrator's.
 
 Both documents cite COCKPIT-THEORY-OF-OPERATIONS rather than restating it —
 one source for the approval rules.
@@ -235,15 +241,19 @@ one source for the approval rules.
   guarantees (per-run-dir locking, job containment per driver) and what it
   deliberately does not (cross-run exclusion).
 
-## 6. Open questions for the owner (answer before Batch 4)
+## 6. Owner decisions (asked as open questions; answered by the owner, 2026-08-16)
 
-1. **Fleet-wide spawn ceiling** — a number, not a principle: how many
-   concurrent harness spawns may a whole fleet hold (pi ~90s RTT, session
-   limits)? The skill needs the default.
-2. **Harvest policy** — do lane branches merge to main automatically after a
-   green run, or always park for human review? (Recommendation: always park;
-   merging is a decision, and we have a protocol for those.)
-3. **git auto-gc** — disable `gc.auto` in the main repo while fleets run
-   (recorded snapshot trees are unreferenced loose objects), or accept the
-   2-week prune-expire window? (Recommendation: disable; it is one config
-   line and removes a whole class of "replay broke months later".)
+1. **Fleet-wide spawn ceiling: eight.** At most 8 concurrent harness spawns
+   across the whole fleet — the skill's default ceiling. As lane count
+   grows, lower `--max-workers` per run so the fleet total stays under it.
+2. **Harvest policy: always park, then walk it through.** Lane branches are
+   never merged automatically. After a green run the orchestrator works
+   with the domain expert directly: explain what was delivered in plain
+   terms, grounded in the lane's evidence (the branch diff, the run
+   record) — never narration in place of evidence, the standing cockpit
+   rule — discuss, and merge only on the expert's approval. Batch 4's
+   skill carries this duty.
+3. **git auto-gc: disabled.** `git config gc.auto 0`, applied to the main
+   repo 2026-08-16. It is local (per-clone) config, so each machine sets it
+   once — FLEET-OPERATIONS and the getting-started path say so, and
+   `lane.py start` verifies it and warns when unset (Batch 2).
