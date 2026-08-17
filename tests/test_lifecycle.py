@@ -690,7 +690,9 @@ def test_fresh_state_stamps_driver_version():
 
     tg = TaskGraph.model_validate(
         {"name": "v", "nodes": [{"id": "a", "kind": "fake", "final": True, "spec": {}}]})
-    assert _fresh_state(tg, "h", {}, "git").driver_version == __version__
+    state = _fresh_state(tg, "h", {}, "git", Path("somewhere"))
+    assert state.driver_version == __version__
+    assert state.repo_root == "somewhere"  # Batch 1: the resume root, recorded
 
 
 def test_wait_reports_a_rejection_as_6_and_gate_block_wins(tmp_path, git_repo):

@@ -111,7 +111,9 @@ def test_a_launch_that_dies_reports_here_not_only_to_the_log(tmp_path, capsys):
         (run_dir / "lock").write_text(
             json.dumps({"pid": holder.pid, "hostname": __import__("socket").gethostname(),
                         "started": "2026-08-13T00:00:00Z"}), encoding="utf-8")
-        code = cli_main(["resume", str(run_dir), "--detach"])
+        # --repo-root matches the recorded root: this test is about the lock,
+        # and the Batch 1 wrong-root refusal would otherwise fire first.
+        code = cli_main(["resume", str(run_dir), "--detach", "--repo-root", str(tmp_path)])
         err = capsys.readouterr().err
         assert code != EXIT_OK
         assert "exited" in err

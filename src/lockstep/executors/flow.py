@@ -184,6 +184,9 @@ class FlowExecutor:
                        for n in child_tg.nodes},
                 started_at=utcnow(),
                 workspace_kind=root.store.state.workspace_kind if root else "null",
+                # Batch 1: a child runs against its parent's tree, and can be
+                # resumed directly — the guardrail should cover it too.
+                repo_root=str(root.repo_root) if root else "",
             )
             child_dir.mkdir(parents=True, exist_ok=True)
             write_state(child_dir, state)

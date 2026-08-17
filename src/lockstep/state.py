@@ -188,6 +188,13 @@ class RunState(BaseModel):
     # four work-repo lessons were folklore about an already-fixed driver).
     # A resume with a different installed version warns; empty on legacy runs.
     driver_version: str = ""
+    # Fleet guardrail (concurrent-orchestration work order, Batch 1): the
+    # resolved repo root this run was created against. RECORDED, never hashed —
+    # snapshots, restores and the M7 fingerprint are all relative to that tree,
+    # so a resume from anywhere else would roll back and snapshot the WRONG
+    # working tree. Empty on runs created before the field existed; readers
+    # treat empty as unknown, never as a mismatch.
+    repo_root: str = ""
 
 
 # --- events.jsonl --------------------------------------------------------------

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -116,7 +117,9 @@ def _parse_args_kv(pairs: list[str], tg: TaskGraph) -> dict[str, str]:
     return out
 
 
-def _fresh_state(tg: TaskGraph, flow_hash: str, args: dict[str, str], workspace_kind: str) -> RunState:
+def _fresh_state(
+    tg: TaskGraph, flow_hash: str, args: dict[str, str], workspace_kind: str, repo_root: Path
+) -> RunState:
     return RunState(
         flow_name=tg.name,
         flow_hash=flow_hash,
@@ -132,7 +135,21 @@ def _fresh_state(tg: TaskGraph, flow_hash: str, args: dict[str, str], workspace_
         # different installed version warns — a drifted mirror otherwise
         # generates folklore about already-fixed behaviour.
         driver_version=__version__,
+        # Batch 1 fleet guardrail: the tree this run belongs to (see RunState).
+        repo_root=str(repo_root),
     )
+
+
+def _same_root(recorded: str, invoked: Path) -> bool:
+    """Is the recorded run root the SAME tree as this invocation's --repo-root?
+
+    Empty (a run recorded before the field existed) is unknown, and unknown
+    never mismatches. Comparison is on resolved paths through
+    `os.path.normcase` — on Windows a case-different spelling of one tree must
+    not read as two trees."""
+    if not recorded:
+        return True
+    return os.path.normcase(str(Path(recorded))) == os.path.normcase(str(invoked))
 
 
 def _print_plan(tg: TaskGraph, config: LockstepConfig) -> None:
@@ -385,14 +402,30 @@ def cmd_run(ns) -> int:
     runs_dir = Path(ns.runs_dir)
     workspace_kind = "git" if (repo_root / ".git").exists() else "null"
     attach = None if ns.fresh else find_attachable_run(runs_dir, flow_hash, args)
+    state = None
+    if attach is not None:
+        state = load_state(attach)
+        if not _same_root(state.repo_root, repo_root):
+            # Batch 1 fleet guardrail, the ATTACH half: the newest lineage for
+            # this flow+args lives in another tree — after a fleet run, often a
+            # worktree that has since been harvested and deleted. A refusal
+            # here would brick plain `lockstep run <flow>` from the main
+            # checkout forever (find_attachable_run returns only the newest
+            # candidate); falling through is exactly what --fresh does, so say
+            # so and do that. Only `resume` refuses (it has one target).
+            print(
+                f"note: newest lineage {attach.name} was created against "
+                f"{state.repo_root} — this run is against {repo_root}; "
+                f"starting a new lineage (as --fresh would)"
+            )
+            attach, state = None, None
     if attach is not None:
         run_dir = attach
-        state = load_state(run_dir)
         resume = True
         print(f"attaching to existing run lineage: {run_dir}")
     else:
         run_dir = new_run_dir(runs_dir, tg.name)
-        state = _fresh_state(tg, flow_hash, args, workspace_kind)
+        state = _fresh_state(tg, flow_hash, args, workspace_kind, repo_root)
         resume = False
     try:
         acquire_lock(run_dir)
@@ -443,6 +476,20 @@ def cmd_resume(ns) -> int:
             f"{run_dir} carries no flow.tg.json copy; pass --flow <flow.tg.json>", EXIT_CONFIG
         )
     repo_root = Path(ns.repo_root).resolve()
+    if not _same_root(state.repo_root, repo_root):
+        # Batch 1 fleet guardrail, the RESUME half: snapshots, restores and the
+        # M7 fingerprint are all relative to the recorded tree. Resuming from
+        # another one would roll back and snapshot the WRONG working tree —
+        # someone else's work, in the fleet scenario. Hard refusal, both paths
+        # named; `run --fresh` is the escape hatch for a genuinely moved tree.
+        return _fail(
+            f"this run was created against {state.repo_root} but this resume "
+            f"was invoked with --repo-root {repo_root} — a wrong-tree resume "
+            f"would snapshot and roll back the wrong working tree; resume from "
+            f"the recorded root, or start a new lineage there with "
+            f"`lockstep run --fresh`",
+            EXIT_CONFIG,
+        )
     try:
         tg, flow_hash = _load(flow_path)
         config = load_config(Path(ns.config) if ns.config else repo_root / "lockstep.toml")
@@ -573,6 +620,10 @@ def cmd_active(ns) -> int:
                 continue
         rows += 1
         print(f"{tag:<10} {d.name}   flow: {state.flow_name}")
+        if state.repo_root:
+            # Batch 1: which tree this run belongs to — a fleet's runs share
+            # this listing and differ only here.
+            print(f"  root: {state.repo_root}")
         print(f"  {info.describe()}")
         print(f"  unfinished: {len(unfinished)} node(s)"
               + (f"; running: {', '.join(running)}" if running else ""))
@@ -739,6 +790,10 @@ def cmd_status(ns) -> int:
     if state.driver_version:
         drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
         print(f"driver: {state.driver_version}{drift}")
+    # Batch 1: WHERE a resume must happen — in a fleet, runs from several
+    # worktrees share one runs dir, and this is what tells them apart. A
+    # pre-field run prints as unknown, never as a mismatch.
+    print(f"repo root: {state.repo_root or '(unknown — recorded by newer drivers only)'}")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
     seeded = sorted(n for n, r in state.nodes.items() if r.seeded_from)
