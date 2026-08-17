@@ -17,10 +17,14 @@ and removes the worktree. `abandon` is the explicit destructive sibling.
 Why `start` does not trust `--detach`'s own output: the detach parent locates
 its run by NEWEST (flow_hash, args) match in the shared runs dir, so two lanes
 starting the same flow near-simultaneously could each print the other's run
-dir. `start` therefore holds a start-lock (a lockfile under the main runs dir)
-across launch+confirm, and cross-checks the new run dir's lock holder against
-the printed driver pid. Mismatch = abort loudly, kill the driver, remove the
-worktree.
+dir. `start` therefore identifies its run by the one thing no other launch can
+fake — the run's own recorded repo_root (only our child was told this
+worktree) — with a start-lock (a lockfile under the main runs dir) serializing
+launches besides; the printed run dir and driver pid are diagnostics only.
+And once the launch subprocess has returned 0 a driver EXISTS, so from that
+point every failure keeps the worktree and kills nothing: deleting a tree
+under a slow-starting driver would have it running against a vanished root,
+and no pid in reach is provably ours to kill.
 
 Known gotchas this file owns so agents don't:
   - gitignored `.venv` / `lockstep.toml` / `runs/` do not exist in a fresh
@@ -149,12 +153,11 @@ def _confirm_run_dir(runs_dir: Path, before: set[str], worktree: Path,
         for name in _run_dirs(runs_dir) - before:
             d = runs_dir / name
             try:
-                root = json.loads(
-                    (d / "state.json").read_text(encoding="utf-8")
-                ).get("repo_root") or ""
+                st = json.loads((d / "state.json").read_text(encoding="utf-8"))
+                root = st.get("repo_root") if isinstance(st, dict) else ""
             except (OSError, ValueError):
                 continue  # torn write mid-poll; the next pass reads it whole
-            if root and os.path.normcase(str(Path(root))) == want:
+            if isinstance(root, str) and root and os.path.normcase(str(Path(root))) == want:
                 matches.append(d)
         if len(matches) == 1:
             return matches[0]
@@ -299,6 +302,10 @@ def cmd_start(ns) -> int:
     lock = _acquire_start_lock(runs_dir, ns.lock_timeout)
     driver_pid: int | None = None
     worktree_made = False
+    # True the moment the launch subprocess returns 0: a detached driver
+    # exists from then on (it survives Ctrl+C to us — DETACHED_PROCESS), so
+    # EVERY later failure, expected or not, must keep the worktree.
+    launched = False
     try:
         before = _run_dirs(runs_dir)
         cp = _git(main_repo, "worktree", "add", "-b", branch, str(worktree), retry=True)
@@ -328,13 +335,17 @@ def cmd_start(ns) -> int:
                 f"detached launch failed (exit {cp.returncode}):\n"
                 f"{cp.stdout.strip()}\n{cp.stderr.strip()}"
             )
+        launched = True
         printed_run = printed_pid = None
         for line in cp.stdout.splitlines():
             line = line.strip()
             if line.startswith("run dir:"):
                 printed_run = line.split(":", 1)[1].strip()
             elif line.startswith("driver pid:"):
-                printed_pid = int(line.split(":", 1)[1].strip())
+                try:
+                    printed_pid = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    printed_pid = None  # diagnostics only; never worth an abort
 
         # Confirm which run dir is OURS by its recorded root (see
         # _confirm_run_dir) — the detach parent's printed run dir / driver
@@ -355,7 +366,10 @@ def cmd_start(ns) -> int:
                 f"the root (the printed line is a newest-match lookup)",
                 file=sys.stderr,
             )
-        driver_pid = lock_pid or printed_pid  # no lock = already finished; not an error
+        # The lock holder is the ONLY pid the record may carry: the printed
+        # pid is a newest-match diagnostic that can name another lane's
+        # driver. No lock = the run already finished; record no pid at all.
+        driver_pid = lock_pid
 
         record = {
             "worktree": str(worktree),
@@ -387,11 +401,22 @@ def cmd_start(ns) -> int:
     except BaseException as e:
         # Cleanup runs for ANY failure (a transient PermissionError must not
         # skip it and orphan the launch), but never deletes a tree a live
-        # driver may be using: AbortKeepWorktree paths identified no killable
-        # driver of ours (or the run is healthy and only paperwork failed).
-        if worktree_made and not isinstance(e, AbortKeepWorktree):
+        # driver may be using. Pre-launch failures have no driver by
+        # construction (a detach parent that exits nonzero saw its child die);
+        # post-launch (`launched`), a driver exists and even an unexpected
+        # exception — a Ctrl+C in the confirm window, a bug of ours — must
+        # keep the worktree, because the driver would otherwise run against a
+        # vanished root and no pid in reach is provably ours to kill.
+        if worktree_made and not launched and not isinstance(e, AbortKeepWorktree):
             _git(main_repo, "worktree", "remove", "--force", str(worktree), retry=True)
             _git(main_repo, "branch", "-D", branch)
+        elif launched and not isinstance(e, (AbortKeepWorktree, LaneError)):
+            print(
+                f"lane: aborted after launch ({type(e).__name__}) — worktree "
+                f"{worktree} and its driver were KEPT; check `lockstep active "
+                f"{runs_dir}`, then hand-write {LANE_RECORD} or `lane.py abandon`",
+                file=sys.stderr,
+            )
         raise
     finally:
         _unlink_retry(lock)
@@ -459,7 +484,10 @@ def cmd_harvest(ns) -> int:
     # untracked line filtered out — so a refusal leaves the lane fully
     # intact (record included) for diagnosis and a later retry.
     porcelain = _git(worktree, "status", "--porcelain").stdout.splitlines()
-    dirty = [ln for ln in porcelain if not ln.strip().endswith(LANE_RECORD)]
+    # Filter exactly the root-level record (porcelain is `XY <path>`, path
+    # possibly quoted) — `sub/.lockstep-lane.json` or a lookalike name is
+    # somebody's file and stays in the dirty check.
+    dirty = [ln for ln in porcelain if ln[3:].strip().strip('"') != LANE_RECORD]
     if dirty and not ns.patch:
         raise LaneError(
             "worktree still dirty after commit — refusing to remove it:\n"

@@ -160,6 +160,37 @@ def test_start_end_to_end_records_the_lane(tmp_path, capsys):
         ["git", "-C", str(repo), "branch"], capture_output=True, text=True).stdout
 
 
+def test_post_launch_failure_keeps_worktree_and_driver(tmp_path, capsys, monkeypatch):
+    """Once the launch subprocess has returned 0 a detached driver EXISTS —
+    an unexpected exception after that (a Ctrl+C in the confirm window, a
+    bug of ours) must keep the worktree rather than deleting the tree the
+    driver is running against, and must say so."""
+    repo = _main_repo(tmp_path)
+    flow = repo / "lane-smoke.tg.json"
+    flow.write_text(json.dumps(FLOW), encoding="utf-8")
+
+    def boom(*a, **k):
+        raise RuntimeError("synthetic post-launch failure")
+
+    monkeypatch.setattr(lane, "_confirm_run_dir", boom)
+    with pytest.raises(RuntimeError, match="synthetic"):
+        lane.main([
+            "start", str(flow), "--main-repo", str(repo),
+            "--lockstep-exe", f'"{PY}" -m lockstep',
+        ])
+    err = capsys.readouterr().err
+    assert "KEPT" in err
+    lanes_root = tmp_path / "mainrepo-lanes"
+    worktrees = [p for p in lanes_root.rglob(".git") if p.is_file()]
+    assert worktrees, "the worktree must survive a post-launch failure"
+    worktree = worktrees[0].parent
+    # Settle the driver, then clean up (abandon works without a record).
+    run_dir = next((repo / "runs").glob("lane-smoke-*"))
+    subprocess.run([PY, "-m", "lockstep", "wait", str(run_dir), "--timeout", "120"],
+                   capture_output=True)
+    assert lane.main(["abandon", str(worktree), "--main-repo", str(repo)]) == 0
+
+
 def test_two_concurrent_starts_attribute_their_own_runs(tmp_path):
     """The work-order test: two simultaneous starts of the SAME flow produce
     two lane records, each pointing at the run that recorded ITS worktree —

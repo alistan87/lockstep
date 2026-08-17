@@ -27,8 +27,9 @@ changed from this document:
 - **`lock_held` grew four honesty fixes from review:** the open is retried
   once (the AV transient would otherwise read as a holder), an open-refusal
   is its own category (`open-refused` — an ACL or read-only attribute is not
-  a lock), the range covers the whole file, and a FOREIGN holder file
-  blocks. `pid_alive` lives in `gates/_common` — a gate never imports an
+  a lock), the range is whole-file on POSIX and a fixed large range on
+  Windows (the gate's docstring states the blind spot), and a FOREIGN holder
+  file blocks. `pid_alive` lives in `gates/_common` — a gate never imports an
   engine private.
 - **The decision channel is the cockpit pane, not a bare resume:**
   `approve.ps1` now passes the run's recorded root and the main repo's
