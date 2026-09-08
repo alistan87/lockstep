@@ -178,6 +178,11 @@ a feature over adding a dependency. Full pytest after every change.
   nothing.
 - This machine's AV causes transient `PermissionError` on file replaces and
   git object writes — retry once before investigating.
+- The claude-code stanza needs `--permission-mode acceptEdits`: a headless
+  `claude -p` spawn auto-denies its own tool permission prompts, so a writing
+  node drafts and then cannot save (release-cut changelog, live 2026-09-08).
+  Bash stays denied; `bypassPermissions` is a deliberate escalation, never a
+  default. `lockstep.toml` is gitignored — the example won't update it for you.
 - **Concurrent runs (fleets):** every run records the resolved `--repo-root`
   it was created against. `resume` from any other tree refuses (exit 7, both
   paths named); `run`-attach with a root mismatch falls through to a new

@@ -39,7 +39,8 @@ lockstep explain runs/<old> --graph              # dry run of the above: what wo
 
 **Waiting on a detached run: use `wait`, never a sleep-loop or a `tail -F |
 grep` incantation.** It blocks on the lock and then exits with the run's own
-meaning (0/2/3/6, 4 = stopped-resumable, 1 = your `--timeout` elapsed), so the
+meaning (0/2/3/6, 4 = stopped-resumable, 7 = a refused drive's recorded
+outcome, 1 = your `--timeout` elapsed), so the
 exit-code table below applies unchanged to the wait. Give it a `--timeout` when
 you have anything else to do; a bare `wait` on a flow with an approval in it
 blocks until the human acts.
@@ -74,10 +75,10 @@ dead: the same rule `resume` applies before it clears anything.
 | 0 | success | read the final node's result; done |
 | 2 | gate BLOCK | read the gate's verdict + findings in the run dir; fix or decide; `resume` |
 | 3 | node failed after retries | diagnose the node's phase dir (below); fix; `resume` |
-| 4 | budget/timeout tripped | decide whether to raise budget (edits flow ⇒ new lineage!) or `resume` within it |
+| 4 | budget/timeout tripped | `resume --max-agent-spawns N` raises the cap for that drive only (journaled; no flow edit, no new lineage) — or `resume` within the ceiling |
 | 5 | verification error | fix the flow per the named codes; re-verify |
 | 6 | approval rejected | HAND TO HUMAN (see below) |
-| 7 | executor/config error | run `lockstep doctor`; check `lockstep.toml`; not a flow bug |
+| 7 | executor/config error, or a refused drive | run `lockstep doctor`; check `lockstep.toml`; not a flow bug. A post-lock refusal (dirty scope, heal precondition) persists a terminal record: `status` prints the refusal verbatim, `wait` exits 7 even with every node pending — do NOT plain-resume a dirty-scope refusal (resume skips that preflight); commit or stash first |
 | 8 | run-dir lock held | another process owns the run; do not force-unlock without diagnosing |
 
 **Composed runs (`kind: "flow"` nodes) fold the child's meaning into these

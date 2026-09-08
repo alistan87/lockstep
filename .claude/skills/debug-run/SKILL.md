@@ -12,8 +12,18 @@ heal rounds, gate verdicts, token spawns.
 
 `0` ok · `2` gate BLOCK (read `verdicts` in status / `phases/<gate>/result.json`)
 · `3` node failed after retries · `4` budget/wall-clock trip (state persisted,
-resumable) · `5` static verification · `6` approval rejected (incl. non-TTY
-auto-reject) · `7` executor/config error or run-time refusal · `8` lock held.
+resumable; `resume --max-agent-spawns N` raises the cap for that drive only)
+· `5` static verification · `6` approval rejected — the error text tells a
+human's "reject" from `auto-rejected` (nobody was there; an interactive resume
+asks for real) · `7` executor/config error or run-time refusal · `8` lock held.
+
+**A run with every node `pending` and a `refused:` line in `status` was
+refused after taking the lock** (0.11.0): the terminal record carries the
+verbatim refusal, `wait` exits 7 (never 4), `active` tags it REFUSED. Do NOT
+plain-resume a dirty-scope refusal — resume skips that preflight by design,
+and a hash-missed writer would legally overwrite the operator's edits; commit
+or stash first. On pre-0.11.0 drivers the same shape misreports as exit 4:
+read the detached log before trusting it.
 
 ## Where the evidence lives: `<run_dir>/phases/<node>/`
 

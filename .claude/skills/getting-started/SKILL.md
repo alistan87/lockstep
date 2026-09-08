@@ -136,6 +136,13 @@ at the terminal either way, and the page says so.
   auto-reject the cockpit relies on), `8` is a held lock.
 - **A file operation fails intermittently** → this is a known machine quirk on
   Windows with AV in the path. Retry once before investigating.
+- **A claude-code harness node "succeeds" at thinking but its output file
+  never appears** → the stanza lacks a `--permission-mode`: a headless
+  `claude -p` spawn auto-denies its own tool permission prompts, so a writing
+  node drafts its work and is denied the Write that saves it (observed live
+  on release-cut's changelog node). `lockstep.toml.example` carries
+  `--permission-mode acceptEdits` — make sure your local `lockstep.toml`
+  does too; it is gitignored, so the example will not update it for you.
 - **You cannot tell whether it is broken or just slow** → the ACTIVITY pane's
   heartbeat means blank never means dead. If the heartbeat is moving, it is
   working.

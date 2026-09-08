@@ -109,7 +109,10 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   to a JSON array; `concurrency: 1` guarantees array-order sequential runs;
   items resume per-item.
 - **Approval**: no `kind`, no `spec` — core-handled TTY prompt; auto-rejects
-  (exit 6) on non-TTY stdin; never resume-skipped.
+  (exit 6) on non-TTY stdin; never resume-skipped. The auto-reject IS the
+  detached idiom, not a failure of it: surfaces word it "resume from a
+  terminal to answer", and an interactive resume asks once, for real — never
+  split a flow in two to avoid it.
 - **Readonly**: `spec.readonly: true` lets harness nodes fan out in parallel
   (drops the `tree` exclusion) but the executor stanza MUST declare
   `readonly_argv` or verification fails (`readonly-unenforced`) — §6.11 wants
@@ -226,7 +229,19 @@ fingerprint or a summary if the payload churns.
 invisible. pathlib globs (`**` crosses dirs — NOT writes' fnmatch);
 `{args.NAME}` only; hashed at every plan incl. resume revalidation
 (`lint-broad-reads` past 200 files; timing in the journal). Absent/empty =
-no-op. See FLOW-AUTHORING "Declared reads".
+no-op. **`reads` is an input-hash declaration ONLY — the harness never sees
+it**; a prompt saying "read the files in spec.reads" names a list the model
+cannot see. `"reads_manifest": "paths"` (0.11.0) appends the resolved sorted
+list to the prompt (hence the hash; zero matches say so); requires `reads` or
+`spec-invalid`. See FLOW-AUTHORING "Declared reads".
+
+**Convergent review** (0.11.0): for multi-round review flows, never gate two+
+raw reviewers on their own severity (`lint-unadjudicated-reviews`) — reviewers
+→ one adjudicator (`personas/adjudicator.md`) → `lockstep.gates.ledger_check`
+(cross-round memory in a repo file the model never writes; heal it with
+`"rollback": false` or the rollback erases the ledger,
+`lint-ledger-rollback`). Template: `flows/factory/adjudicated-review.tg.json`;
+FLOW-AUTHORING "Convergent review".
 
 ## Retry
 
