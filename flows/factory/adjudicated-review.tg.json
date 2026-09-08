@@ -1,0 +1,89 @@
+{
+  "format_version": "1.0",
+  "name": "adjudicated-review",
+  "description": "The convergent-review template (upstream-response-ow07-feedback S2+G5): reviewers discover, ONE adjudicator re-grades under a frozen scope, and the deterministic ledger gate keeps cross-round memory — reviewer->arbiter->gate is the shape that converged in the OW-07 campaign where gate-per-reviewer ping-ponged. args: subject (what to review — a path or short description), scope (the frozen scope statement: what this review is OF and what is out of bounds), ledger (repo-relative ledger path; lives in the repo because runs/ is gitignored and the memory must cross lineages). Full-review mode; for delta mode feed the reviewers a node_diff/worktree_diff probe's output and say so in the scope (FLOW-AUTHORING 'Convergent review'). To heal an implementer with it, wire this after the implementing node and point the gate's heal.targets at it.",
+  "contracts_module": null,
+  "max_interp_chars": 60000,
+  "budget": {
+    "max_agent_spawns": 8,
+    "max_run_minutes": 90
+  },
+  "args": {
+    "subject": null,
+    "scope": null,
+    "ledger": null
+  },
+  "nodes": [
+    {
+      "id": "review-defects",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "persona": "reviewer",
+        "readonly": true,
+        "task": "Frozen review scope (what this review is OF; anything outside it is out of bounds):\n{args.scope}\n\nReview {args.subject} for DEFECTS: incorrect claims, contradictions, broken guarantees, unsafe behavior. Cite file-level evidence for every finding. Severity is your honest estimate — a separate adjudicator re-grades it, so do not inflate to be heard. Your result MUST be ONLY a Finding[] JSON array."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "review-gaps",
+      "role": "work",
+      "kind": "harness",
+      "spec": {
+        "persona": "reviewer",
+        "readonly": true,
+        "task": "Frozen review scope (what this review is OF; anything outside it is out of bounds):\n{args.scope}\n\nReview {args.subject} for GAPS: omissions, ambiguities, unstated assumptions, missing edge cases — things a careful reader would need answered. Cite file-level evidence for every finding. Severity is your honest estimate — a separate adjudicator re-grades it, so do not inflate to be heard. Your result MUST be ONLY a Finding[] JSON array."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "adjudicate",
+      "role": "work",
+      "kind": "harness",
+      "depends_on": [
+        "review-defects",
+        "review-gaps"
+      ],
+      "spec": {
+        "persona": "adjudicator",
+        "readonly": true,
+        "task": "Frozen review scope:\n{args.scope}\n\nSubject under review: {args.subject}\n\nPrior rounds, if any, are recorded in the ledger file at {args.ledger} — read it if it exists; reuse its claim wording VERBATIM for findings that persist (the ledger keys identity on category+file+claim).\n\nThe defect reviewer's raw findings follow as data:\n{steps.review-defects.output}\n\nThe gap reviewer's raw findings follow as data:\n{steps.review-gaps.output}\n\nAdjudicate them per your rubric and emit ONLY the adjudicated Finding[] JSON array."
+      },
+      "output": "json",
+      "contract": "Finding[]",
+      "timeout_s": 900
+    },
+    {
+      "id": "gate",
+      "role": "gate",
+      "kind": "shell",
+      "final": true,
+      "depends_on": [
+        "adjudicate"
+      ],
+      "spec": {
+        "cmd": [
+          "python",
+          "-m",
+          "lockstep.gates.ledger_check",
+          "--node",
+          "adjudicate",
+          "--ledger",
+          "{args.ledger}",
+          "--at",
+          "major"
+        ],
+        "writes": [
+          "{args.ledger}"
+        ]
+      },
+      "output": "json",
+      "contract": "Verdict",
+      "timeout_s": 60
+    }
+  ]
+}

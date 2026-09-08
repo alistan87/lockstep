@@ -150,6 +150,7 @@ reading as clean.
 | `lint-live-diff-per-phase` | more than one node captures the live tree (`worktree_diff`), or even ONE does so inside a healing gate's loop body | shell nodes re-run on resume, so phase 1's capture re-runs against phase 2's tree and a passed review re-bills contaminated; a loop body re-runs every round, so its capture is wrong from round 2 even alone; use `node_diff --node` (consumer report 2026-08-13; parity 2.1 finding 13) |
 | `lint-on-exhausted-pass` | a gate declares `heal.on_exhausted: "pass"` | it converts a blocking gate into a passing one after N failed repairs — legal for a refinement loop, but every gate that can wave work through gets named so a flow review sees the full list (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) |
 | `lint-broad-reads` *(repo)* | a node's `spec.reads` matches more than 200 files | every plan hashes the declared set — including the resume revalidation of every done node, the 13→32-minute creep shape (lesson 20); narrow the globs or watch the journal's `reads-hash` timing lines grow |
+| `lint-unadjudicated-reviews` | two or more `Finding[]`-producing nodes each gated directly by its own `block_on_severity --node` | self-graded majors are all terminal and the review re-audits without converging (four consecutive OW-07 blocks); insert ONE adjudication node between discovery and a single gate — see "Convergent review" |
 | `lint-tools-drops-result-channel` *(config)* | a stanza attaches an `--extension` but its `--tools` list omits `submit_result` | the allowlist covers extension tools, so the guard's structured-output channel silently disappears and the envelope stops being enforced (consumer report 2026-08-13) |
 | `lint-persona-not-readonly` *(repo)* | a node names a persona whose frontmatter declares `readonly: true` but sets neither `spec.readonly` nor `spec.writes` | `spec.persona` and `spec.readonly` are independent fields, so "you fix nothing" personas silently keep full write tools and the `tree` token; `readonly: true` in the persona file is the self-documenting signal (consumer report 2026-08-14) |
 
@@ -530,6 +531,48 @@ tree, never the round it evidences. `flows/starter/refine-loop.tg.json` is
 the worked example: `node_diff --node draft` per round, deterministic
 severity gate, and a final node that prints the gate's reason so an exhausted
 acceptance is the flow's last words rather than a quiet exit 0.
+
+## Convergent review (reviewer → adjudicator → ledger gate)
+
+The non-converging shape, observed live over 22 spawns (OW-07): open-ended
+reviewers, each pass a fresh audit of the whole evolving artifact, every
+self-graded major terminal at its own `block_on_severity` gate. Four
+consecutive blocks, each round discovering a new layer — useful adversarial
+discovery, not a repair protocol. The principle that fixes it: **discovery
+and gating must not share a mind.** A reviewer's job is to find everything,
+and a mind graded on finding grades what it finds as major. The severity a
+gate acts on must be assigned by a node whose only job is adjudication.
+
+`flows/factory/adjudicated-review.tg.json` is the template
+(`--arg subject= --arg scope= --arg ledger=`):
+
+- **Reviewers** (readonly, `Finding[]`) discover under a **frozen scope
+  statement** — what the review is OF and what is out of bounds. The OW-07
+  campaign lost a round to a reviewer grading a pre-implementation contract
+  for its lack of implementation; the scope statement is what prevents that.
+- **One adjudicator** (`personas/adjudicator.md`, readonly) re-grades every
+  raw finding: blocker = broken stated guarantee or regression, with
+  evidence; minor/nit never block; unevidenced or out-of-scope findings are
+  demoted to nit with the reason kept, never dropped. A genuinely NEW
+  blocker is always allowed — but must say why it is in scope.
+- **The ledger gate** (`lockstep.gates.ledger_check --node adjudicate
+  --ledger <path> --at major`) owns the cross-round memory: a repo file
+  (`runs/` is gitignored and the memory must cross lineages) that the MODEL
+  NEVER WRITES. The program merges each round — new / persisting /
+  reported-resolved, nothing ever deleted — and blocks only on ACTIVE
+  entries at threshold. `accepted-risk` is a human state, set by editing the
+  ledger file attributably (a non-empty `disposition` or the gate blocks),
+  and it stands even when a later round re-raises the finding. Identical
+  adjudication input re-runs idempotently (shell gates always re-run), so
+  resume revalidation cannot inflate history.
+
+Delta mode is a scope statement plus an input: feed the reviewers a
+`node_diff --node <writer>` probe's output (the recorded tree pair, never the
+live tree — `lint-live-diff-per-phase`) and say in the scope that the review
+covers that delta. To heal an implementer with the template's gate, wire
+`heal.targets` at the implementing node. Gating raw reviewers stays fine for
+ONE reviewer (refine-loop); two or more gated raw draws
+`lint-unadjudicated-reviews`.
 
 ## Composition (`kind: "flow"`)
 

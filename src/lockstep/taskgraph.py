@@ -963,6 +963,37 @@ def lint_flow(
                     f"no data flows along it",
                 )
 
+    # S2+G5 (upstream-response-ow07-feedback) — the review ping-pong shape:
+    # SEVERAL Finding-producing nodes, each gated directly on its own raw
+    # severity. A reviewer's job is to find everything, and a mind graded on
+    # finding grades what it finds as major — so every round is terminal and
+    # the campaign re-audits forever (four consecutive blocks observed on
+    # OW-07 phase 3). One reviewer gated raw is refine-loop's fine shape;
+    # two or more want one adjudication node between discovery and the gate.
+    finding_producers = {
+        n.id for n in tg.nodes
+        if n.kind in _TOKEN_KINDS and (n.contract or "") == "Finding[]"
+    }
+    raw_gated: set[str] = set()
+    for n in tg.nodes:
+        if n.role != "gate" or n.kind != "shell":
+            continue
+        cmd = [str(c) for c in (n.spec.get("cmd") or [])]
+        if "lockstep.gates.block_on_severity" in cmd and "--node" in cmd:
+            i = cmd.index("--node")
+            if i + 1 < len(cmd) and cmd[i + 1] in finding_producers:
+                raw_gated.add(cmd[i + 1])
+    if len(raw_gated) >= 2:
+        warn(
+            "lint-unadjudicated-reviews",
+            f"{len(raw_gated)} finding-producing nodes ({', '.join(sorted(raw_gated))}) are "
+            "each gated directly on their own raw severity — self-graded majors are all "
+            "terminal, and multi-reviewer flows in this shape re-audit without converging. "
+            "Insert ONE adjudication node between the reviewers and a single gate "
+            "(flows/factory/adjudicated-review.tg.json is the template; FLOW-AUTHORING "
+            "'Convergent review' is the why)",
+        )
+
     # W3 — a map's width is data-dependent at runtime; the spawn budget is the
     # only ceiling, so an explicit one beats the default.
     if any(n.role == "map" for n in tg.nodes) and "budget" not in tg.model_fields_set:

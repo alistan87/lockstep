@@ -461,3 +461,38 @@ def test_w9_broad_reads_warns_and_needs_a_repo_root(tmp_path, monkeypatch):
     found = codes(lint_flow(flow, repo_root=tmp_path))
     assert found.count("lint-broad-reads") == 1
     assert "lint-broad-reads" not in codes(lint_flow(flow)), "no repo_root, no count"
+
+
+def test_unadjudicated_reviews_ping_pong_shape():
+    # S2+G5 (upstream-response-ow07-feedback): several Finding-producing
+    # reviewers, each gated directly on its own raw severity — every
+    # self-graded major is terminal and the review ping-pongs. One reviewer
+    # gated raw is fine (refine-loop's shape); two or more want an
+    # adjudication node between discovery and the gate.
+    def gate(gid, target):
+        return {"id": gid, "role": "gate", "kind": "shell", "depends_on": [target],
+                "spec": {"cmd": ["python", "-m", "lockstep.gates.block_on_severity",
+                                 "--at", "major", "--node", target]}}
+
+    flow = tg({
+        "name": "pp",
+        "nodes": [
+            {"id": "rev-a", "kind": "fake", "output": "json", "contract": "Finding[]",
+             "spec": {"readonly": True}},
+            {"id": "rev-b", "kind": "fake", "output": "json", "contract": "Finding[]",
+             "spec": {"readonly": True}},
+            gate("gate-a", "rev-a"),
+            {**gate("gate-b", "rev-b"), "final": True},
+        ],
+    })
+    assert codes(lint_flow(flow)).count("lint-unadjudicated-reviews") == 1
+
+    one = tg({
+        "name": "one",
+        "nodes": [
+            {"id": "rev", "kind": "fake", "output": "json", "contract": "Finding[]",
+             "spec": {"readonly": True}},
+            {**gate("g", "rev"), "final": True},
+        ],
+    })
+    assert "lint-unadjudicated-reviews" not in codes(lint_flow(one))
