@@ -640,3 +640,20 @@ def test_lock_held_foreign_holder_blocks(tmp_path, capsys):
     assert v["verdict"] == "block"
     assert v["findings"][0]["category"] == "holder-live"
     assert "FOREIGN" in v["findings"][0]["evidence"]
+
+
+def test_version_sync_accepts_the_v_prefixed_heading_its_own_flow_writes(tmp_path, capsys, monkeypatch):
+    """Found live cutting v0.11.0: release-cut's prompt instructs the heading
+    '## {args.tag}' (v-prefixed, the tag convention the SAME gate blesses),
+    and the delimiter lookbehind then rejected it — 'v' is a word char. The
+    flow and its own gate must agree on the one heading shape the flow asks
+    for. The 0.4.0.1-substring protection stays."""
+    _project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# log\n## v0.4.0\n- stuff\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    v = run_gate(version_sync, ["--changelog", "CHANGELOG.md", "--tag", "v0.4.0"], capsys)
+    assert v["verdict"] == "pass"
+    # xv0.4.0 is not a version heading; neither is 1.0.4.0.
+    (tmp_path / "CHANGELOG.md").write_text("# log\n## xv0.4.0\n", encoding="utf-8")
+    v = run_gate(version_sync, ["--changelog", "CHANGELOG.md"], capsys)
+    assert v["verdict"] == "block"

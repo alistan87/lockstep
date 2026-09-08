@@ -94,7 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             heads = [m.group(1) for m in re.finditer(r"^#{1,6}\s+(.+)$", text, re.M)]
             # Delimited match: a "## 0.3.10" heading must not satisfy 0.3.1.
-            token = re.compile(rf"(?<![\w.]){re.escape(version)}(?![\w.])")
+            # `v?` because a v-prefixed heading is the tag convention this
+            # same gate accepts for --tag — and the one release-cut's own
+            # prompt instructs ('## {args.tag}'). Without it the flow's
+            # instruction and its gate contradicted (found live, v0.11.0).
+            token = re.compile(rf"(?<![\w.])v?{re.escape(version)}(?![\w.])")
             if not any(token.search(h) for h in heads):
                 findings.append(
                     finding("blocker", "changelog", ns.changelog,

@@ -24,7 +24,15 @@ default = "claude-code"
 # one. Until you have verified a shape that works on your install, treat a
 # repo-root CLAUDE.md as part of every node's prompt that `explain` cannot
 # see, and keep node rules in personas/ and spec.context, which are hashed.
-argv = ["claude", "-p", "{prompt}", "--output-format", "json"]
+# --permission-mode acceptEdits: a headless -p spawn auto-denies its own tool
+# permission prompts — without a permission mode, a WRITING node "succeeds" at
+# drafting and fails at saving the file (observed live on release-cut's
+# changelog node, 2026-09-08). acceptEdits auto-accepts Edit/Write only; the
+# driver's write-scope quarantine remains the enforcement layer. Nodes that
+# must RUN commands still get denied Bash — escalate that stanza to
+# `--permission-mode bypassPermissions` as a deliberate, named decision, never
+# as the default.
+argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits"]
 prompt_via = "argv"                        # "argv" | "stdin"
 json_field = "result"                      # unwrap this envelope field; omit for raw
 persona_flag = []                          # empty => prepend persona body to the prompt
