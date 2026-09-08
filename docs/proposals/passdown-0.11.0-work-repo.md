@@ -269,11 +269,15 @@ a refusal message, where 0.10.0 gave you 4 and bad advice.
 
 Do not re-file these.
 
-**0.12.0:** `lockstep adopt` (S3 — adopt a human-remediated artifact into a
-settled run and re-run its consumer cone; **design note first**, now drafted at
-`docs/proposals/DESIGN-NOTE-adopt.md` with five open decisions); G1b, one
-corrective re-spawn on a write-scope violation, mirroring the contract-violation
-shape; S4's `stable_output` projection **only if** the discipline in §5.1 proves
+**0.12.0:** `lockstep adopt` (S3) is **already built** on main — adopt a
+human-remediated artifact into a settled run: the writer is pinned even
+against a hash miss, its consumers re-run unweakened, and the pin dissolves
+on `--release`, a heal round, or a steer (design note
+`docs/proposals/DESIGN-NOTE-adopt.md`, adopted with all five decisions;
+DEVIATIONS 2026-09-08; the playbook's "I fixed the artifact by hand" section
+has the recipe). Still to come in 0.12.0: G1b, one corrective re-spawn on a
+write-scope violation, mirroring the contract-violation shape; S4's
+`stable_output` projection **only if** the discipline in §5.1 proves
 insufficient by then.
 
 **Declined, with the shipped mechanism named:** G1a advisory/secondary write

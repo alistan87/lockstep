@@ -91,6 +91,29 @@ def diff_labels(old: dict[str, str] | None, new: dict[str, str] | None) -> list[
 
 # --- records (SPEC §10.2, AMENDMENTS A3) ---------------------------------------
 
+class AdoptionRecord(BaseModel):
+    """S3 (DESIGN-NOTE-adopt D2): a human-remediated artifact was adopted into
+    this node, and the node is settled EVEN AGAINST A HASH MISS. This is a
+    deliberately-scoped departure from "nothing is trusted except the hash":
+    what is trusted is the journaled human adoption event (the `adoption` line
+    in events.jsonl carries per-path before/after content hashes and the
+    reason verbatim; this record is the engine-readable pointer to it).
+    `input_hash` is deliberately NOT rewritten — the pin is visible in
+    `status`/`explain` as settled-by-adoption, never as a cache hit. Cleared
+    by `adopt --release`, or by the engine itself when a heal round or a
+    steering message re-pends the node (the pin describes the human's bytes;
+    a new spawn's output must not inherit it)."""
+
+    paths: list[str]
+    reason: str  # the human's words, verbatim (also in adoption-reason.txt)
+    ts: str
+    source: str = "external-approved-remediation"
+    # D1 override provenance: consumers that interpolate this node's RECORDED
+    # result text ({steps.<id>.output}/.json), which adoption does not rewrite.
+    # Empty unless --force waved the refusal through.
+    forced_result_text_consumers: list[str] = []
+
+
 class ItemRecord(BaseModel):
     status: Literal["pending", "running", "done", "failed", "skipped"] = "pending"
     input_hash: str | None = None
@@ -147,6 +170,11 @@ class PhaseRecord(BaseModel):
     # what was computed from what was inherited — the seed's own tree, config
     # and provider are not this run's.
     seeded_from: str | None = None
+    # S3: settled by a human adoption (`lockstep adopt`). Optional and additive
+    # like `terminal`/`repo_root` — absent on every run before the field
+    # existed; an older driver reading a newer state.json ignores it and
+    # degrades to hash-governed revalidation.
+    adopted: AdoptionRecord | None = None
 
 
 class TerminalRecord(BaseModel):

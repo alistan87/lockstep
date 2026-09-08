@@ -26,4 +26,4 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [passdown-0.10.0-work-repo.md](passdown-0.10.0-work-repo.md) | `notes` | stable | Passdown: 0.9.0 → 0.10.0 (the fleet release) — work-repo integration |
 | [passdown-0.11.0-work-repo.md](passdown-0.11.0-work-repo.md) | `notes` | stable | Passdown: 0.10.0 → 0.11.0 (the OW-07 response release) — work-repo integration |
 | [upstream-response-ow07-feedback.md](upstream-response-ow07-feedback.md) | `plan` | stable | Upstream response: OW-07 consumer feedback — convergent reviews, adoption, and truthful terminal state |
-| [DESIGN-NOTE-adopt.md](DESIGN-NOTE-adopt.md) | `proposal` | draft | Design note: `lockstep adopt` — settling a human-remediated artifact into a run |
+| [DESIGN-NOTE-adopt.md](DESIGN-NOTE-adopt.md) | `proposal` | adopted (BUILT 2026-09-08) | Design note: `lockstep adopt` — settling a human-remediated artifact into a run |

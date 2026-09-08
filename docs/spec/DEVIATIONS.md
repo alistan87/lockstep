@@ -707,3 +707,33 @@ file records implementation-level departures below that bar.
   case is not a different tree). Pinned by tests/test_fleet.py; surfaced in
   `status`/`active`; an r7 amendment should fold the root into §9.2's
   attach/resume text.
+
+- **2026-09-08 — `lockstep adopt`: a journaled human adoption settles a node
+  even against a hash miss** (S3, DESIGN-NOTE-adopt, decisions D1-D5 adopted
+  as recommended). The departure is deliberate and scoped: SPEC M3's rule is
+  that nothing is trusted except the input hash, and `PhaseRecord.adopted`
+  (additive, optional, `format_version` untouched) is the one exception —
+  what is trusted instead is the chained `adoption` event in events.jsonl
+  (per-path before/after content hashes, the human's reason verbatim,
+  `source: external-approved-remediation`). Why: after a gate block and a
+  legitimate human edit, every existing road destroyed the edit or the
+  lineage — resume re-ran the producer on a hash miss and legally overwrote
+  it (the OW-07 live case), `--allow-dirty-scope` waived the E9 preflight
+  wholesale, a second flow severed lineage. Boundaries that keep the
+  departure honest: `input_hash` is never rewritten (`status`/`explain`/
+  `explain --graph` say `settled-by-adoption`, never a cache hit); consumers
+  are re-pended explicitly and re-run unweakened; the M7 lineage-head
+  fingerprint is refreshed for the adopted paths ONLY, so unrelated external
+  edits still warn by name; the pin dissolves on `adopt --release`, a heal
+  round, or a steering message (each journaled — a re-spawn's output is
+  model output and must not inherit the label); a seed never transfers the
+  pin and names every adopted node in its source (a new lineage is a new
+  consent). Refusals: live lock, wrong repo root, non-`done` writer (G2's
+  adopt-node is declined — "the tree looks right" must not stand in for
+  provenance), paths outside the writer's declared `spec.writes`, paths
+  inside a second writer's scope, and consumers that interpolate the
+  writer's RECORDED result text (`{steps.<id>.output}`/`.json`/
+  `{previous.output}` — adoption rewrites the tree, never a recorded
+  result; `--force` overrides with the override journaled). All exit 7.
+  Pinned by tests/test_adopt.py; the replay fixture passes un-re-recorded
+  (nothing here touches hash composition).

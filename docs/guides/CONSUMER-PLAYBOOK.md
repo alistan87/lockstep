@@ -101,3 +101,38 @@ name the files in the task text, or opt in to the manifest:
 `"reads_manifest": "paths"` appends the resolved list to the prompt (and
 the hash). A zero-match glob says so explicitly. FLOW-AUTHORING "Declared
 reads" has the mechanics.
+
+## "A gate blocked, I fixed the artifact by hand, and now every road destroys my edit"
+
+This was true through 0.11.0, and it is exactly the road `--allow-dirty-scope`
+made worse (it waives the one preflight standing between the producer and
+your edit — in the observed run the producer re-ran and overwrote it).
+Since 0.12.0:
+
+```
+lockstep adopt <run_dir> <writer-node> --reason-file owner-decision.md
+lockstep resume <run_dir>
+```
+
+adopts every dirty path inside the writer's declared `spec.writes` (or
+`--path <p>` to narrow), records the decision in your own words
+(`adoption-reason.txt`, gc-protected) plus a chained `adoption` event with
+per-path content hashes, and then:
+
+- the writer is **pinned** — it will not re-run even if its hash misses,
+  and `status`/`explain` say `settled-by-adoption`, never "cache hit";
+- its consumers re-run **unweakened** — a review or gate downstream gets a
+  fresh look at your version, which is the point;
+- the pin dissolves on `adopt <run_dir> <node> --release`, or automatically
+  (journaled) when a heal round or a steering message re-spawns the writer —
+  whatever the model writes next is model output and is not pinned.
+
+Two refusals to know about: `adopt` refuses when another node's `spec.writes`
+also covers the path (the engine cannot promise a second writer won't
+overwrite it — narrow the scopes), and when any node interpolates the
+writer's RECORDED result text (`{steps.<writer>.output}`/`.json`): adoption
+rewrites the tree, never a recorded result, so that consumer would re-run
+against the superseded model output. Restructure it to read the file, or
+`--force` with the risk journaled. And a later `run --seed` from the adopted
+run names the adoption but does not transfer the pin — re-adopt in the new
+lineage if you still mean it.

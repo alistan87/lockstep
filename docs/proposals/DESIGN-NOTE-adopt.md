@@ -1,18 +1,32 @@
 ---
 type: proposal
-status: draft
+status: adopted
 title: "Design note: `lockstep adopt` — settling a human-remediated artifact into a run"
-description: The design questions that must be answered before `lockstep adopt` is built (S3, scheduled 0.12.0). Establishes what adoption is, the mechanisms it composes from, and five decisions the owner must make first — two named in the OW-07 response, one found in `prepare_resume` while writing this note, and two that fall out of them. Recommends an answer to each; nothing here is adopted until a commit says so.
+description: The design questions that had to be answered before `lockstep adopt` was built (S3). Establishes what adoption is, the mechanisms it composes from, and five decisions — two named in the OW-07 response, one found in `prepare_resume` while writing this note, and two that fall out of them. Adopted 2026-09-08 with every recommendation as written; built the same day (adopt.py, tests/test_adopt.py, DEVIATIONS 2026-09-08).
 resource: docs/proposals/DESIGN-NOTE-adopt.md
 ---
 
 # Design note: `lockstep adopt`
 
-**Status: draft — decisions open.** This is the note that
-`docs/proposals/upstream-response-ow07-feedback.md` scheduled ahead of the
-code ("design note first, then build"). It exists because two of the
-questions are load-bearing enough that answering them inside a build would
-mean answering them by accident.
+**Status: adopted and built (2026-09-08).** All five decisions were taken as
+recommended: D1 refuse with a journaled `--force`; D2 the additive `adopted`
+pin, `input_hash` never rewritten; D3 the narrow fingerprint refresh; D4
+`--release` ships; D5 a seed warns and never transfers the pin. The two open
+sub-questions closed the same way — `--force` exists (the fallback to an
+absolute refusal was the exact unsafe command this feature replaces), and
+`--release` ships in the first version (a pin irreversible within its
+lineage is a trap). One decision was added during the build, for D2's own
+reason run in reverse: **a heal round or a steering message dissolves the
+pin**, journaled — both re-spawn the node, a re-spawn's output is model
+output, and a surviving pin would label it settled-by-adoption. The
+departure from "nothing is trusted except the hash" is registered in
+`docs/spec/DEVIATIONS.md` (2026-09-08); the acceptance tests below are
+`tests/test_adopt.py`.
+
+This is the note that `docs/proposals/upstream-response-ow07-feedback.md`
+scheduled ahead of the code ("design note first, then build"). It exists
+because two of the questions are load-bearing enough that answering them
+inside a build would mean answering them by accident.
 
 **Responding to:** S3 (Sol, 2026-09-07) and its near-twin G2 (Gemini,
 2026-09-08). The disposition accepted **Sol's semantics and declined

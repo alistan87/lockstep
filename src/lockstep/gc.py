@@ -98,6 +98,10 @@ def plan_gc(
                 protections.append("rejection.txt (human-authored)")
             else:
                 unprotected.append("no rejection.txt")
+            if (d / "adoption-reason.txt").exists():
+                # S3: the same rule for the same reason — human-authored
+                # artifacts are not the engine's to expire.
+                protections.append("adoption-reason.txt (human-authored)")
             if rank == 0:
                 # Unconditional — not subject to keep_per_flow (even 0): this
                 # is the lineage head `lockstep run` would attach to, and

@@ -465,6 +465,12 @@ class Engine:
                 ):
                     rec.status = "pending"  # steered done node re-runs (r6 C2)
                     rec.invalidated_by = ["unconsumed steering message (r6 C2)"]
+                    # A steer to an adopted node is the operator asking it to
+                    # re-run — an explicit act that supersedes the pin. The pin
+                    # must not survive it: it describes the HUMAN's bytes, and
+                    # after the re-spawn it would pin model output as
+                    # settled-by-adoption, a lie the record cannot carry.
+                    self._dissolve_adoption(rec, "steering message")
                 else:
                     self.needs_check.add(node.id)
             elif rec.status == "skipped":
@@ -495,6 +501,14 @@ class Engine:
                     ex = self.registry.get(node.kind)
                     if (
                         rec.status == "done"
+                        # D3 (DESIGN-NOTE-adopt): an adopted node is settled;
+                        # this sweep must not re-pend it over external edits.
+                        # Belt to adopt's braces — the command refreshes
+                        # fingerprint_detail for the adopted paths, so its own
+                        # adoption never registers here; this guard is for an
+                        # UNRELATED edit in the same window, which should warn
+                        # (above) and re-pend everything except the pin.
+                        and rec.adopted is None
                         and ex is not None
                         and getattr(ex, "cacheable", False)
                         # "Not yet consumed downstream" (§9.2): a LEAF node has
@@ -565,6 +579,30 @@ class Engine:
                     # against its stale recorded output — and nothing would
                     # ever re-check this node (B1).
                     if not all(self._dep_settled(d) for d in node.depends_on):
+                        continue
+                    if rec.adopted is not None:
+                        # D2 (DESIGN-NOTE-adopt): settled by a journaled human
+                        # adoption, EVEN AGAINST A HASH MISS — "do not re-run
+                        # the adopted writer" is not achievable by inaction,
+                        # because the OW-07 writer's hash legitimately missed
+                        # (volatile upstream shell output) and a plain resume
+                        # would re-run it over the human's edit. Before the
+                        # plan, deliberately: re-planning just to ignore the
+                        # answer would spill files and log a comparison nobody
+                        # acts on. Said at the decision site, like every other
+                        # revalidation outcome.
+                        self.needs_check.discard(node.id)
+                        rec.invalidated_by = None
+                        self.store.record(rec)
+                        self.log(
+                            f"settled-by-adoption {node.id!r} — {len(rec.adopted.paths)} "
+                            f"path(s) adopted {rec.adopted.ts}; hash comparison does not "
+                            f"govern this node until the pin is released"
+                        )
+                        append_event(self.store.run_dir, {
+                            "node": node.id, "status": "done", "settled_by_adoption": True,
+                        })
+                        changed = progressed = True
                         continue
                     executor = self.registry.get(node.kind)
                     invalidate = executor is None or not getattr(executor, "cacheable", False)
@@ -986,6 +1024,24 @@ class Engine:
         """
         return render_scope([str(w) for w in (node.spec.get("writes") or [])],
                             self.store.state.args)
+
+    def _dissolve_adoption(self, rec, cause: str) -> None:
+        """Clear an adoption pin because the engine is about to re-spawn the
+        node (heal, steer). Journaled like `adopt --release` — an operator
+        reading the run must find WHERE the pin went, and the original
+        adoption event is never deleted (append-only journal)."""
+        if rec.adopted is None:
+            return
+        rec.adopted = None
+        self.store.record(rec)
+        append_event(
+            self.store.run_dir,
+            {"kind": "adoption", "op": "dissolved", "node": rec.node_id, "cause": cause},
+        )
+        self.log(
+            f"adoption pin on {rec.node_id!r} dissolved by {cause} — the next spawn's "
+            f"output is model output, and the pin described the human's"
+        )
 
     def note_forced(self, node_id: str) -> None:
         """Parity 3.3 provenance: the seed DECLINED this node on instruction,
@@ -1706,6 +1762,12 @@ class Engine:
                     lambda st, n=nid, t=heal_text: st.heal_texts.__setitem__(n, t)
                 )
             if nrec.status in ("done", "skipped", "failed", "blocked") or nid in gate.heal.targets:
+                # A heal round re-spawns the node: whatever it writes next is
+                # model output, and an adoption pin surviving it would label
+                # that output settled-by-adoption. The gate re-reviewed the
+                # human's artifact and rejected it — the pin's work (consumers
+                # ran unweakened against the human's bytes) is done.
+                self._dissolve_adoption(nrec, f"heal round of gate {gate.id!r}")
                 nrec.status = "pending"
                 nrec.error = None
                 # A3.4/A3.5: heal invalidation clears item records — for map

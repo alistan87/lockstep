@@ -247,6 +247,23 @@ def _run_engine(
             print(f"force-stale: {len(forced)} node(s) will NOT be served regardless of "
                   f"hash — {', '.join(sorted(forced))} (the named frontier plus everything "
                   f"downstream)")
+        # D5 (DESIGN-NOTE-adopt): a pin does not transfer — a new lineage is a
+        # new consent, and silently inheriting a human's decision into a run
+        # they did not authorise is the mirror of the mistake adopt exists to
+        # prevent. But the trap must be NAMED: the source's recorded result is
+        # the model's superseded text (served on a hash match), and the tree
+        # holds the human's — either road needs the operator's eyes.
+        try:
+            seed_state = load_state(Path(seed))
+        except (OSError, ValueError):
+            seed_state = None
+        if seed_state is not None:
+            for nid in sorted(n for n, r in seed_state.nodes.items() if r.adopted):
+                print(f"warning: {nid!r} was settled by adoption in the seed source; "
+                      f"this lineage does NOT inherit that pin — its recorded result "
+                      f"is the superseded model output, and a hash miss re-runs the "
+                      f"writer over the adopted file. `--force-stale {nid}` to recompute, "
+                      f"or re-adopt in this run after it settles")
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")  # AMENDMENTS M6
     if resume:
@@ -737,6 +754,22 @@ def cmd_explain(ns) -> int:
     )
 
 
+def cmd_adopt(ns) -> int:
+    """S3 (DESIGN-NOTE-adopt): settle a human-remediated artifact. All the
+    logic lives in adopt.py; every refusal is exit 7."""
+    from .adopt import adopt
+
+    return adopt(
+        Path(ns.run_dir),
+        ns.node_id,
+        repo_root=Path(ns.repo_root).resolve(),
+        reason_file=Path(ns.reason_file) if ns.reason_file else None,
+        paths=ns.path,
+        force=ns.force,
+        release=ns.release,
+    )
+
+
 def cmd_render(ns) -> int:
     try:
         tg, _ = _load(ns.flow)
@@ -929,6 +962,14 @@ def cmd_status(ns) -> int:
         # with inputs that may not have moved at all.
         print(f"forced stale: {len(forced)} node(s) re-ran by --force-stale — "
               f"{', '.join(forced)}")
+    adopted = sorted(n for n, r in state.nodes.items() if r.adopted)
+    for n in adopted:
+        # S3 provenance where a reader will meet it: NEVER rendered as a
+        # cache hit — the node's recorded result is the model's, the tree is
+        # the human's, and the pin holds even against a hash miss.
+        a = state.nodes[n].adopted
+        print(f"settled by adoption: {n} — {len(a.paths)} path(s) adopted {a.ts} "
+              f"({a.source}); will not re-run until released")
     try:
         events = read_events(run_dir)  # tolerates a trailing partial line (§10.3)
     except Exception as e:
@@ -1287,6 +1328,28 @@ def main(argv: list[str] | None = None) -> int:
     pex.add_argument("--config", default=None, metavar="TOML",
                      help="config to plan against (default: <repo-root>/lockstep.toml)")
     pex.set_defaults(fn=cmd_explain)
+
+    pad = sub.add_parser(
+        "adopt",
+        help="settle a human-remediated artifact into a run (S3); the writer is pinned, "
+             "its consumers re-run unweakened on the next resume",
+    )
+    pad.add_argument("run_dir")
+    pad.add_argument("node_id", help="the writer node whose declared scope covers the edited paths")
+    pad.add_argument("--reason-file", default=None, metavar="FILE",
+                     help="the human's decision, verbatim (required unless --release); "
+                          "copied to <run_dir>/adoption-reason.txt and gc-protected")
+    pad.add_argument("--path", action="append", default=None, metavar="P",
+                     help="adopt only these paths (default: every dirty path inside the "
+                          "writer's declared spec.writes)")
+    pad.add_argument("--force", action="store_true",
+                     help="proceed despite consumers that interpolate the writer's recorded "
+                          "result text (journaled in the adoption event)")
+    pad.add_argument("--release", action="store_true",
+                     help="dissolve the pin instead: the node revalidates by hash on the "
+                          "next resume (journaled; the adoption event is never deleted)")
+    pad.add_argument("--repo-root", default=".")
+    pad.set_defaults(fn=cmd_adopt)
 
     ns = p.parse_args(argv)
     # `--detach` re-invokes this exact command in a child, so it needs the

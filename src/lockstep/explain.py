@@ -40,6 +40,13 @@ def _load(run_dir: Path) -> RunState | None:
 
 def _print_parts(rec: PhaseRecord, out) -> None:
     out(f"node: {rec.node_id}   status: {rec.status}   heal_round: {rec.heal_round}")
+    if rec.adopted is not None:
+        # S3: the one node whose freshness is NOT governed by the parts below.
+        # Say it before the hash detail, or the detail reads as the decision.
+        out(f"settled-by-adoption: {len(rec.adopted.paths)} path(s) adopted "
+            f"{rec.adopted.ts} ({rec.adopted.source}) — this node will not re-run "
+            f"even if the parts below have moved; `adopt --release` restores "
+            f"hash-governed revalidation")
     out(f"input_hash: {rec.input_hash or '(none — never planned)'}")
     if rec.hash_parts is None:
         out("parts: unrecorded (run predates part recording)")
@@ -184,6 +191,7 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
     # a sequencing-only dependent's hash cannot move with the shell's output.
     shellish: set[str] = set()         # always-rerun, argv unchanged: output assumed
     conditional: dict[str, str] = {}   # fresh node -> the root shell it leans on
+    pinned: list[str] = []             # settled-by-adoption: never re-runs (S3)
 
     def _consumes(node, upstream_id: str) -> bool:
         text = json.dumps(node.spec, ensure_ascii=False)
@@ -205,6 +213,14 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
         tmp = Path(td)
         for node in _topo_order(tg):
             rec = state.nodes.get(node.id)
+            if rec is not None and rec.adopted is not None:
+                # S3: the pin wins over EVERYTHING this dry run could compute —
+                # including a stale upstream — because that is what the engine
+                # does (_settle short-circuits before re-planning). Checked
+                # before the transitive sweep so dependents correctly plan
+                # against the recorded result rather than reporting blocked.
+                pinned.append(node.id)
+                continue
             bad_dep = next(
                 (d for d in node.depends_on if d in stale or d in transitive), None)
             if bad_dep is not None:
@@ -285,7 +301,8 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
         + (f" ({len(conditional)} conditionally)" if conditional else "")
         + f"   stale: {len(stale) + len(transitive)} "
         f"({len(stale)} directly, {len(transitive)} transitively)   "
-        f"re-runs regardless: {len(rerun)}")
+        f"re-runs regardless: {len(rerun)}"
+        + (f"   settled by adoption: {len(pinned)}" if pinned else ""))
     for nid, reasons in stale.items():
         out(f"stale {nid}")
         for r in reasons:
@@ -300,6 +317,9 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
     for nid, sid in conditional.items():
         out(f"conditionally fresh {nid} — depends on always-rerun shell {sid!r}; "
             f"its actual output at run time may invalidate this")
+    for nid in pinned:
+        out(f"settled by adoption {nid} — will NOT re-run regardless of hash "
+            f"(`adopt --release` restores hash-governed revalidation)")
     if any("shell — always re-runs)" in e for e in rerun):
         out("note: an unchanged-argv shell node is assumed to reproduce its recorded "
             "output; if it prints differently at run time, its readers re-bill then")

@@ -381,7 +381,22 @@ because everything above sits on them:
 - `done` approval → `pending` (**approvals are never skipped**)
 - `done` with unconsumed steer mail → `pending`
 - `done` otherwise → hash revalidation; re-runs only if inputs changed
+- `done` and **settled-by-adoption** → stays done, even on a hash miss (below)
 - `skipped` → `pending`, and its `when` re-evaluates
+
+**Adoption is the one exception to hash-governed revalidation.** After a
+gate block and a legitimate human edit to a writer's artifact, `lockstep
+adopt` records a journaled decision — this artifact is settled, a human put
+it there — and pins the writer while explicitly re-pending its consumers,
+which then re-run unweakened against the human's version. The pin holds
+against a hash miss deliberately (that is the failure it exists to prevent:
+a volatile upstream missed the writer's hash and a plain resume overwrote
+the edit), which is why it is registered as a deviation rather than a
+caching rule: what is trusted is the chained `adoption` event, not the hash.
+It is never rendered as a cache hit, and it dissolves — journaled — on
+`adopt --release`, a heal round, or a steering message, because each of
+those re-spawns the node and a re-spawn's output is model output. A seed
+never transfers it: a new lineage is a new consent.
 
 **A node awaiting revalidation is not settled**, and that distinction is load-
 bearing rather than pedantic. A `done` node behind an invalidated upstream
