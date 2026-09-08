@@ -983,6 +983,25 @@ def lint_flow(
             i = cmd.index("--node")
             if i + 1 < len(cmd) and cmd[i + 1] in finding_producers:
                 raw_gated.add(cmd[i + 1])
+    # S2+G5 companion — the ledger gate's memory vs heal's default rollback:
+    # a rollback restores every path changed since its baseline (SPEC §9.4.4),
+    # and the ledger is a repo file inside that window, so each heal round
+    # would restore the memory away and the loop re-litigates from scratch —
+    # the exact failure the ledger exists to end. refine-loop is the
+    # precedent: build-on-last-round loops heal with rollback: false.
+    for n in tg.nodes:
+        if n.role != "gate" or n.heal.max_rounds == 0 or not n.heal.rollback:
+            continue
+        cmd = [str(c) for c in (n.spec.get("cmd") or [])]
+        if "lockstep.gates.ledger_check" in cmd:
+            warn(
+                "lint-ledger-rollback",
+                f"healing gate {n.id!r} runs ledger_check with rollback: true — each "
+                f"rollback restores the ledger file to the baseline, erasing the "
+                f"cross-round memory that gate exists to keep; heal with "
+                f"\"rollback\": false (the refine-loop shape)",
+            )
+
     if len(raw_gated) >= 2:
         warn(
             "lint-unadjudicated-reviews",

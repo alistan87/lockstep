@@ -496,3 +496,25 @@ def test_unadjudicated_reviews_ping_pong_shape():
         ],
     })
     assert "lint-unadjudicated-reviews" not in codes(lint_flow(one))
+
+
+def test_ledger_gate_healing_with_rollback_erases_its_own_memory():
+    # A rollback restores every path since its baseline — the ledger included.
+    def flow(rollback):
+        return tg({
+            "name": "lg",
+            "nodes": [
+                {"id": "impl", "kind": "fake", "spec": {"outputs": ["x"], "writes": ["src"]}},
+                {"id": "adj", "kind": "fake", "depends_on": ["impl"], "output": "json",
+                 "contract": "Finding[]", "spec": {"readonly": True}},
+                {"id": "gate", "role": "gate", "kind": "shell", "final": True,
+                 "depends_on": ["adj"],
+                 "heal": {"max_rounds": 2, "targets": ["impl"], "rollback": rollback},
+                 "spec": {"cmd": ["python", "-m", "lockstep.gates.ledger_check",
+                                  "--node", "adj", "--ledger", "reviews/ledger.json"],
+                          "writes": ["reviews/ledger.json"]}},
+            ],
+        })
+
+    assert "lint-ledger-rollback" in codes(lint_flow(flow(True)))
+    assert "lint-ledger-rollback" not in codes(lint_flow(flow(False)))

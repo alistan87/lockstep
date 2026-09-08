@@ -133,7 +133,9 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
     argv is unchanged is assumed to reproduce its recorded output — shell
     always re-runs, so if it prints differently at run time its readers
     re-bill then; a false "unchanged" is only possible for that case, and the
-    output says so. Anything that cannot be planned or proven fresh — a
+    output names it per-node ("conditionally fresh … — depends on always-rerun
+    shell …", S4) with a trailing note for the general caveat. Anything that
+    cannot be planned or proven fresh — a
     missing (gc'd) upstream result, an unfinished node, a plan error —
     reports as stale: fail toward re-running, never toward a false
     "unchanged" (proposal finding 20).

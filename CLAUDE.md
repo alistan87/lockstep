@@ -43,7 +43,9 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\lockstep.exe run flows\audit-spec.tg.json --max-workers 3   # self-audit; spends real tokens
 .venv\Scripts\lockstep.exe verify <flow> --lint    # + advisory anti-pattern warnings; exit code unchanged
 .venv\Scripts\lockstep.exe explain <run_dir> <node> [--against <run>]  # which hash inputs moved; why a node re-billed
-.venv\Scripts\lockstep.exe explain <run_dir> --graph  # whole-graph staleness dry run vs the current tree; plans into a throwaway dir, zero spawns
+.venv\Scripts\lockstep.exe explain <run_dir> --graph  # whole-graph staleness dry run vs the current tree; plans into a throwaway dir, zero spawns; "conditionally fresh" = leans on an always-rerun shell reproducing its output
+.venv\Scripts\lockstep.exe resume <run_dir> --max-agent-spawns N  # raise/lower the spawn cap for THIS drive only; journaled; the flow's ceiling returns on the next plain resume
+.venv\Scripts\lockstep.exe run flows\factory\adjudicated-review.tg.json --arg subject= --arg scope= --arg ledger=  # convergent review: reviewers -> adjudicator -> ledger gate (cross-round memory the model never writes)
 .venv\Scripts\lockstep.exe gc [runs] [--apply]     # estimate-aware retention; dry-run by default
 python contrib\lane.py start <flow>                # fleet lane: fresh worktree + branch, verify, detached run, lane record (docs/guides/FLEET-OPERATIONS.md)
 python contrib\lane.py harvest <worktree>          # commit the lane branch (record excluded), remove the worktree; refuses a live driver

@@ -904,13 +904,6 @@ def cmd_status(ns) -> int:
     if awaiting and not (run_dir / "rejection.txt").exists():
         print(f"awaiting a human decision on {', '.join(awaiting)} — "
               f"resume from a terminal to answer")
-    overrides = [e for e in read_events(run_dir) if e.get("kind") == "budget"]
-    if overrides:
-        # G3a audit trail: the ceiling is part of the consent story, so an
-        # override is visible here, not only in the journal file.
-        last = overrides[-1]
-        print(f"budget: max agent spawns overridden {last.get('from')} -> {last.get('to')} "
-              f"at {last.get('ts', '?')} (that drive only)")
     if state.driver_version:
         drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
         print(f"driver: {state.driver_version}{drift}")
@@ -943,6 +936,16 @@ def cmd_status(ns) -> int:
         # renders rather than dying with an unfrozen exit code (audit r6 nit).
         print(f"warning: events.jsonl unreadable ({e}); continuing without events")
         events = []
+    overrides = [e for e in events if e.get("kind") == "budget"]
+    if overrides:
+        # G3a audit trail: the ceiling is part of the consent story, so an
+        # override is visible here, not only in the journal file. Derived from
+        # the guarded read above — a second, unguarded read_events would both
+        # re-scan the journal and reintroduce the corruption crash the r6 nit
+        # fix removed (adversarial-review finding, this batch).
+        last = overrides[-1]
+        print(f"budget: max agent spawns overridden {last.get('from')} -> {last.get('to')} "
+              f"at {last.get('ts', '?')} (that drive only)")
     # r6 C1: latest progress per node — advisory display only.
     progress: dict[str, dict] = {}
     for ev in events:

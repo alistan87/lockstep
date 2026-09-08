@@ -151,6 +151,7 @@ reading as clean.
 | `lint-on-exhausted-pass` | a gate declares `heal.on_exhausted: "pass"` | it converts a blocking gate into a passing one after N failed repairs — legal for a refinement loop, but every gate that can wave work through gets named so a flow review sees the full list (PROPOSAL-taskflow-parity-tiers 2.1, finding 8) |
 | `lint-broad-reads` *(repo)* | a node's `spec.reads` matches more than 200 files | every plan hashes the declared set — including the resume revalidation of every done node, the 13→32-minute creep shape (lesson 20); narrow the globs or watch the journal's `reads-hash` timing lines grow |
 | `lint-unadjudicated-reviews` | two or more `Finding[]`-producing nodes each gated directly by its own `block_on_severity --node` | self-graded majors are all terminal and the review re-audits without converging (four consecutive OW-07 blocks); insert ONE adjudication node between discovery and a single gate — see "Convergent review" |
+| `lint-ledger-rollback` | a healing gate runs `ledger_check` with `rollback: true` | a rollback restores every path since its baseline — the ledger included — so each heal round erases the cross-round memory the gate exists to keep; heal with `"rollback": false` (the refine-loop shape) |
 | `lint-tools-drops-result-channel` *(config)* | a stanza attaches an `--extension` but its `--tools` list omits `submit_result` | the allowlist covers extension tools, so the guard's structured-output channel silently disappears and the envelope stops being enforced (consumer report 2026-08-13) |
 | `lint-persona-not-readonly` *(repo)* | a node names a persona whose frontmatter declares `readonly: true` but sets neither `spec.readonly` nor `spec.writes` | `spec.persona` and `spec.readonly` are independent fields, so "you fix nothing" personas silently keep full write tools and the `tree` token; `readonly: true` in the persona file is the self-documenting signal (consumer report 2026-08-14) |
 
@@ -570,9 +571,12 @@ Delta mode is a scope statement plus an input: feed the reviewers a
 `node_diff --node <writer>` probe's output (the recorded tree pair, never the
 live tree — `lint-live-diff-per-phase`) and say in the scope that the review
 covers that delta. To heal an implementer with the template's gate, wire
-`heal.targets` at the implementing node. Gating raw reviewers stays fine for
-ONE reviewer (refine-loop); two or more gated raw draws
-`lint-unadjudicated-reviews`.
+`heal.targets` at the implementing node **with `"rollback": false`** — a
+rollback restores every path changed since its baseline, the ledger
+included, so a default-rollback heal erases the cross-round memory each
+round (`lint-ledger-rollback`; refine-loop is the precedent). Gating raw
+reviewers stays fine for ONE reviewer (refine-loop); two or more gated raw
+draws `lint-unadjudicated-reviews`.
 
 ## Composition (`kind: "flow"`)
 
