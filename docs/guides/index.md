@@ -10,6 +10,7 @@ How to use the system. Some of these are promises made to a reader — the domai
 | document | type | status | title |
 |---|---|---|---|
 | [COCKPIT-FOR-DOMAIN-EXPERTS.md](COCKPIT-FOR-DOMAIN-EXPERTS.md) | `guide` | current | How this works, and what you do |
+| [CONSUMER-PLAYBOOK.md](CONSUMER-PLAYBOOK.md) | `guide` | current | Consumer playbook: the mechanism you were about to ask for |
 | [COCKPIT-THEORY-OF-OPERATIONS.md](COCKPIT-THEORY-OF-OPERATIONS.md) | `theory-of-ops` | current | Theory of operations: driving the cockpit (for orchestrator agents) |
 | [DRIVING-LOCKSTEP.md](DRIVING-LOCKSTEP.md) | `guide` | current | Driving lockstep (orchestrator protocol) |
 | [FLOW-AUTHORING.md](FLOW-AUTHORING.md) | `guide` | current | Authoring a lockstep taskgraph (portable reference) |

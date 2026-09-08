@@ -130,3 +130,41 @@ def test_graph_mode_needs_a_flow_copy_and_readable_state(tmp_path, git_repo):
     assert explain_graph(h.run_dir, repo_root=git_repo,
                          config=make_config(), out=out) == EXIT_CONFIG
     assert "no flow.tg.json copy" in "\n".join(lines)
+
+
+def test_downstream_of_an_always_rerun_shell_is_conditionally_fresh(tmp_path, git_repo):
+    """S4 (upstream-response-ow07-feedback): the OW-07 pre-run explain said
+    three fresh; at run time the shell printed a different duration string and
+    two of them re-billed. "Fresh" was the dry run's honest assumption wearing
+    a certain word — the assumption gets named per-node now."""
+    h = _ran(tmp_path, git_repo)
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    text = "\n".join(lines)
+    # impl interpolates {steps.probe.output}; probe always re-runs.
+    assert "conditionally fresh impl — depends on always-rerun shell 'probe'" in text
+    # review interpolates {steps.impl.output}: the taint carries, and the ROOT
+    # shell is named, not the intermediate.
+    assert "conditionally fresh review — depends on always-rerun shell 'probe'" in text
+    assert "fresh: 2 (2 conditionally)" in text
+
+
+def test_ordering_only_dependency_on_a_shell_stays_plain_fresh(tmp_path, git_repo):
+    # A node that depends_on a shell purely for sequencing interpolates
+    # nothing from it — its hash cannot move when the shell prints
+    # differently, and calling it conditional would cry wolf.
+    flow = {
+        "name": "ordering",
+        "nodes": [
+            {"id": "probe", "kind": "shell",
+             "spec": {"cmd": ["python", "-c", "print('probe')"], "writes": []}},
+            {"id": "after", "kind": "fake", "depends_on": ["probe"], "final": True,
+             "spec": {"outputs": ["done"], "task": "independent work"}},
+        ],
+    }
+    h = _ran(tmp_path, git_repo, flow=flow)
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    text = "\n".join(lines)
+    assert "fresh after" in text
+    assert "conditionally fresh" not in text

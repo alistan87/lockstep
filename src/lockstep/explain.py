@@ -23,6 +23,7 @@ precedent from trace chaining).
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -173,6 +174,30 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
     transitive: dict[str, str] = {}    # node -> the upstream that made it so
     fresh: list[str] = []
     rerun: list[str] = []              # shell / approval: re-run regardless
+    # S4 (upstream-response-ow07-feedback): "fresh" downstream of an
+    # always-rerun shell is an ASSUMPTION wearing a certain word — the OW-07
+    # pre-run explain said three fresh, the shell printed a different duration
+    # string, two re-billed. Name the assumption per-node. Taint follows
+    # CONSUMPTION ({steps.<shell>.…} in the spec), not mere ordering edges:
+    # a sequencing-only dependent's hash cannot move with the shell's output.
+    shellish: set[str] = set()         # always-rerun, argv unchanged: output assumed
+    conditional: dict[str, str] = {}   # fresh node -> the root shell it leans on
+
+    def _consumes(node, upstream_id: str) -> bool:
+        text = json.dumps(node.spec, ensure_ascii=False)
+        if node.when:
+            text += node.when
+        if getattr(node, "over", None):
+            text += node.over
+        return f"{{steps.{upstream_id}." in text
+
+    def _taint_of(node) -> str | None:
+        for d in node.depends_on:
+            if d in shellish and _consumes(node, d):
+                return d
+            if d in conditional and _consumes(node, d):
+                return conditional[d]  # the ROOT shell, not the intermediate
+        return None
 
     with tempfile.TemporaryDirectory(prefix="lockstep-explain-") as td:
         tmp = Path(td)
@@ -213,8 +238,12 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
                     array = engine._resolve_over(node)
                     computed = engine._map_node_hash(node, array)
                     if computed == rec.input_hash:
-                        fresh.append(f"{node.id} (map — {len(rec.items)} recorded "
-                                     f"item(s) then cache individually)")
+                        root = _taint_of(node)
+                        if root:
+                            conditional[node.id] = root
+                        else:
+                            fresh.append(f"{node.id} (map — {len(rec.items)} recorded "
+                                         f"item(s) then cache individually)")
                     else:
                         new_parts = label_parts(engine._map_parts(node, array))
                         stale[node.id] = diff_labels(rec.hash_parts, new_parts)
@@ -234,9 +263,15 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
                         # A changed argv means the recorded output is not what
                         # the re-run will print: readers cannot be proven fresh.
                         stale[node.id] = diff_labels(rec.hash_parts, new_parts)
+                    else:
+                        shellish.add(node.id)  # output ASSUMED to reproduce (S4)
                     continue
                 if computed == rec.input_hash:
-                    fresh.append(node.id)
+                    root = _taint_of(node)
+                    if root:
+                        conditional[node.id] = root
+                    else:
+                        fresh.append(node.id)
                 else:
                     stale[node.id] = diff_labels(rec.hash_parts, new_parts)
             except Exception as e:  # missing result, spill error, interpolation —
@@ -244,7 +279,9 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
                 stale[node.id] = [f"cannot plan: {type(e).__name__}: {e}"]
 
     out("")
-    out(f"fresh: {len(fresh)}   stale: {len(stale) + len(transitive)} "
+    out(f"fresh: {len(fresh) + len(conditional)}"
+        + (f" ({len(conditional)} conditionally)" if conditional else "")
+        + f"   stale: {len(stale) + len(transitive)} "
         f"({len(stale)} directly, {len(transitive)} transitively)   "
         f"re-runs regardless: {len(rerun)}")
     for nid, reasons in stale.items():
@@ -258,6 +295,9 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
         out(f"re-runs {entry}")
     for entry in fresh:
         out(f"fresh {entry}")
+    for nid, sid in conditional.items():
+        out(f"conditionally fresh {nid} — depends on always-rerun shell {sid!r}; "
+            f"its actual output at run time may invalidate this")
     if any("shell — always re-runs)" in e for e in rerun):
         out("note: an unchanged-argv shell node is assumed to reproduce its recorded "
             "output; if it prints differently at run time, its readers re-bill then")
