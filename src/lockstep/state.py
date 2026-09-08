@@ -694,24 +694,27 @@ def record_terminal(run_dir: Path, exit_code: int, reason: str, message: str) ->
     `status`, `active` and MISSION report the refusal instead of reconstructing
     "stopped resumable" from the untouched node statuses.
 
-    Tolerates a missing/unreadable state.json: a refusal can fire before the
-    first state write (a broken replay index, a config error), and the record
-    is reporting, never a second failure. The refusal event keeps the journal
-    non-empty — the run dir stops being indistinguishable from one nobody
-    drove, and `verify-trace` has a chain to verify (acceptance test 4)."""
+    Reporting, never a second failure — the whole body, not just the load:
+    a missing state.json (a refusal before the first state write), and
+    equally an AV transient on the write or the event append (this machine's
+    documented failure mode), must fall back to the old behavior rather than
+    replace the caller's clean exit-7 message with a traceback. The refusal
+    event keeps the journal non-empty — the run dir stops being
+    indistinguishable from one nobody drove, and `verify-trace` has a chain
+    to verify (acceptance test 4)."""
     run_dir = Path(run_dir)
     try:
         state = load_state(run_dir)
+        state.terminal = TerminalRecord(
+            status="refused", exit_code=exit_code, reason=reason, message=message
+        )
+        write_state(run_dir, state)
+        append_event(
+            run_dir,
+            {"kind": "refusal", "exit_code": exit_code, "reason": reason, "message": message},
+        )
     except (OSError, ValueError):
         return
-    state.terminal = TerminalRecord(
-        status="refused", exit_code=exit_code, reason=reason, message=message
-    )
-    write_state(run_dir, state)
-    append_event(
-        run_dir,
-        {"kind": "refusal", "exit_code": exit_code, "reason": reason, "message": message},
-    )
 
 
 # --- run directories (SPEC §9.2, §10.1) ----------------------------------------

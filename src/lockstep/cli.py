@@ -649,9 +649,11 @@ def cmd_active(ns) -> int:
         elif info.state == "dead" or running:
             tag = "STALE"
         elif state.terminal is not None:
-            # S6: a refused run is recent, operator-relevant news — never
-            # buried under the IDLE default-hide. The next drive clears the
-            # record, so this cannot accumulate the way idle gate-stops do.
+            # S6: a refused run is operator-relevant news — never buried under
+            # the IDLE default-hide. An ABANDONED refusal (the operator edited
+            # the flow and started a new lineage instead of re-driving this
+            # dir) does linger here until gc takes the run; that is an honest
+            # listing, and quieter than the alternative was loud.
             tag = "REFUSED"
         else:
             # Unfinished, but nobody ever claimed it and nothing says `running`
@@ -733,7 +735,9 @@ def cmd_wait(ns) -> int:
     Exit: 0 all required nodes done; 2 something blocked; 3 something failed;
     6 an approval was rejected; 4 stopped with runnable work remaining
     (budget/limit/kill — a plain resume continues); 1 --timeout expired with
-    the lock still held."""
+    the lock still held. A run whose drive was REFUSED after taking the lock
+    (S6) exits with the recorded code — 7 today — instead of reconstructing
+    4 from its untouched node statuses."""
     run_dir = Path(ns.run_dir)
     # A locked dir without state.json is a run whose driver holds the lock but
     # has not written its first state yet — wait, don't fail (cmd_run acquires

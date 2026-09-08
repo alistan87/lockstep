@@ -77,8 +77,10 @@ Those words on MISSION mean exactly this:
 | **sent back for rework (1 of 2)** | a checker rejected the work and sent it back *right now*; it can do this at most twice |
 | **done (sent back once)** | it finished — and it was sent back for rework along the way. The state is `done`; the note in brackets is history |
 | **needs you** | stopped for a decision or a question — your turn |
+| **needs you - resume from a terminal to answer** | the run reached your question while nobody was at a keyboard, so it parked. Nothing was decided for you; the assistant restarts it in a terminal and the question is asked there, once, for real |
 | **done** | finished |
 | **stopped with a problem** | something went wrong; ask the assistant |
+| **refused: …** | the run never started — it found something unsafe to run over (the rest of the line says what) and stopped before spending anything. Ask the assistant; nothing was lost |
 
 MISSION also shows spend, like `agent tasks used 9 of 25`. An "agent task" is one
 unit of work by one worker. That is the number you agreed to before anything
