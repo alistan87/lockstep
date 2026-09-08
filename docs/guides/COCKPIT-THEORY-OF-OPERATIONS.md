@@ -405,7 +405,7 @@ same URL would see the same page anyway.
 
 | Level | What it shows | Entry |
 |---|---|---|
-| **L0 board** | everything the old page showed — headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, per-step drawers, and the evidence or the question card when one waits | on load |
+| **L0 board** | everything the old page showed — headline, stat row, the collapsed step list, the spend meter, both cost blocks, ACTIVITY, per-step drawers, and the evidence or the question card when one waits; on a run whose flow carries a `ledger` arg, the findings-lifecycle line under the headline (`review findings: 2 new, 1 persisting, 4 resolved (round 3)` — `mission_view.ledger_summary`, a count over the ledger file's own states; all three surfaces render it and a test pins the words to `cockpit.ps1`'s) | on load |
 | **L1 timeline** | every step on a shared time axis, **in place of** the step list, with a server-rendered table twin | "show every step" |
 | **L2 step** | a drawer per step: names, sizes, attempts, the agent block (below), cost. Never stdout bodies | click a row |
 | **L3 raw** | node id, hash parts, what moved, the chain head — each glossed | "show the raw record" |

@@ -310,9 +310,14 @@ inside the node's own lock.
 A violation is **quarantined**, so a scope is a decision about what may be
 reverted rather than only flagged: the blocked attempt is kept as
 `phases/<node>/out-of-scope-<attempt>.patch`, each violating path is restored to
-its baseline or moved into `out-of-scope-<attempt>/` (never deleted), and the
-node fails naming every path and its outcome. On success the in-scope changed
-paths land in `touched-<attempt>.txt`.
+its baseline or moved into `out-of-scope-<attempt>/` (never deleted). After a
+CLEAN quarantine a harness-kind node gets **one corrective re-spawn** (G1b,
+symmetric with the contract-violation shape): original task + the reverted
+patch fenced as evidence + the scope restated, from the restored tree —
+in-scope writes from the first attempt survive. It spends a spawn, journals
+`scope-corrective-respawn`, and a second violation is terminal (the node
+fails naming every path and its outcome); shell nodes get none. On success
+the in-scope changed paths land in `touched-<attempt>.txt`.
 
 Two engine behaviours the scope feeds beyond quarantine: a heal re-run's prompt
 RESTATES the target's own scope (gate findings naming out-of-scope files

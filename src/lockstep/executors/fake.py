@@ -34,6 +34,11 @@ class FakeSpec(BaseModel):
     readonly: bool = False
     writes: list[str] = []  # declared write scope; see ShellSpec.writes
     write_files: dict[str, str] = {}  # rel path -> content, written on execute
+    # Successive write maps, one per spawn (same semantics as `outputs`: the
+    # last entry repeats). Overrides write_files when non-empty — exists so a
+    # test can model "the first attempt wrote out of scope, the corrective
+    # re-spawn stayed inside it" (G1b), which a fixed write map cannot.
+    write_files_by_attempt: list[dict[str, str]] = []
     exit_code: int = 0
     costs_tokens: bool = True
     sleep_s: float = 0.0
@@ -161,7 +166,11 @@ class FakeExecutor:
                     f.write(json.dumps(ev, ensure_ascii=False) + "\n")
         if spec.sleep_s:
             time.sleep(spec.sleep_s)
-        for rel, content in spec.write_files.items():
+        writes = spec.write_files
+        if spec.write_files_by_attempt:
+            writes = spec.write_files_by_attempt[
+                min(attempt, len(spec.write_files_by_attempt) - 1)]
+        for rel, content in writes.items():
             target = Path(self.repo_root) / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")

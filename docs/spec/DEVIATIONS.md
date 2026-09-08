@@ -737,3 +737,26 @@ file records implementation-level departures below that bar.
   result; `--force` overrides with the override journaled). All exit 7.
   Pinned by tests/test_adopt.py; the replay fixture passes un-re-recorded
   (nothing here touches hash composition).
+
+- **2026-09-08 — one corrective re-spawn after a write-scope quarantine**
+  (G1b, upstream-response-ow07-feedback; the scope twin of AMENDMENTS r5 A2's
+  contract corrective, for the same root cause: headless spawns are
+  stateless, so a correction must carry its own context). After a CLEAN
+  quarantine — a part-way rollback licenses nothing — a harness-kind node is
+  re-spawned once with the original prompt, the reverted out-of-scope patch
+  fenced as `scope.violation.patch` (capped at 40k chars; the full patch
+  stays on disk), and the declared scope restated. The round-2 baseline is
+  the ORIGINAL pre-attempt snapshot, deliberately: the quarantine restored
+  every out-of-scope path to it, attempt 1's in-scope writes are legal
+  against it by definition, and `tree_before`/`tree_after` then bracket the
+  node's total surviving change for `node_diff`. Bounded structurally (the
+  corrective path cannot recurse), spends a spawn (a budget trip stops
+  cleanly with the quarantine standing), journaled
+  (`scope-corrective-respawn`), and a second violation quarantines again and
+  fails terminally. Shell nodes get no corrective — A4's reasoning applied
+  to scope: identical argv would just re-offend. Unlike the contract
+  corrective this one is NOT output-only: the out-of-scope work is gone and
+  the re-spawn may need to redo it inside the scope. The boundary is not
+  weakened — the quarantine happens on every violation, evidence
+  attempt-scoped so round 2 cannot destroy round 1's. Pinned by
+  tests/test_write_scope.py::TestScopeCorrective.

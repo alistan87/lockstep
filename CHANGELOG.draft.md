@@ -49,3 +49,37 @@ tree looks right.
 
 Pinned by tests/test_adopt.py (the design note's nine acceptance tests plus
 the two dissolve paths); replay fixture passes un-re-recorded.
+
+## One corrective re-spawn after a write-scope quarantine (G1b)
+
+The scope twin of the contract corrective, accepted in the OW-07 response and
+built: after a CLEAN quarantine, a harness-kind node is re-spawned once from
+the restored tree — original task, the reverted patch fenced as evidence
+(`scope.violation.patch`, capped; the full patch stays on disk), the declared
+scope restated, and unlike the contract corrective it is NOT output-only (the
+out-of-scope work is gone; the re-spawn may redo it inside the scope).
+Attempt 1's in-scope writes survive. Bounded structurally, spends a spawn (a
+budget trip stops cleanly with the quarantine standing), journals
+`scope-corrective-respawn`; a second violation quarantines again and fails
+terminally with both attempts' evidence intact. Shell nodes get none —
+identical argv would just re-offend. The boundary is not weakened: the
+quarantine happens on every violation. (DEVIATIONS 2026-09-08;
+tests/test_write_scope.py::TestScopeCorrective; FakeSpec gains
+`write_files_by_attempt` so the offline suite can model recovery.)
+
+## The findings ledger reaches the cockpit
+
+The adjudicated-review programme's deferred deliverable (upstream response,
+S2+G5 item 5), now that the ledger exists to render: MISSION shows
+`review findings: 2 new, 1 persisting, 4 resolved, 1 accepted risk (round 3)`
+under the headline instead of an undifferentiated list. Mechanical like every
+line on that board — a count over the ledger file's own `state` fields, found
+via the flow arg the template already wires (`--arg ledger=`). All three
+surfaces render it (`mission_view.ledger_summary`: the page and the TUI
+in-process, `cockpit.ps1` via its `Get-LedgerLine` twin), the state order and
+phrases are pinned across implementations by test exactly like the glossary,
+and an EXISTING ledger that fails to parse is named out loud
+(`ledger unreadable`) — an unreadable memory must not look like no memory. A
+run without the arg, or whose gate has not written round 1 yet, renders
+nothing. COCKPIT-FOR-DOMAIN-EXPERTS defines the four words, since the guide
+binds what the surfaces may say.

@@ -258,6 +258,66 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
 
 # --------------------------------------------------------------- MISSION
 
+# The findings-ledger vocabulary, in render order: active states first (loud
+# before quiet, the same philosophy as the collapse rules). Keys are
+# lockstep.gates.ledger_check's STATES verbatim; values are the words a domain
+# expert sees. Kept identical to the counting order in cockpit.ps1's
+# Get-LedgerLine, and a test enforces that.
+LEDGER_STATE_WORDS = (
+    ("new", "new"),
+    ("persisting", "persisting"),
+    ("reported-resolved", "resolved"),
+    ("accepted-risk", "accepted risk"),
+)
+
+
+def ledger_summary(run_dir: Path, repo_root: Path | None = None,
+                   state: dict | None = None) -> str | None:
+    """One line of findings lifecycle from the campaign's ledger file —
+    `review findings: 2 new, 1 persisting, 4 resolved (round 3)` — instead of
+    the undifferentiated list the OW-07 report described (the adjudicated-
+    review programme's cockpit follow-on).
+
+    Mechanical, like every line on MISSION: a count over the ledger's own
+    `state` fields, no narration. The ledger is found the way the template
+    wires it — the flow arg named `ledger`, repo-relative — so a run without
+    that arg renders nothing (the normal case, not a missing part). A ledger
+    the gate has not written yet (round 1 in flight) also renders nothing:
+    that is a run state, not an absence worth naming. A ledger that EXISTS
+    but does not parse is named out loud — an unreadable memory looks exactly
+    like no memory, which is the one thing this line must not say.
+    """
+    run_dir = Path(run_dir)
+    if state is None:
+        state = read_json(run_dir / "state.json") or {}
+    rel = (state.get("args") or {}).get("ledger")
+    if not rel:
+        return None
+    root = Path(repo_root) if repo_root else Path(state.get("repo_root") or "")
+    if not str(root) or str(root) == ".":
+        root = Path(state.get("repo_root") or ".")
+    path = root / rel
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None
+    data = read_json(path)
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        return f"review findings: ledger unreadable - {rel}"
+    counts: dict[str, int] = {}
+    for entry in data["entries"]:
+        if isinstance(entry, dict):
+            key = str(entry.get("state"))
+            counts[key] = counts.get(key, 0) + 1
+    rnd = data.get("round")
+    suffix = f" (round {rnd})" if isinstance(rnd, int) else ""
+    parts = [f"{counts[key]} {word}" for key, word in LEDGER_STATE_WORDS if counts.get(key)]
+    if not parts:
+        return f"review findings: none recorded yet{suffix}"
+    return "review findings: " + ", ".join(parts) + suffix
+
+
 def heal_budgets(flow: dict | None) -> dict[str, int]:
     out: dict[str, int] = {}
     for n in ((flow or {}).get("nodes") or []):
@@ -429,7 +489,13 @@ def mission_rows(run_dir: Path, repo_root: Path | None = None,
     if state is None:
         return [(None, "(reading state...)")]
 
-    rows: list[tuple[str | None, str]] = [(None, headline(state, flow, now=now)), (None, "")]
+    rows: list[tuple[str | None, str]] = [(None, headline(state, flow, now=now))]
+    ledger = ledger_summary(run_dir, repo_root=repo_root, state=state)
+    if ledger:
+        # Directly under the headline: the campaign's memory is board-level
+        # context, not a property of any one step.
+        rows.append((None, ledger))
+    rows.append((None, ""))
     for step in steps:
         name = step["label"]
         if len(name) > LABEL_WIDTH:

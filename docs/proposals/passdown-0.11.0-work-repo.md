@@ -275,8 +275,14 @@ against a hash miss, its consumers re-run unweakened, and the pin dissolves
 on `--release`, a heal round, or a steer (design note
 `docs/proposals/DESIGN-NOTE-adopt.md`, adopted with all five decisions;
 DEVIATIONS 2026-09-08; the playbook's "I fixed the artifact by hand" section
-has the recipe). Still to come in 0.12.0: G1b, one corrective re-spawn on a
-write-scope violation, mirroring the contract-violation shape; S4's
+has the recipe). **G1b is built too**: one corrective re-spawn after a clean
+write-scope quarantine — original task + reverted patch as fenced evidence +
+scope restated, from the restored tree; a second violation is terminal, and
+the quarantine still happens every time (the playbook's lint-cleanup section
+has the summary; `pi-guarded` remains the better, free answer). So is the
+**ledger cockpit line**: a run carrying `--arg ledger=` shows
+`review findings: 2 new, 1 persisting, 4 resolved (round 3)` under the
+MISSION headline, on all three surfaces. Still to come in 0.12.0: S4's
 `stable_output` projection **only if** the discipline in §5.1 proves
 insufficient by then.
 

@@ -738,3 +738,90 @@ def test_cockpit_carries_the_awaiting_phrase():
     text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
     assert "resume from a terminal to answer" in text, \
         "cockpit.ps1 lost the S5 auto-reject wording"
+
+
+# ------------------------------------------------------ the findings ledger
+
+def _ledger_run(tmp_path, entries, *, round_n=3, args=None, write=True):
+    """A run whose flow arg names a ledger in a sibling 'repo' dir, the way
+    the adjudicated-review template wires it."""
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    run = make_run(tmp_path, {"w": rec("running")})
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["args"] = args if args is not None else {"ledger": "reviews/led.json"}
+    state["repo_root"] = str(repo)
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    if write:
+        led = repo / "reviews" / "led.json"
+        led.parent.mkdir(parents=True, exist_ok=True)
+        led.write_text(json.dumps({
+            "schema_version": "1.0", "round": round_n, "entries": entries,
+        }), encoding="utf-8")
+    return run
+
+
+def test_ledger_summary_counts_by_state_active_first(tmp_path):
+    run = _ledger_run(tmp_path, [
+        {"state": "new"}, {"state": "new"},
+        {"state": "persisting"},
+        {"state": "reported-resolved"}, {"state": "reported-resolved"},
+        {"state": "reported-resolved"}, {"state": "reported-resolved"},
+        {"state": "accepted-risk"},
+    ])
+    assert mv.ledger_summary(run) == (
+        "review findings: 2 new, 1 persisting, 4 resolved, 1 accepted risk (round 3)")
+
+
+def test_ledger_summary_omits_zero_counts(tmp_path):
+    run = _ledger_run(tmp_path, [{"state": "reported-resolved"}], round_n=1)
+    assert mv.ledger_summary(run) == "review findings: 1 resolved (round 1)"
+
+
+def test_ledger_summary_is_none_without_the_arg_or_the_file(tmp_path):
+    no_arg = _ledger_run(tmp_path, [], args={})
+    assert mv.ledger_summary(no_arg) is None
+    # Round 1 in flight: the arg names a ledger the gate has not written yet —
+    # a run state, not a missing part.
+    unwritten = _ledger_run(tmp_path / "b", [], write=False)
+    assert mv.ledger_summary(unwritten) is None
+
+
+def test_an_unreadable_ledger_is_named_never_blank(tmp_path):
+    """An unreadable memory must not look like no memory — the same rule as
+    the cost reader's `reader_note`."""
+    run = _ledger_run(tmp_path, [])
+    repo = tmp_path / "repo"
+    (repo / "reviews" / "led.json").write_text("{not json", encoding="utf-8")
+    line = mv.ledger_summary(run)
+    assert line == "review findings: ledger unreadable - reviews/led.json"
+
+
+def test_the_ledger_line_sits_under_the_headline(tmp_path):
+    run = _ledger_run(tmp_path, [{"state": "new"}], round_n=2)
+    rows = mv.mission_rows(run)
+    assert rows[1] == (None, "review findings: 1 new (round 2)")
+    assert rows[2] == (None, ""), "the blank separator survives the insertion"
+    # And it carries no node id: nothing to drill into.
+    assert mv.visible_nodes(run) == ["w"]
+
+
+def test_the_ledger_words_match_cockpit_ps1():
+    """The ledger vocabulary, pinned across the two implementations exactly
+    like the glossary and the heal decoration: same phrases, same state
+    order (active first). A pane saying `persists` while the page says
+    `persisting` is the split "MISSION is right" cannot survive."""
+    text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+    assert "'review findings: ' + ($parts -join ', ') + $suffix" in text
+    assert '"review findings: none recorded yet$suffix"' in text
+    assert '"review findings: ledger unreadable - $rel"' in text
+    # State order and words, character for character, from the PS order table.
+    m = re.search(
+        r"@\(@\('new', 'new'\), @\('persisting', 'persisting'\),\s*"
+        r"@\('reported-resolved', 'resolved'\), @\('accepted-risk', 'accepted risk'\)\)",
+        text,
+    )
+    assert m, "cockpit.ps1's ledger state order no longer matches LEDGER_STATE_WORDS"
+    assert mv.LEDGER_STATE_WORDS == (
+        ("new", "new"), ("persisting", "persisting"),
+        ("reported-resolved", "resolved"), ("accepted-risk", "accepted risk"))

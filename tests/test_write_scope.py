@@ -73,15 +73,21 @@ def test_the_offending_file_is_moved_aside_not_deleted(tmp_path, git_repo):
     MOVED into the attempt's discard dir and the failure message says where.
 
     This reverses a pinned test (was `test_the_offending_file_is_not_deleted`)
-    and supersedes the 2026-08-02 `spec.writes` entry in DEVIATIONS.md."""
+    and supersedes the 2026-08-02 `spec.writes` entry in DEVIATIONS.md.
+    Since G1b the fake's fixed write map re-offends on the corrective re-spawn,
+    so BOTH attempts leave evidence and the recorded error is round 2's —
+    attempt-scoped names are exactly what keeps attempt 2 from destroying
+    attempt 1's evidence (the `_quarantine` docstring's promise, now load-
+    bearing on every violation)."""
     h = build(tmp_path, _flow(["src"], write_files={"docs/leak.md": "x"}), git_repo)
     assert h.engine.run() == 3
     assert not (git_repo / "docs" / "leak.md").exists()
-    moved = h.run_dir / "phases" / "w" / "out-of-scope-1" / "docs" / "leak.md"
-    assert moved.read_text(encoding="utf-8") == "x"
+    for attempt in (1, 2):
+        moved = h.run_dir / "phases" / "w" / f"out-of-scope-{attempt}" / "docs" / "leak.md"
+        assert moved.read_text(encoding="utf-8") == "x"
     err = load_state(h.run_dir).nodes["w"].error or ""
     assert "docs/leak.md" in err
-    assert "out-of-scope-1/" in err
+    assert "out-of-scope-2/" in err
 
 
 def test_a_node_is_not_accused_of_a_concurrent_peers_write(tmp_path, git_repo):
@@ -778,3 +784,94 @@ def test_the_spawn_sees_the_RENDERED_scope(tmp_path, git_repo):
     work = ShellExecutor(repo_root=git_repo).plan(node, ctx)
     env = node_env(work, tmp_path)
     assert env["LOCKSTEP_WRITE_SCOPE"] == '["docs/plan.md"]'
+
+
+# ------------------------------------------------- G1b: scope-corrective re-spawn
+
+
+class TestScopeCorrective:
+    """G1b (upstream-response-ow07-feedback, accepted 0.12.0): one corrective
+    re-spawn after a write-scope quarantine, symmetric with the
+    contract-violation shape. The boundary is not weakened: the quarantine
+    still happened, the retry starts from the restored tree, and a second
+    violation is terminal."""
+
+    def test_corrective_recovers_when_it_stays_in_scope(self, tmp_path, git_repo):
+        from lockstep.state import read_events
+        from conftest import calls_of
+        flow = {
+            "name": "scope-corrective",
+            "nodes": [{"id": "w", "kind": "fake", "final": True,
+                       "spec": {"outputs": ["ok"], "writes": ["src"],
+                                "write_files_by_attempt": [
+                                    {"docs/leak.md": "x", "src/a.py": "good"},
+                                    {"src/a.py": "good2"},
+                                ]}}],
+        }
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 0
+        rec = load_state(h.run_dir).nodes["w"]
+        assert rec.status == "done", rec.error
+        assert rec.attempts == 2
+        # The quarantine happened for real: the leak is gone, evidence kept.
+        assert not (git_repo / "docs" / "leak.md").exists()
+        assert (h.run_dir / "phases" / "w" / "out-of-scope-1" / "docs" / "leak.md").exists()
+        # In-scope work survives both rounds; the corrective's write wins.
+        assert (git_repo / "src" / "a.py").read_text(encoding="utf-8") == "good2"
+        # Journaled, and the spawn was spent.
+        evs = [e for e in read_events(h.run_dir) if e.get("status") == "scope-corrective-respawn"]
+        assert len(evs) == 1
+        assert load_state(h.run_dir).token_spawns == 2
+        # The corrective prompt carries its own context: original task, the
+        # reverted patch as fenced evidence, the scope restated.
+        calls = calls_of(h, "w")
+        assert len(calls) == 2 and calls[1].corrective
+        assert "scope.violation.patch" in calls[1].prompt
+        assert "ONLY these paths (spec.writes): src" in calls[1].prompt
+        # node_diff's pair brackets the node's total surviving change.
+        assert rec.tree_before and rec.tree_after
+
+    def test_a_second_violation_is_terminal(self, tmp_path, git_repo):
+        from conftest import calls_of
+        h = build(tmp_path, _flow(["src"], write_files={"docs/leak.md": "x"}), git_repo)
+        assert h.engine.run() == 3
+        rec = load_state(h.run_dir).nodes["w"]
+        assert rec.status == "failed"
+        assert "ALSO violated" in (rec.error or "")
+        assert "one round" in (rec.error or "")
+        assert len(calls_of(h, "w")) == 2, "no third chance"
+        assert rec.tree_after is None, "a quarantined attempt left no tree"
+
+    def test_shell_nodes_get_no_corrective(self, tmp_path, git_repo):
+        """Shell is deterministic — re-running the same argv writes the same
+        paths (AMENDMENTS A4's reasoning, applied to scope)."""
+        from lockstep.state import read_events
+        flow = {
+            "name": "shell-no-corrective",
+            "nodes": [{"id": "s", "kind": "shell", "final": True,
+                       "spec": {"cmd": [PY, "-c",
+                                        "open('docs_leak.md','w').write('x')"],
+                                "writes": ["src"]}}],
+        }
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 3
+        rec = load_state(h.run_dir).nodes["s"]
+        assert rec.status == "failed" and "write scope" in (rec.error or "")
+        assert not any(e.get("status") == "scope-corrective-respawn"
+                       for e in read_events(h.run_dir))
+
+    def test_budget_trip_before_corrective_is_a_clean_stop(self, tmp_path, git_repo):
+        """The corrective spends a spawn like any other; a cap of 1 means the
+        quarantine stands and the run stops at the budget, never a traceback."""
+        flow = {
+            "name": "scope-budget",
+            "budget": {"max_agent_spawns": 1},
+            "nodes": [{"id": "w", "kind": "fake", "final": True,
+                       "spec": {"outputs": ["ok"], "writes": ["src"],
+                                "write_files": {"docs/leak.md": "x"}}}],
+        }
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 4
+        assert load_state(h.run_dir).token_spawns == 1
+        # The quarantine itself completed before the trip: the leak is gone.
+        assert not (git_repo / "docs" / "leak.md").exists()

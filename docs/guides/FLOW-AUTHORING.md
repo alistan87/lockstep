@@ -778,10 +778,17 @@ What to know before you declare one:
 
 - **A violation is quarantined, not just reported.** The blocked attempt is kept
   as `phases/<node>/out-of-scope-<attempt>.patch`, each violating path is
-  restored to its baseline or moved into `out-of-scope-<attempt>/`, and the node
-  fails with a message naming every path and its outcome. Declaring a scope is
-  therefore a decision about what may be *reverted*, not only about what gets
-  flagged. Rollback still never deletes.
+  restored to its baseline or moved into `out-of-scope-<attempt>/`. Declaring a
+  scope is therefore a decision about what may be *reverted*, not only about
+  what gets flagged. Rollback still never deletes.
+- **A harness-kind node gets one corrective re-spawn after a clean quarantine**
+  (G1b, mirroring the contract-violation shape): the original task, the
+  reverted patch fenced as evidence, and the scope restated, from the restored
+  tree — the first attempt's in-scope writes survive. It spends a spawn and
+  journals `scope-corrective-respawn`; a second violation fails the node with
+  a message naming every path and its outcome, and shell nodes get no
+  corrective (deterministic argv would just re-offend). The boundary is not
+  weakened: the quarantine still happened, every time.
 - **Entries are repo-root-relative and match a path, a directory prefix, or a
   glob** — `verify` rejects absolute or escaping entries (`bad-write-scope`)
   and entries referencing anything but an arg (`dynamic-write-scope`).

@@ -298,6 +298,17 @@ Getting that backwards — reading `[]` as falsy, therefore unconstrained — me
 the tightest possible declaration silently disabled the check, which is the
 shape of bug worth naming in a document about why things are the way they are.
 
+A violation quarantines (out-of-scope paths restored or moved aside, the
+attempt preserved as a patch), and then — G1b, for the same reason the
+contract corrective exists — a harness-kind node gets **one re-spawn from the
+restored tree**, its prompt carrying the original task, the reverted patch as
+fenced evidence, and the scope restated. Headless spawns are stateless; the
+correction must carry its own context. One round, a spent spawn, journaled; a
+second violation is terminal, shell gets none, and the boundary is not
+weakened — the quarantine happened either way. (The *preventive* layer
+remains the in-harness scope guard, `pi-guarded`, which makes the stray write
+fail in-session as a tool error.)
+
 The driver also compares a **lineage-head fingerprint** on resume, so an external
 edit between runs is reported by path rather than silently absorbed. It warns; it
 does not refuse. You are allowed to edit your own repository.

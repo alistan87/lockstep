@@ -999,10 +999,19 @@ class Engine:
                     scope_ref, scope, label=node.id, current=after
                 )
                 if violations:
-                    scope_error = self._quarantine(
+                    scope_error, clean = self._quarantine(
                         node, phase_dir, scope, scope_ref, in_scope, violations,
                         staged_before, after,
                     )
+                    if clean and getattr(executor, "supports_corrective_respawn", False):
+                        # G1b: ONE corrective re-spawn from the restored tree.
+                        # Inside the token, like the quarantine itself — the
+                        # re-spawn writes files. Only after a CLEAN rollback:
+                        # re-spawning over a part-way tree builds on wreckage.
+                        raw, scope_error = self._scope_corrective(
+                            node, executor, work, phase_dir, scope, scope_ref,
+                            staged_before, scope_error,
+                        )
                 elif not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None:
                     # Evidence of what a node touched, on SUCCESS. A failed
                     # spawn's changed paths are the wreckage, not the record.
@@ -1182,9 +1191,12 @@ class Engine:
         violations: list[str],
         staged_before: set[str],
         current: SnapshotRef | None = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Preserve the blocked attempt, put the tree back, say what happened to
-        every path. Returns the failure message.
+        every path. Returns (failure message, rollback-completed-cleanly) — the
+        flag is what licenses a scope-corrective re-spawn (G1b): a re-spawn
+        over a part-way-restored tree would build on exactly the wreckage the
+        quarantine failed to clear.
 
         Runs inside the tree token — the mutation is the dangerous half, and
         outside the token it reverts a concurrent node's live file while that
@@ -1279,7 +1291,104 @@ class Engine:
                 f"the new path was quarantined, so the file is in neither place — its "
                 f"content is in {stem}/"
             )
-        return "\n".join(lines)
+        return "\n".join(lines), failure is None
+
+    _SCOPE_PATCH_CAP = 40_000  # chars of patch embedded as evidence; full file stays on disk
+
+    def _scope_corrective_prompt(self, work: PlannedWork, scope: list[str], patch_text: str) -> str:
+        """G1b (upstream-response-ow07-feedback): the scope twin of
+        `_corrective_prompt`, for the same reason — a headless spawn is
+        stateless, so the correction must carry its own context: the original
+        task, the reverted writes as fenced evidence, and the boundary
+        restated. Unlike the contract corrective this one is NOT output-only:
+        the out-of-scope work is gone and the re-spawn may need to redo it,
+        inside the scope this time."""
+        if len(patch_text) > self._SCOPE_PATCH_CAP:
+            patch_text = (patch_text[: self._SCOPE_PATCH_CAP]
+                          + "\n... (truncated; the full patch is preserved in the run dir)")
+        original = str(work.render) if isinstance(work.render, str) else json.dumps(work.render)
+        return (
+            f"{original}\n\n---\n"
+            "A previous attempt at this task wrote outside its declared write scope. "
+            "Those out-of-scope writes were REVERTED; the tree you are working in now "
+            "contains only the in-scope part of that attempt. The reverted changes are "
+            "fenced below as evidence of what was attempted — do not recreate them at "
+            "those paths:\n"
+            + fence_block("scope.violation.patch", patch_text)
+            + "\n\nYou may write ONLY these paths (spec.writes): "
+            + (", ".join(scope) if scope else "nothing — this task declares writes: []")
+            + ".\nComplete the task from the current tree, keeping every edit inside "
+              "that scope. If the reverted work was necessary, achieve its purpose "
+              "through the declared paths instead."
+        )
+
+    def _scope_corrective(
+        self,
+        node: Node,
+        executor,
+        work: PlannedWork,
+        phase_dir: Path,
+        scope: list[str],
+        scope_ref: SnapshotRef,
+        staged_before: set[str],
+        first_error: str,
+    ) -> tuple[RawResult, str | None]:
+        """Exactly one corrective re-spawn after a write-scope quarantine (G1b),
+        symmetric with the contract-violation shape: bounded (this method never
+        recurses), spends a spawn, journaled, and it does not weaken the
+        boundary — the quarantine already happened, the retry starts from the
+        restored tree, and a second violation quarantines again with no third
+        chance. Returns (raw, scope_error): scope_error None means the
+        corrective stayed in scope and `_finish` should judge its result.
+
+        The round-2 baseline is the ORIGINAL `scope_ref`, deliberately: the
+        quarantine restored every out-of-scope path to it, in-scope writes from
+        attempt 1 are legal against it by definition, and `tree_before` keeps
+        describing the pre-attempt tree so `node_diff` brackets the node's
+        total surviving change, not just the corrective's."""
+        rec = self._rec(node.id)
+        patch_path = phase_dir / f"out-of-scope-{rec.attempts}.patch"
+        try:
+            patch_text = patch_path.read_text(encoding="utf-8")
+        except OSError:  # pragma: no cover — quarantine reported clean, so it wrote
+            patch_text = "(the quarantine patch could not be read back)"
+        corrective = work.model_copy(update={
+            "render": self._scope_corrective_prompt(work, scope, patch_text),
+            "meta": {**work.meta, "corrective": True},
+        })
+        try:
+            self._spend_spawn(corrective)
+        except BudgetTripped:
+            rec.error = f"{first_error}\n(budget tripped before the scope-corrective re-spawn)"
+            raise
+        append_event(self.store.run_dir, {"node": node.id, "status": "scope-corrective-respawn"})
+        self.log(
+            f"[{node.id}] write scope violated — one corrective re-spawn from the "
+            f"restored tree (declared scope restated, reverted patch embedded)"
+        )
+        raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
+        rec.attempts += 1
+        self.store.record(rec)
+        if (phase_dir / "CANCELLED").exists():
+            return raw2, "cancelled"  # r6 C3 covers corrective re-spawns
+        after2 = self._after_snapshot(node)
+        in_scope2, violations2 = self._scope_changes(
+            scope_ref, scope, label=node.id, current=after2
+        )
+        if violations2:
+            msg2, _ = self._quarantine(
+                node, phase_dir, scope, scope_ref, in_scope2, violations2,
+                staged_before, after2,
+            )
+            return raw2, (
+                "the corrective re-spawn ALSO violated the write scope — no further "
+                "retries (one round, by design)\n" + msg2
+            )
+        if not raw2.timed_out and raw2.exit_code == 0 and raw2.result_text is not None:
+            if after2 is not None:
+                rec.tree_after = after2.ref
+            self._record_touched(node, phase_dir, in_scope2)
+        return raw2, None
 
     def _maybe_snapshot(self, node: Node) -> None:
         """Baseline snapshot is PROACTIVE: taken immediately before the first

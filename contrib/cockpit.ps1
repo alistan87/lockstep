@@ -491,6 +491,51 @@ function Get-HeadlineLine {
   return ($parts -join '  -  ')
 }
 
+function Get-LedgerLine {
+  <#
+    The findings-ledger line (adjudicated-review cockpit follow-on): a count
+    over the ledger file's own `state` fields, no narration. Mirrors
+    mission_view.ledger_summary — same arg lookup (the flow arg named
+    `ledger`), same state order (LEDGER_STATE_WORDS: new, persisting,
+    resolved, accepted risk), same phrases; a test pins the fragments.
+    Returns $null when the run has no ledger arg or the gate has not written
+    the file yet; an EXISTING file that does not parse is named out loud — an
+    unreadable memory must not look like no memory.
+  #>
+  param($State)
+
+  $rel = $null
+  if ($State.args -and $State.args.PSObject.Properties['ledger']) { $rel = [string]$State.args.ledger }
+  if (-not $rel) { return $null }
+  $root = [string]$State.repo_root
+  if (-not $root) { return $null }
+  $path = Join-Path $root $rel
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+  $data = Read-RunJson $path
+  if ($null -eq $data -or -not $data.PSObject.Properties['entries'] -or $null -eq $data.entries) {
+    return "review findings: ledger unreadable - $rel"
+  }
+  $counts = @{}
+  foreach ($entry in @($data.entries)) {
+    if ($null -eq $entry) { continue }
+    $s = [string]$entry.state
+    if ($counts.ContainsKey($s)) { $counts[$s]++ } else { $counts[$s] = 1 }
+  }
+  $suffix = ''
+  if ($data.PSObject.Properties['round'] -and $data.round -is [int64]) { $suffix = " (round $($data.round))" }
+  elseif ($data.PSObject.Properties['round'] -and $data.round -is [int]) { $suffix = " (round $($data.round))" }
+  $order = @(@('new', 'new'), @('persisting', 'persisting'),
+             @('reported-resolved', 'resolved'), @('accepted-risk', 'accepted risk'))
+  $parts = @()
+  foreach ($pair in $order) {
+    if ($counts.ContainsKey($pair[0]) -and $counts[$pair[0]] -gt 0) {
+      $parts += "$($counts[$pair[0]]) $($pair[1])"
+    }
+  }
+  if ($parts.Count -eq 0) { return "review findings: none recorded yet$suffix" }
+  return 'review findings: ' + ($parts -join ', ') + $suffix
+}
+
 function Get-MissionLines {
   <#
     The DE tier. Every line is a field mapping over state.json plus the run's
@@ -512,7 +557,10 @@ function Get-MissionLines {
   $healBudget = Get-HealBudget $flow
   $labels = Get-NodeLabels -RunDir $RunDir
 
-  $lines = @((Get-HeadlineLine -State $state -Flow $flow), '')
+  $lines = @((Get-HeadlineLine -State $state -Flow $flow))
+  $ledgerLine = Get-LedgerLine -State $state
+  if ($ledgerLine) { $lines += $ledgerLine }  # board-level context, under the headline
+  $lines += ''
   $collapsedDone = 0
   $collapsedSkip = 0
   $pendingShown = 0

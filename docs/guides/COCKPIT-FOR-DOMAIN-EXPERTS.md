@@ -88,6 +88,18 @@ started. You may see `no envelope` next to some tasks — that just means one of
 the tools cannot report its own token usage. It is not an error and nothing is
 wrong.
 
+On a review campaign — a run that keeps a findings ledger across rounds —
+MISSION shows one more line under the headline, like
+`review findings: 2 new, 1 persisting, 4 resolved (round 3)`. It is a plain
+count over that ledger, and the words mean exactly this: **new** — found this
+round; **persisting** — found before and still there; **resolved** — reported
+fixed (it stays in the ledger; nothing is ever deleted from it); **accepted
+risk** — a person decided, in writing, to live with it. Only new and
+persisting findings can stop the run. If the line ever says
+`ledger unreadable`, tell the assistant — the run's memory file exists but
+cannot be read, and that is worth fixing before trusting a "nothing is wrong"
+board.
+
 ### The page
 
 There is a fourth thing, and it is optional: **the same board in a browser**, on

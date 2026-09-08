@@ -60,6 +60,13 @@ changes nothing a correct agent can do.) The other honest fix: if satisfying
 the linter makes the node touch `src/x.py`, then the node writes `src/x.py`
 — declare it. A scope you hope won't be enforced is not a scope.
 
+Since 0.12.0 a violation is also no longer instantly terminal: after the
+quarantine, the node gets **one corrective re-spawn** from the restored tree
+— original task, the reverted patch as fenced evidence, the scope restated —
+so a Phase-1-style loss costs one extra spawn instead of the phase. The
+quarantine still happens every time; a second violation is terminal. The
+guard is still the better answer (free), this is the net under it.
+
 ## "Detached runs can't wait for an approval"
 
 They can — the auto-reject **is** the park. A detached run reaching an

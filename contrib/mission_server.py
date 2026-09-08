@@ -1487,6 +1487,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     events = _events(run_dir)
     node_ids = list((state.get("nodes") or {}).keys())
     running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
+    ledger = mv.ledger_summary(run_dir, repo_root=repo_root, state=state)
 
     parts = [
         '<div class="top"><span class="brand">MISSION</span>'
@@ -1505,6 +1506,11 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         f'<p class="stale-note" id="offline-note" role="status" hidden>{e(OFFLINE_SENTENCE)}</p>',
 
         f'<p class="hero">{e(mv.headline(state, flow, now=now))}</p>',
+        # The findings-ledger line, when the run has one (adjudicated-review
+        # follow-on): board-level context, same words as the pane and the TUI —
+        # rendered right under the headline for the same reason mission_rows
+        # puts it there. Empty string when absent; joins cleanly below.
+        f'<p class="hero-sub">{e(ledger)}</p>' if ledger else "",
         '<p class="hero-sub">This page only reads files. Decisions are not made here — '
         'when something needs you, it happens in the terminal.</p>',
 
