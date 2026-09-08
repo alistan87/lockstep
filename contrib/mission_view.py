@@ -207,8 +207,18 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
     failed = [r for r in recs if r.get("status") == "failed"]
     heals = sum(int(r.get("heal_round") or 0) for r in recs)
 
+    # S6 (upstream-response-ow07-feedback): a post-lock refusal leaves every
+    # node pending and a run-level terminal record. Without the check this
+    # line said "step 0 of 13 - waiting" — an idle resumable run, the one
+    # thing the page may not say about a run that was refused. The record is
+    # cleared by the next drive, so this branch never outlives its truth.
+    terminal = state.get("terminal") or {}
+
     parts = [f"step {min(settled + len(running), total)} of {total}"]
-    if failed:
+    if terminal:
+        reason = str(terminal.get("reason") or "refused").replace("_", " ")
+        parts.append(f"refused: {reason}")
+    elif failed:
         parts.append("stopped with a problem")
     elif blocked:
         parts.append("needs you")
@@ -235,7 +245,7 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
     if heals:
         parts.append(f"{heals} rework round{'s' if heals != 1 else ''}")
 
-    to_go = steps_to_decision(state, flow)
+    to_go = steps_to_decision(state, flow) if not terminal else None
     if to_go is not None:
         if to_go <= 0:
             parts.append("your decision is recorded")
@@ -269,6 +279,13 @@ def node_word(node_id: str, rec: dict, budgets: dict[str, int]) -> str:
     """
     status = rec.get("status")
     word = GLOSSARY.get(status, status or "?")
+    if (rec.get("role") == "approval" and status == "blocked"
+            and "auto-rejected" in (rec.get("error") or "")):
+        # S5: an auto-reject means NOBODY WAS THERE — a parked question, not a
+        # decision. The record already tells the two apart (the engine's own
+        # comment at the auto-reject site); this is the surface catching up.
+        # Mechanical: derived from recorded fields, narrating nothing.
+        word = f"{word} - resume from a terminal to answer"
     rounds = int(rec.get("heal_round") or 0)
     if rounds > 0:
         if status in ("pending", "running"):
@@ -556,6 +573,16 @@ def activity_lines(run_dir: Path, limit: int = 12,
     state = read_json(run_dir / "state.json")
     if state is None:
         return ["(reading state...)"]
+
+    terminal = state.get("terminal") or {}
+    if terminal:
+        # S6: the idleness has a mechanical cause; name it, with the first
+        # line of the refusal verbatim — evidence, not narration.
+        reason = str(terminal.get("reason") or "refused").replace("_", " ")
+        first = str(terminal.get("message") or "").splitlines()[:1]
+        return [f"refused: {reason} - nothing is going to run"] + [
+            "  " + ln for ln in first
+        ]
 
     node_id = frontier_node(state)
     if node_id is None:

@@ -1394,7 +1394,12 @@ def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dic
         # a problem, and calling that "needs you" sends the reader to a terminal
         # to answer a question nobody asked. Checked in this order because a
         # blocked-on-approval run also has non-done nodes.
-        if any(r.get("status") == "running" for r in nodes):
+        if state.get("terminal"):
+            # S6: a refused run outranks everything — its nodes all read
+            # `pending`, which the branches below would render as "done"-ward
+            # calm. The next drive clears the record.
+            word, cls = "refused", "bad"
+        elif any(r.get("status") == "running" for r in nodes):
             word, cls = mv.GLOSSARY.get("running", "running"), "run"
         elif any(r.get("status") == "failed" for r in nodes):
             word, cls = mv.GLOSSARY.get("failed", "stopped with a problem"), "bad"

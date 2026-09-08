@@ -76,7 +76,13 @@ is fine.
   index, so inserting an item re-runs the shifted tail.
 - **Approval** (`role: "approval"`): NO `kind`, NO `spec`
   (`approval-with-kind`) — core-handled TTY prompt. Non-TTY stdin ⇒
-  auto-reject, exit 6. Never resume-skipped.
+  auto-reject, exit 6. Never resume-skipped. **An auto-reject IS the
+  detached-approval idiom, not a failure of it**: detach the long work; exit
+  6 with `approval auto-rejected` in the node's error is the machine asking
+  for you (the record distinguishes "nobody was there" from a human's
+  "reject", `rejection.txt` stays absent, and `wait`/`status`/MISSION word it
+  as awaiting a human); `lockstep resume` from a real terminal asks once, for
+  real. Do not split a flow in two to "avoid" the auto-reject.
 - **Readonly**: `spec.readonly: true` lets harness nodes fan out in parallel
   (drops the `tree` exclusion) but the executor stanza MUST declare
   `readonly_argv` (`readonly-unenforced`) — §6.11 wants the enforcement

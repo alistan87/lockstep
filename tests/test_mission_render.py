@@ -670,3 +670,71 @@ def test_liveness_counts_any_file_an_agent_touches(tmp_path):
     # a log with content still wins — it is the better signal when there is one
     (phase / "stdout.log").write_text("some output\n", encoding="utf-8")
     assert "producing output" in (mv.stdout_liveness(phase) or "")
+
+
+# ---------------------------------------------------------------- refusals (S6)
+
+def _refused_state(run, reason="dirty_scope"):
+    state = mv.read_json(run / "state.json")
+    state["terminal"] = {
+        "status": "refused", "exit_code": 7, "reason": reason,
+        "message": "uncommitted working-tree changes fall inside declared "
+                   "write scopes and would be legally overwritten by the run",
+    }
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return state
+
+
+def test_headline_reports_a_refusal_not_waiting(tmp_path):
+    # S6 (upstream-response-ow07-feedback): all-pending plus a terminal record
+    # is a REFUSED run. "step 0 of 13 - waiting" was the observed rendering,
+    # and it reads as an idle resumable run - the one thing the page may not
+    # say about a run that was refused.
+    run = make_run(tmp_path, {"a": rec("pending"), "b": rec("pending")})
+    state = _refused_state(run)
+    line = mv.headline(state, None, now=NOW)
+    assert "refused: dirty scope" in line
+    assert "waiting" not in line
+
+
+def test_headline_refusal_is_cleared_by_the_next_drive_shape(tmp_path):
+    # No terminal record -> exactly the old wording; the field is additive.
+    run = make_run(tmp_path, {"a": rec("pending")})
+    line = mv.headline(mv.read_json(run / "state.json"), None, now=NOW)
+    assert "waiting" in line and "refused" not in line
+
+
+def test_activity_names_a_refusal_mechanically(tmp_path):
+    # L-M1: idle placeholders are mechanical, and a refused run's idleness has
+    # a mechanical cause worth naming - not "waiting - nothing is spending".
+    run = make_run(tmp_path, {"a": rec("pending")})
+    _refused_state(run)
+    lines = mv.activity_lines(run)
+    assert lines[0].startswith("refused: dirty scope")
+    assert not any("waiting" in ln for ln in lines)
+
+
+def test_cockpit_headline_carries_the_refused_word():
+    # Same posture as the glossary parity test below: two implementations of
+    # the trust anchor may not drift apart quietly. The PowerShell headline
+    # must know the refused word the Python one renders.
+    text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+    assert "refused: " in text, "cockpit.ps1 Get-HeadlineLine lost the S6 refused branch"
+
+
+# ------------------------------------------------------- auto-reject wording (S5)
+
+def test_node_word_tells_an_auto_reject_from_a_rejection():
+    # S5: an auto-rejected approval is a parked question, not a decision; a
+    # human rejection is a decision. Same status, different facts, and the
+    # error field already carries the difference.
+    auto = rec("blocked", role="approval", error="approval auto-rejected (non-TTY stdin)")
+    assert mv.node_word("ok", auto, {}) == "needs you - resume from a terminal to answer"
+    human = rec("blocked", role="approval", error="approval rejected")
+    assert mv.node_word("ok", human, {}) == "needs you"
+
+
+def test_cockpit_carries_the_awaiting_phrase():
+    text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+    assert "resume from a terminal to answer" in text, \
+        "cockpit.ps1 lost the S5 auto-reject wording"

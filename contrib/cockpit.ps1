@@ -435,8 +435,18 @@ function Get-HeadlineLine {
     if ($r.PSObject.Properties['heal_round'] -and $r.heal_round) { $heals += [int]$r.heal_round }
   }
 
+  # S6: a post-lock refusal leaves every node pending plus a run-level
+  # terminal record; without the check this line said "waiting" about a run
+  # that was refused. Mirrors mission_view.headline; a test pins the word.
+  $terminal = $null
+  if ($State.PSObject.Properties['terminal']) { $terminal = $State.terminal }
+
   $parts = @("step $([Math]::Min($settled + $running.Count, $total)) of $total")
-  $parts += if ($failed.Count) { 'stopped with a problem' }
+  $parts += if ($terminal) {
+              $reason = if ($terminal.reason) { $terminal.reason } else { 'refused' }
+              "refused: $($reason -replace '_', ' ')"
+            }
+            elseif ($failed.Count) { 'stopped with a problem' }
             elseif ($blocked.Count) { 'needs you' }
             elseif ($running.Count) { 'running' }
             elseif ($settled -eq $total) { 'done' }
@@ -513,6 +523,12 @@ function Get-MissionLines {
     $rec = $prop.Value
     $word = $script:Glossary[$rec.status]
     if (-not $word) { $word = $rec.status }
+    # S5: an auto-rejected approval is a parked question, not a decision.
+    # Mirrors mission_view.node_word; a test pins the phrase.
+    if ($rec.role -eq 'approval' -and $rec.status -eq 'blocked' -and
+        "$($rec.error)" -like '*auto-rejected*') {
+      $word = "$word - resume from a terminal to answer"
+    }
     $healed = $rec.PSObject.Properties['heal_round'] -and [int]$rec.heal_round -gt 0
     $isMap = $rec.items -and $rec.items.PSObject.Properties.Count -gt 0
     $hasNote = Test-Path -LiteralPath (Join-Path $RunDir "phases/$id/mission.txt")
@@ -1340,6 +1356,10 @@ function Show-Why {
   if ($name -ne $NodeId) { Write-Host "  (step id: $NodeId)" -ForegroundColor DarkGray }
   Write-Host ('=' * 72)
   $word = $script:Glossary[$rec.status]; if (-not $word) { $word = $rec.status }
+  if ($rec.role -eq 'approval' -and $rec.status -eq 'blocked' -and
+      "$($rec.error)" -like '*auto-rejected*') {
+    $word = "$word - resume from a terminal to answer"   # S5, as above
+  }
   Write-Host "  state      : $word"
   Write-Host "  attempts   : $($rec.attempts)"
   if ($rec.heal_round) { Write-Host "  rework     : round $($rec.heal_round)" }

@@ -149,6 +149,22 @@ class PhaseRecord(BaseModel):
     seeded_from: str | None = None
 
 
+class TerminalRecord(BaseModel):
+    """S6 (upstream-response-ow07-feedback): the run-level outcome of a drive
+    that refused AFTER taking the lock — dirty-scope preflight, a heal
+    precondition, a workspace error. Node records cannot carry it (no node
+    ever ran), and without it `wait` reconstructs exit 4 from the all-pending
+    statuses: "a plain resume continues" — advice that, for a dirty-scope
+    refusal, recommends the exact bypass the refusal existed to prevent
+    (resume is E9-exempt). Written by the CLI's refusal handlers, cleared by
+    the next drive; readers prefer it over reconstruction while it stands."""
+
+    status: str  # "refused" — the only writer today; a field so readers print it
+    exit_code: int
+    reason: str  # "dirty_scope" | an exception class name; machine-matchable
+    message: str  # the refusal text verbatim — the evidence, not a category
+
+
 class RunState(BaseModel):
     schema_version: str = "1.0"
     flow_name: str
@@ -195,6 +211,10 @@ class RunState(BaseModel):
     # working tree. Empty on runs created before the field existed; readers
     # treat empty as unknown, never as a mismatch.
     repo_root: str = ""
+    # S6: authoritative outcome of a drive that ended without node events.
+    # Optional and additive — absent on every run before the field existed and
+    # on every run whose meaning node records already carry.
+    terminal: TerminalRecord | None = None
 
 
 # --- events.jsonl --------------------------------------------------------------
@@ -667,6 +687,31 @@ def acquire_lock(run_dir: Path, force: bool = False) -> None:
 
 def release_lock(run_dir: Path) -> None:
     (Path(run_dir) / "lock").unlink(missing_ok=True)
+
+
+def record_terminal(run_dir: Path, exit_code: int, reason: str, message: str) -> None:
+    """S6: persist a refusal's outcome before the lock is released, so `wait`,
+    `status`, `active` and MISSION report the refusal instead of reconstructing
+    "stopped resumable" from the untouched node statuses.
+
+    Tolerates a missing/unreadable state.json: a refusal can fire before the
+    first state write (a broken replay index, a config error), and the record
+    is reporting, never a second failure. The refusal event keeps the journal
+    non-empty — the run dir stops being indistinguishable from one nobody
+    drove, and `verify-trace` has a chain to verify (acceptance test 4)."""
+    run_dir = Path(run_dir)
+    try:
+        state = load_state(run_dir)
+    except (OSError, ValueError):
+        return
+    state.terminal = TerminalRecord(
+        status="refused", exit_code=exit_code, reason=reason, message=message
+    )
+    write_state(run_dir, state)
+    append_event(
+        run_dir,
+        {"kind": "refusal", "exit_code": exit_code, "reason": reason, "message": message},
+    )
 
 
 # --- run directories (SPEC §9.2, §10.1) ----------------------------------------

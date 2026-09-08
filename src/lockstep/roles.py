@@ -109,7 +109,15 @@ class RunResources:
 
 
 class RunRefusal(Exception):
-    """Run-time refusal (exit 7), e.g. heal.rollback on a non-git tree."""
+    """Run-time refusal (exit 7), e.g. heal.rollback on a non-git tree.
+
+    `reason` is the machine-matchable category the S6 terminal record carries
+    (`record_terminal`); the message stays the human evidence. Default is the
+    generic "refused" — only refusals a reader dispatches on need a name."""
+
+    def __init__(self, message: str, *, reason: str = "refused"):
+        super().__init__(message)
+        self.reason = reason
 
 
 class _ProgressTailer:
@@ -751,7 +759,8 @@ class Engine:
                 "uncommitted working-tree changes fall inside declared write scopes and "
                 "would be legally overwritten by the run:\n  "
                 + "\n  ".join(overlaps)
-                + "\ncommit or stash them first, narrow the scopes, or pass --allow-dirty-scope"
+                + "\ncommit or stash them first, narrow the scopes, or pass --allow-dirty-scope",
+                reason="dirty_scope",
             )
 
     def _record_gate_baselines(self) -> None:

@@ -190,3 +190,29 @@ def test_an_abbreviated_flag_does_not_fork_bomb(tmp_path, capsys):
     text = log.read_text(encoding="utf-8", errors="replace")
     assert "detached: launched" not in text, "the child re-detached — that is the bomb"
     assert [d for d in runs.iterdir() if d.is_dir()] == [run_dir], "exactly one run"
+
+
+def test_a_detached_refusal_is_echoed_here_and_exits_7(tmp_path, git_repo, monkeypatch, capsys):
+    """S6 (upstream-response-ow07-feedback): the grace window. The parent used
+    to report a clean launch while the child's dirty-scope refusal went only
+    to a log nobody was told to read — and `wait` then said exit 4. The
+    refusal belongs in the launching terminal, like a launch that never took
+    the lock."""
+    (git_repo / "src").mkdir(exist_ok=True)
+    (git_repo / "src" / "a.py").write_text("operator edit, uncommitted\n", encoding="utf-8")
+    flow = {
+        "name": "refuse-detached",
+        "nodes": [{
+            "id": "w", "kind": "fake", "final": True,
+            "spec": {"outputs": ["ok"], "write_files": {"src/a.py": "x"},
+                     "writes": ["src"]},
+        }],
+    }
+    flow_path = git_repo / "f.tg.json"
+    flow_path.write_text(json.dumps(flow), encoding="utf-8")
+    monkeypatch.chdir(git_repo)
+    code = cli_main(["run", str(flow_path), "--runs-dir", str(tmp_path / "runs"), "--detach"])
+    captured = capsys.readouterr()
+    assert code == 7, captured.err
+    assert "refused" in captured.err
+    assert "--allow-dirty-scope" in captured.err

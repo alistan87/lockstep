@@ -46,6 +46,7 @@ from .state import (
     load_state,
     new_run_dir,
     read_events,
+    record_terminal,
     release_lock,
     utcnow,
     verify_trace,
@@ -249,6 +250,11 @@ def _run_engine(
         print("workspace: null (external-edit detection off)")  # AMENDMENTS M6
     if resume:
         engine.prepare_resume()
+    # S6: this drive supersedes any recorded refusal — a stale record would
+    # make every later `wait` report a refusal that no longer describes the
+    # run. Cleared HERE, not on success, so a drive that refuses again simply
+    # re-records.
+    state.terminal = None
     write_state(run_dir, state)
     code = engine.run()
     print(f"run dir: {run_dir}")
@@ -318,6 +324,29 @@ def _detach(ns, runs_dir: Path, locate) -> int:
             # be found in the process table. This is the pid `status` and
             # `active` cross-reference, so it is the only one worth printing.
             print(f"  driver pid: {holder.pid}")
+        # S6 grace window: a dirty-scope refusal fires milliseconds after the
+        # child takes the lock — after this parent has already reported a
+        # successful launch. Watch briefly for that one outcome and echo it
+        # HERE, like a launch that never took the lock; return promptly once
+        # real node work begins (any node leaving `pending`), so a healthy
+        # launch is reported exactly as today.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                st = load_state(run_dir)
+            except (OSError, ValueError):
+                st = None
+            if st is not None:
+                if st.terminal is not None and not (run_dir / "lock").exists():
+                    t = st.terminal
+                    print(f"  the detached driver was {t.status} — "
+                          f"{t.reason.replace('_', ' ')}:", file=sys.stderr)
+                    for line in t.message.splitlines():
+                        print(f"    {line}", file=sys.stderr)
+                    return t.exit_code
+                if any(r.status != "pending" for r in st.nodes.values()):
+                    break
+            time.sleep(0.1)
         if code is not None:
             print(f"  (it already finished, exit {code} — `lockstep status` has the detail)")
         print(f"  follow:  lockstep status {run_dir}")
@@ -451,6 +480,11 @@ def cmd_run(ns) -> int:
             force_stale=getattr(ns, "force_stale", None),
         )
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
+        # S6: the lock was already taken, so a detached parent has reported a
+        # successful launch — this record is the only way `wait`/`status`/
+        # MISSION learn the drive refused instead of reconstructing "stopped
+        # resumable" from the untouched node statuses.
+        record_terminal(run_dir, EXIT_CONFIG, getattr(e, "reason", type(e).__name__), str(e))
         return _fail(str(e), EXIT_CONFIG)
     finally:
         release_lock(run_dir)
@@ -515,6 +549,11 @@ def cmd_resume(ns) -> int:
                            resume=True, otel_file=ns.otel_file,
                            cockpit=getattr(ns, "cockpit", False))
     except (RunRefusal, HarnessError, WorkspaceError, PathEscapeError, ContractError) as e:
+        # S6: the lock was already taken, so a detached parent has reported a
+        # successful launch — this record is the only way `wait`/`status`/
+        # MISSION learn the drive refused instead of reconstructing "stopped
+        # resumable" from the untouched node statuses.
+        record_terminal(run_dir, EXIT_CONFIG, getattr(e, "reason", type(e).__name__), str(e))
         return _fail(str(e), EXIT_CONFIG)
     finally:
         release_lock(run_dir)
@@ -609,6 +648,11 @@ def cmd_active(ns) -> int:
             tag = "STARTING?"
         elif info.state == "dead" or running:
             tag = "STALE"
+        elif state.terminal is not None:
+            # S6: a refused run is recent, operator-relevant news — never
+            # buried under the IDLE default-hide. The next drive clears the
+            # record, so this cannot accumulate the way idle gate-stops do.
+            tag = "REFUSED"
         else:
             # Unfinished, but nobody ever claimed it and nothing says `running`
             # — a run stopped at a gate or a budget, possibly months ago. Every
@@ -629,6 +673,10 @@ def cmd_active(ns) -> int:
               + (f"; running: {', '.join(running)}" if running else ""))
         if tag == "STALE":
             print(f"  reclaim:    lockstep resume {d}")
+        elif tag == "REFUSED":
+            first = state.terminal.message.splitlines()[0] if state.terminal.message else ""
+            print(f"  {state.terminal.reason.replace('_', ' ')}: {first}")
+            print(f"  full text:  lockstep status {d}")
     idle_note = (
         "" if (ns.all or not idle)
         else f"; {idle} idle unfinished run(s) not shown (--all)"
@@ -712,6 +760,18 @@ def cmd_wait(ns) -> int:
     if not (run_dir / "state.json").exists():
         return _fail(f"{run_dir} has no state.json", EXIT_CONFIG)
     state = load_state(run_dir)
+    if state.terminal is not None:
+        # S6: the drive ended without node events (a post-lock refusal), so
+        # reconstructing from node statuses would report exit 4 — "a plain
+        # resume continues" — for a run that was REFUSED, and for dirty scope
+        # that resume skips the very preflight that refused (E9 exempts
+        # resumes). The record is authoritative while it stands; the next
+        # drive clears it.
+        t = state.terminal
+        first = t.message.splitlines()[0] if t.message else ""
+        print(f"wait: run {t.status} — {t.reason.replace('_', ' ')}: {first} (exit {t.exit_code})")
+        print(f"  the full refusal is in `lockstep status {run_dir}`")
+        return t.exit_code
     recs = list(state.nodes.values())
     statuses = [r.status for r in recs]
     counts = {s: statuses.count(s) for s in sorted(set(statuses))}
@@ -750,7 +810,27 @@ def cmd_wait(ns) -> int:
     else:
         code = EXIT_BUDGET  # stopped mid-run: budget, provider limit, or kill
     print(f"wait: run settled — {counts} (exit {code})")
+    if code == EXIT_APPROVAL_REJECTED and _awaiting_approvals(state) \
+            and not (run_dir / "rejection.txt").exists():
+        # S5: exit 6 is unchanged — it is the documented handoff signal — but
+        # an auto-reject is a parked question, not a decision, and the line
+        # must not read like one.
+        print("wait: the approval was auto-rejected (nobody was at the terminal) — "
+              "resume from a terminal to answer it")
     return code
+
+
+def _awaiting_approvals(state: RunState) -> list[str]:
+    """S5: approvals blocked because NOBODY WAS THERE — the engine's
+    auto-reject marker, a different fact from a human's "reject" (the engine
+    comments this distinction at the auto-reject site; these are the surfaces
+    catching up). A human rejection's error is plain "approval rejected" and
+    never matches."""
+    return sorted(
+        n for n, r in state.nodes.items()
+        if r.role == "approval" and r.status == "blocked"
+        and "auto-rejected" in (r.error or "")
+    )
 
 
 def _liveness_lines(run_dir: Path, state: RunState) -> list[str]:
@@ -785,8 +865,21 @@ def cmd_status(ns) -> int:
     except (OSError, ValueError) as e:
         return _fail(f"cannot read state: {e}", EXIT_CONFIG)
     print(f"flow: {state.flow_name}   started: {state.started_at}   token spawns: {state.token_spawns}")
+    if state.terminal is not None:
+        # S6: the run's meaning, above the per-node noise — every node below
+        # says `pending`, which is exactly the shape that used to read as an
+        # idle resumable run. The message is the evidence (named paths, named
+        # way out), so it prints verbatim, never as a category.
+        t = state.terminal
+        print(f"{t.status}: {t.reason.replace('_', ' ')} (exit {t.exit_code})")
+        for line in t.message.splitlines():
+            print(f"  {line}")
     for line in _liveness_lines(run_dir, state):
         print(line)
+    awaiting = _awaiting_approvals(state)
+    if awaiting and not (run_dir / "rejection.txt").exists():
+        print(f"awaiting a human decision on {', '.join(awaiting)} — "
+              f"resume from a terminal to answer")
     if state.driver_version:
         drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
         print(f"driver: {state.driver_version}{drift}")

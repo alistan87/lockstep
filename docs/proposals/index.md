@@ -24,4 +24,4 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [copilot-work-order-mimir-db-concurrency.md](copilot-work-order-mimir-db-concurrency.md) | `plan` | draft | Work order (for Copilot, work repo): MIMIR DuckDB concurrency — audit and fix |
 | [concurrent-orchestration-work-order.md](concurrent-orchestration-work-order.md) | `plan` | stable | Work order: concurrent lockstep — guardrails, tooling, and the lane contract (BUILT 2026-08-16) |
 | [passdown-0.10.0-work-repo.md](passdown-0.10.0-work-repo.md) | `notes` | stable | Passdown: 0.9.0 → 0.10.0 (the fleet release) — work-repo integration |
-| [upstream-response-ow07-feedback.md](upstream-response-ow07-feedback.md) | `plan` | draft | Upstream response: OW-07 consumer feedback — convergent reviews, adoption, and truthful terminal state |
+| [upstream-response-ow07-feedback.md](upstream-response-ow07-feedback.md) | `plan` | stable | Upstream response: OW-07 consumer feedback — convergent reviews, adoption, and truthful terminal state |
