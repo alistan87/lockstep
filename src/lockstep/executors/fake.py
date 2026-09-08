@@ -14,11 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from ..interpolate import render_template
 from ..protocols import PlannedWork, RawResult, RenderCtx
-from ..reads import apply_reads
+from ..reads import apply_reads, reads_manifest_text
 from ..state import part_digest
 from ..taskgraph import Node
 from .shell import resolve_ctx_of
@@ -51,6 +51,23 @@ class FakeSpec(BaseModel):
     writes_rationale: str = ""  # see ShellSpec.writes_rationale
     baseline: bool = False  # role=gate only (E4); see ShellSpec.baseline
     reads: list[str] = []  # declared file inputs (parity 3.1); see HarnessSpec.reads
+    # S1 parity: same field, same validator posture as HarnessSpec — the
+    # offline suite exercises the real shape.
+    reads_manifest: str = "none"
+
+    @field_validator("reads_manifest")
+    @classmethod
+    def _manifest_values(cls, v):
+        if v not in ("none", "paths"):
+            raise ValueError("reads_manifest must be 'none' or 'paths'")
+        return v
+
+    @model_validator(mode="after")
+    def _manifest_requires_reads(self):
+        if self.reads_manifest != "none" and not self.reads:
+            raise ValueError("reads_manifest without reads has nothing to list "
+                             "— declare spec.reads or drop the manifest")
+        return self
 
 
 @dataclass
@@ -96,10 +113,15 @@ class FakeExecutor:
         # contributes nothing, so the offline suite exercises the real shape.
         reads_parts, reads_detail = apply_reads(spec.reads, ctx, node.id)
         hash_detail.update(reads_detail)
+        manifest = ""
+        if spec.reads_manifest == "paths":
+            # S1 parity with HarnessExecutor.plan: prompt and hash together.
+            manifest = "\n\n" + reads_manifest_text(spec.reads, ctx)
+            hash_detail["prompt.reads_manifest"] = part_digest(manifest)
         return PlannedWork(
-            render=rendered.prompt_text + heal + steer,
+            render=rendered.prompt_text + heal + steer + manifest,
             fingerprint_parts=[
-                f"prompt:{rendered.hash_text}{heal}{steer}",
+                f"prompt:{rendered.hash_text}{heal}{steer}{manifest}",
                 f"config:{ctx.config_digest}",
             ] + reads_parts,
             costs_tokens=spec.costs_tokens,

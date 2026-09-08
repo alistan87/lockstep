@@ -143,6 +143,33 @@ def hash_reads(repo_root: Path, patterns: list[str],
     return part, detail, stats
 
 
+def reads_manifest_text(reads: list[str], ctx) -> str:
+    """S1 (upstream-response-ow07-feedback): the resolved `reads` list as
+    prompt text — `spec.reads` alone is an input-hash declaration the harness
+    never sees, and the word invites flow authors to believe otherwise
+    (observed live: a reviewer told to "read the files named in spec.reads"
+    correctly reported no such list and blocked). Opt-in via
+    `reads_manifest: "paths"`; the text rides the prompt, so it participates
+    in the input hash with no extra machinery.
+
+    Same `render_scope`, same enumerator, same runs-root exclusion as
+    `apply_reads` — the list the prompt names and the files the hash covers
+    can never disagree. A zero-match set SAYS so: silence is how the observed
+    failure happened."""
+    from .interpolate import render_scope
+
+    rendered = render_scope(list(reads), ctx.args)
+    run_dir = Path(ctx.phase_dir).parents[1]
+    runs_root = Path(ctx.runs_root) if getattr(ctx, "runs_root", None) else run_dir.parent
+    matches = matched_files(Path(ctx.repo_root), rendered, exclude_roots=(runs_root,))
+    if not matches:
+        return ("Declared inputs (spec.reads): the declared patterns matched NO "
+                "files at plan time.")
+    rels = [p.relative_to(Path(ctx.repo_root)).as_posix() for p in matches]
+    return ("Declared inputs (spec.reads), resolved at plan time:\n"
+            + "\n".join(f"- {r}" for r in rels))
+
+
 def apply_reads(reads: list[str], ctx, node_id: str) -> tuple[list[str], dict[str, str]]:
     """The executor-side integration, shared by every planning executor that
     supports `spec.reads`. Renders `{args.NAME}` entries through the same

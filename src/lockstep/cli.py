@@ -44,6 +44,7 @@ from .state import (
     find_attachable_run,
     inspect_lock,
     load_state,
+    append_event,
     new_run_dir,
     read_events,
     record_terminal,
@@ -538,12 +539,31 @@ def cmd_resume(ns) -> int:
     code, has_errors = _do_verify(tg, config, repo_root)
     if has_errors:
         return code
+    override = getattr(ns, "max_agent_spawns", None)
+    if override is not None:
+        # G3a: this-drive-only. The flow's ceiling is the consent artifact
+        # (plan_card reads it); an override is an explicit operator act that
+        # leaves a journal event, never a sticky setting. Budgets are not hash
+        # inputs (that is why --seed survives budget edits), so nothing
+        # re-bills. Applied AFTER the flow_hash check — the lineage is still
+        # the authored flow's.
+        old = tg.budget.max_agent_spawns
+        if override < state.token_spawns:
+            print(f"budget: the new cap {override} is below the {state.token_spawns} "
+                  f"already spent — nothing new will run (a valid way to say stop)")
+        tg = tg.model_copy(
+            update={"budget": tg.budget.model_copy(update={"max_agent_spawns": override})}
+        )
+        print(f"budget: max agent spawns {old} -> {override} for this drive only (journaled)")
     if getattr(ns, "detach", False):
         return _detach(ns, run_dir.parent, lambda: run_dir)
     try:
         acquire_lock(run_dir, force=ns.force_unlock)
     except LockHeld as e:
         return _fail(f"run dir {run_dir} is locked by {e.holder} (exit 8)", EXIT_LOCKED)
+    if override is not None:
+        append_event(run_dir, {"kind": "budget", "op": "override",
+                               "from": old, "to": override})
     try:
         return _run_engine(tg, flow_hash, config, run_dir, state, repo_root, ns.max_workers,
                            resume=True, otel_file=ns.otel_file,
@@ -884,6 +904,13 @@ def cmd_status(ns) -> int:
     if awaiting and not (run_dir / "rejection.txt").exists():
         print(f"awaiting a human decision on {', '.join(awaiting)} — "
               f"resume from a terminal to answer")
+    overrides = [e for e in read_events(run_dir) if e.get("kind") == "budget"]
+    if overrides:
+        # G3a audit trail: the ceiling is part of the consent story, so an
+        # override is visible here, not only in the journal file.
+        last = overrides[-1]
+        print(f"budget: max agent spawns overridden {last.get('from')} -> {last.get('to')} "
+              f"at {last.get('ts', '?')} (that drive only)")
     if state.driver_version:
         drift = "" if state.driver_version == __version__ else f"  (installed: {__version__})"
         print(f"driver: {state.driver_version}{drift}")
@@ -1151,6 +1178,11 @@ def main(argv: list[str] | None = None) -> int:
     pres.add_argument("--repo-root", default=".")
     pres.add_argument("--max-workers", type=int, default=2)
     pres.add_argument("--force-unlock", action="store_true")
+    pres.add_argument("--max-agent-spawns", type=int, default=None, metavar="N",
+                      help="override budget.max_agent_spawns for THIS drive only "
+                           "(G3a): journaled, never persisted — the flow's ceiling "
+                           "returns on the next plain resume. Editing the flow for "
+                           "a budget bump would start a new lineage; this does not.")
     pres.add_argument("--detach", action="store_true",
                       help="resume in a process that outlives this one; prints the run dir and "
                            "pid and exits 0 (stdin is the null device: approvals auto-reject)")

@@ -631,6 +631,23 @@ Each matched file's content digest folds into the node's `input_hash` (one
 file re-bills exactly the nodes that declared it — and `lockstep explain`
 names the file (`reads.src/x.py changed`) instead of an opaque part.
 
+**`spec.reads` is an input-hash declaration only. It does not tell the
+harness which files exist and does not grant or perform reads.** A prompt
+that says "review the files named in `spec.reads`" names a list the model
+cannot see (observed live: the reviewer correctly reported no such list and
+blocked). If the prompt should carry the resolved list, opt in:
+
+```jsonc
+{ "reads": ["src/**/*.py"], "reads_manifest": "paths" }
+```
+
+`"paths"` appends the sorted, resolved, repo-relative file list to the
+prompt — in the prompt, therefore in the input hash, so a changed match set
+re-bills the node and `explain` names `prompt.reads_manifest`. A zero-match
+set says so explicitly rather than staying silent. `reads_manifest` without
+`reads` is a verify error (`spec-invalid`): dead config must not hide a
+wrong belief about what it does.
+
 **This is a PRECISION feature, not a correctness feature.** lockstep cannot
 observe what an agent subprocess actually opens, so an undeclared read is
 silently stale-blind — the same limitation `spec.writes` had before

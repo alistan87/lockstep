@@ -13,11 +13,13 @@ import json
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from ..contracts import ContractError, describe_contract, resolve_contract
 from ..interpolate import fence_context_file, render_scope, render_template
-from ..reads import apply_reads
+from ..reads import apply_reads, reads_manifest_text
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import ExecutorStanza, LockstepConfig
 from ..state import part_digest
@@ -51,6 +53,22 @@ class HarnessSpec(BaseModel):
     # undeclared read stays invisible (see reads.py). {args.NAME} only, like
     # `writes`. Empty/absent contributes nothing (M3 additivity).
     reads: list[str] = []
+    # S1 (upstream-response-ow07-feedback): opt-in manifest of the RESOLVED
+    # reads list, appended to the prompt — and therefore to the input hash,
+    # with no extra machinery. `reads` alone is an input-hash declaration the
+    # harness never sees; the word invites authors to believe otherwise.
+    # "none" (and absence) is byte-identical to the pre-manifest era (M3).
+    reads_manifest: Literal["none", "paths"] = "none"
+
+    @model_validator(mode="after")
+    def _manifest_requires_reads(self):
+        # Dead config must not hide a wrong belief about what it does (the
+        # on_exhausted-at-max_rounds-0 posture): a manifest with nothing to
+        # list is refused at verify (`spec-invalid`), not silently empty.
+        if self.reads_manifest != "none" and not self.reads:
+            raise ValueError("reads_manifest without reads has nothing to list "
+                             "— declare spec.reads or drop the manifest")
+        return self
 
 
 class HarnessError(Exception):
@@ -277,6 +295,15 @@ class HarnessExecutor:
                 prompt_parts.append(contract_text)
                 hash_parts.append(contract_text)
                 hash_detail["prompt.contract"] = part_digest(contract_text)
+        if spec.reads_manifest == "paths":
+            # In the prompt AND the hash parts: a changed match set re-bills
+            # and `explain` names prompt.reads_manifest as what moved. Shares
+            # apply_reads' enumerator, so the list the prompt names and the
+            # files the hash covers cannot disagree.
+            manifest = reads_manifest_text(spec.reads, ctx)
+            prompt_parts.append(manifest)
+            hash_parts.append(manifest)
+            hash_detail["prompt.reads_manifest"] = part_digest(manifest)
         result_file = "result.json" if node.output == "json" else "result.txt"
         footer = FOOTER_READONLY if spec.readonly else FOOTER
         prompt_parts.append(
