@@ -65,7 +65,10 @@ all reported at once with named codes) and `run <flow> --dry-run` to see waves.
   lockstep.gates.<name>` — `pytest_verdict`, `block_on_severity`,
   `required_sections`, `version_sync`, `citation_check`, `numbers_check`,
   `coverage_delta`, `fingerprint_check`, `pi_guard_smoke`, `scoped_checks`,
-  `tournament_pick`
+  `tournament_pick`, `ledger_check` (convergent review, below), `lock_held`
+  (preflight for a flow that will write a SHARED file — a fleet lane's
+  database, a cross-run artifact; refuses by name before the write meets a
+  held lock, FLEET-OPERATIONS)
   (FLOW-AUTHORING has the argv for each). An embedded one-liner is untested,
   unreadable in the run dir, and re-quoted wrong on the first edit.
 - **A gate wired to an ABSOLUTE target owns the repository's debt.**
@@ -203,8 +206,11 @@ should, or re-bills a whole corpus because one byte moved.
   bill. Interpolate what you *want* pinned to the hash; nothing else.
 - **`max_interp_chars` (20000) protects harness prompts only.** Over the cap a
   value spills to a file and the prompt gets a stub path. **Shell argv is
-  neither capped nor spilled** — the raw string hits Windows' ~32k command-line
-  limit and the spawn fails with exit 127. Have shell nodes read a file.
+  neither capped nor spilled** — an oversized command line is refused BEFORE
+  the platform sees it (`ArgvTooLong`, exit 127, the error naming the limit
+  and the oversized element; Windows caps the whole line at ~32k). The
+  message's `prompt_via = "stdin"` remedy is for harness stanzas — for a
+  shell node the fix is to read a file instead of interpolating the payload.
 - **Fan out over a manifest, not a blob**: shell node emits `PathManifest` →
   `map` takes one item each. The only shape whose cost tracks the CHANGED part
   of a corpus, because each item caches separately.
@@ -249,9 +255,12 @@ Harness nodes DEFAULT to `retry: { max: 2, backoff_ms: 60000 }` (AMENDMENTS-r5
 B2) — transient provider errors (429/529) surface as nonzero exits and the
 minute-scale backoff absorbs them. Setting `retry` explicitly in the flow file
 (even `{"max": 0}`) overrides the default entirely; shell nodes stay at
-`max: 0`. If you do need a custom retry, bake it in BEFORE the first run —
-editing the flow later changes `flow_hash` and starts a new lineage,
-re-running (and re-billing) every completed node.
+`max: 0`. Editing the flow mid-campaign changes `flow_hash` and starts a new
+lineage — but that costs a command, not the completed work: `retry` is not a
+hash input, so `run <edited-flow> --seed <old_run>` serves every completed
+node free into the new lineage (shell nodes re-run free; map ITEMS re-bill —
+the one real cost, budget for it on map-heavy flows). Budget-only change?
+Don't edit the flow at all: `resume --max-agent-spawns N`.
 
 **On a REQUEST-metered plan (Copilot and friends), set `"retry": {"max": 0}`.**
 There a 429 usually means quota exhausted, not a blip: it does not clear in a
@@ -325,6 +334,17 @@ otherwise read as authorization to edit them), and a fresh `run` refuses when
 uncommitted working-tree changes sit inside any declared scope — an in-scope
 write would legally overwrite the operator's edit (`--allow-dirty-scope`
 overrides; resumes are exempt).
+
+**Authoring for remediation (0.12.0).** When a gate blocks and a human fixes
+the writer's artifact by hand, `lockstep adopt` settles that edit and re-runs
+the consumers — but it REFUSES when any node interpolates the writer's
+recorded result text (`{steps.<writer>.output}`/`.json`): adoption rewrites
+the tree, never a recorded result, so that consumer would re-read the
+superseded model output. For any flow whose scoped artifact a human might
+plausibly remediate, have consumers read the FILE (say the path in the task
+text, declare it in `spec.reads`) rather than interpolate the writer's
+output — the same shape "pass a PATH, not the payload" already argues for,
+now with a second reason.
 
 Verification: absolute or escaping entries are `bad-write-scope`; an entry
 referencing anything but `{args.NAME}` is `dynamic-write-scope`; a map node
@@ -418,8 +438,12 @@ a couple of minutes — the footer's "optionally, you MAY" invitation to write
 ## Budget & executors
 
 `budget.max_agent_spawns` counts every token-costing spawn INCLUDING corrective
-re-spawns and heal rounds — interrupted lineages keep their counter, so leave
-headroom. Executors are stanzas in `lockstep.toml` (see
+re-spawns (contract AND scope) and heal rounds — interrupted lineages keep
+their counter, so leave headroom, but size for the honest expected cost rather
+than the worst case: a run that stops at the cap (exit 4) is raised for one
+drive with `resume --max-agent-spawns N`, journaled, no flow edit and no new
+lineage. The flow's ceiling stays the consent artifact. Executors are stanzas
+in `lockstep.toml` (see
 `lockstep.toml.example`); pick per node via `spec.executor`, per flow via
 `executor_default`, else the config `default`. Multi-model review = one stanza
 per model (see `flows/audit-spec.tg.json`).
