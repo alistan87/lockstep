@@ -760,3 +760,103 @@ file records implementation-level departures below that bar.
   weakened — the quarantine happens on every violation, evidence
   attempt-scoped so round 2 cannot destroy round 1's. Pinned by
   tests/test_write_scope.py::TestScopeCorrective.
+
+- **2026-09-09 — stanza-digest canonicalization over a frozen field set,
+  with a scheduling-field carve-out** (throughput-parity A1/A2; amends how
+  r5 B1's per-stanza digest serializes, and adds a stanza tier to r5 B2's
+  retry resolution order). The digest covers: the v1 field set (`argv`,
+  `prompt_via`, `json_field`, `persona_flag`, `readonly_argv`) always,
+  defaults included — byte-identical to the pre-A1 whole-model digest,
+  pinned by tests/test_stanza_digest.py against recorded values from the
+  shipped example; any later behaviour-bearing field only when set away
+  from its default; scheduling-only fields never. Why: `model_dump()` of an
+  `extra="forbid"` model meant ANY new stanza field changed every stanza's
+  digest and re-billed every cached harness node on upgrade (ROADMAP-NOTES
+  2026-08-15, twice) — the spurious-invalidation class r5 B1 exists to
+  kill. Two standing rules: a new field's class (scheduling-only vs
+  behaviour-bearing) is decided when the field is added, and a
+  behaviour-bearing field must have a default whose absence-semantics equal
+  the pre-field behaviour. First consumer: `default_retry` on a stanza
+  (scheduling-only, never hashed — node `retry` unhashed is r5 B3's
+  precedent) resolves between node `retry` and the kind default:
+  node > stanza > kind. This amends r5 B2's resolution order, which had no
+  stanza tier; taken as a deviation, not an r7 amendment (rev 3 adoption
+  call, PROPOSAL-throughput-and-harness-parity §9). The stanza's value
+  rides `work.meta` from plan time because `_effective_retry` never sees
+  the stanza.
+
+- **2026-09-09 — deletion-only JSON repair ahead of r5 A2's
+  validate→re-spawn two-step, and the corrective fence upgraded to the
+  longest near-object** (throughput-parity C2/C3; §8.3 already extracts and
+  unwraps, and the E2 fence salvage is the logged precedent for driver-side
+  salvage). When contract validation fails on a harness-kind node (single
+  or map item), the driver first tries a deterministic in-house repair that
+  may only DELETE: strip fence lines, take the longest raw_decode-complete
+  value, drop garbage around it, remove dangling commas before existing
+  closers. It never synthesizes closing tokens — a synthesized `]` would
+  pass a stream truncated at `[{f1},{f2},` as a valid two-finding review
+  and truncation after `[` as a CLEAN one — and it refuses a complete value
+  enclosed by a broken outer container (a fragment of a truncated result,
+  not a value amid garbage). Acceptance carries three obligations: the
+  invalid result file is rotated FIRST (file channel; a rotation that
+  cannot happen refuses the repair), the `kind:"repair"` journal event
+  names the rotated file and each deletion, and `repaired: true` on the
+  record is surfaced by `status` and the mission drawer. Never for gates —
+  a verdict's consumers act without a human re-reading raw bytes; a gate's
+  validation failure goes straight to the corrective. Shell keeps A4
+  (terminal on mismatch). When repair fails or is refused, the corrective
+  fence embeds the longest NEAR-object from the raw channel (a failed
+  decode's reach — complete values are deliberately not candidates, so a
+  harness envelope never displaces its own unwrapped result) instead of
+  the salvaged inner rubble, capped at max_interp_chars — the
+  chronicle-forensics fix, verbatim from ROADMAP-NOTES 2026-08-15. Pinned
+  by tests/test_repair.py.
+
+- **2026-09-09 — `envelope = "pi-stream"`: the pi event stream as a result
+  channel** (throughput-parity D; redefines only SPEC §8.3's
+  stdout-fallback leg, per stanza, additively — absent means today's
+  extract-last-JSON behaviour, and the file channel still wins so a
+  writer's `result.json` is never shadowed by its stream chatter).
+  Behaviour-bearing stanza field under the A1 rule (hashed only when set);
+  mutually exclusive with `json_field`, refused at config validation
+  (exit 7 — the existing seam for an invalid stanza; the proposal said
+  "verify error", and verify --config reaches the same refusal through
+  config load). The result is the concatenation of TEXT-typed content
+  blocks of the LAST assistant `message_end` — thinking excluded, or a
+  reviewer's chain of thought becomes its verdict; a stream that settles
+  with no assistant `message_end` (observed) is the NAMED error "stream
+  ended with no assistant text", never a silent empty result; provider
+  error events stay in raw stdout where `diagnose_provider_error`'s marker
+  scan already reads them. The parsers moved into the driver
+  (`lockstep.pistream`); contrib/cost_report.py imports them with its
+  standalone fallback kept (a cockpit copied without the driver degrades,
+  per the missing-part honesty rule). `doctor` probes the stream channel
+  itself and fails a stanza whose stream yields no assistant text, instead
+  of passing on "ok" appearing in raw chatter. Payoff recorded in
+  lockstep.toml.example: pi-review regains `--mode json`, ending the named
+  honesty gap ("telemetry on reviewers costs correctness") — reviewers
+  now carry usage envelopes in every cost surface. Pinned by
+  tests/test_pistream.py.
+
+- **2026-09-09 — schema pass-through (`schema_argv`) and its `schema:`
+  fingerprint part** (throughput-parity C1; additive to M3 — a node on a
+  stanza without the key, or without a resolvable contract, hashes
+  byte-identically to before the feature existed, pinned like `reads:`).
+  When a node has `output: "json"`, a resolvable contract, and a stanza
+  declaring `schema_argv`, the template is appended to argv with
+  placeholders intact ({prompt} rule): `{schema}` expands at execute to the
+  CONTRACT's compact JSON schema — a `Name[]` contract becomes
+  `{"type":"array","items":<model schema>}`, not the bare model schema,
+  which would have GUARANTEED the corrective re-spawn on every `Finding[]`
+  reviewer node (F-S5) — and `{schema_file}` to a run-specific path
+  (`contract-schema.json` in the phase dir, excluded from input_hash like
+  every run-specific path). The FILLED schema is its own fingerprint part
+  (`schema:<compact-json>`): the stanza digest covers only the template and
+  the hashed contract-description prose is lossy, so a Field-constraint
+  edit would otherwise serve a stale result (F-S6). When
+  `model_json_schema()` cannot be produced, the flag AND the part are
+  skipped symmetrically, mirroring the contract-description block.
+  `verify --lint` warns (`lint-schema-argv`) when an inline `{schema}`
+  rides a `prompt_via = "argv"` stanza — schema + prompt + corrective
+  share one ~32k Windows command line. Pinned by
+  tests/test_schema_argv.py.

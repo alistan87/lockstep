@@ -34,6 +34,7 @@ from .interpolate import (
 from .policy import ACTOR_LOCAL_USER
 from .protocols import PlannedWork, RawResult, RenderCtx, SnapshotRef
 from .registry import LockstepConfig, Registry
+from .repair import longest_near_object, repair_json
 from .state import (
     ItemRecord,
     append_event,
@@ -47,7 +48,7 @@ from .state import (
     utcnow,
 )
 from .store import FileStore
-from .taskgraph import Node, TaskGraph
+from .taskgraph import Node, RetrySpec, TaskGraph
 from .workspace import GitWorkspace, WorkspaceError, path_in_scope
 
 SETTLED = {"done", "skipped"}
@@ -1414,13 +1415,19 @@ class Engine:
                 )
 
     @staticmethod
-    def _effective_retry(node: Node, executor):
-        """AMENDMENTS-r5 B2: a node that sets `retry` in the flow file (field
-        present, even {"max": 0}) uses it verbatim; otherwise the executor's
-        kind-level default_retry (harness: 2 × minute-scale backoff for
-        transient 429/529s); otherwise the model default."""
+    def _effective_retry(node: Node, executor, work: PlannedWork | None = None):
+        """AMENDMENTS-r5 B2 plus the A2 stanza tier (DEVIATIONS 2026-09-09):
+        a node that sets `retry` in the flow file (field present, even
+        {"max": 0}) uses it verbatim; otherwise the resolved stanza's
+        `default_retry` (carried in work.meta — scheduling-only, unhashed);
+        otherwise the executor's kind-level default_retry (harness: 2 ×
+        minute-scale backoff for transient 429/529s); otherwise the model
+        default."""
         if "retry" in node.model_fields_set:
             return node.retry
+        stanza_default = work.meta.get("stanza_default_retry") if work is not None else None
+        if stanza_default is not None:
+            return RetrySpec.model_validate(stanza_default)
         return getattr(executor, "default_retry", None) or node.retry
 
     def _execute_with_retries(self, node: Node, executor, work: PlannedWork, phase_dir: Path) -> RawResult:
@@ -1428,7 +1435,7 @@ class Engine:
         automatic retry on timeout or empty result, additive, even when
         retry.max == 0 (SPEC §9.3, AMENDMENTS M4)."""
         rec = self._rec(node.id)
-        retry = self._effective_retry(node, executor)
+        retry = self._effective_retry(node, executor, work)
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0
         auto_used = False
@@ -1492,6 +1499,121 @@ class Engine:
             f"{instruction}"
         )
 
+    def _try_repair(
+        self, node: Node, executor, phase_dir: Path, raw: RawResult, contract_ref, *,
+        item_index: int | None = None,
+    ) -> tuple[object, str] | None:
+        """C2 (DEVIATIONS 2026-09-09): before spending the corrective re-spawn
+        — on a request-metered harness, a second billed request — try a
+        deterministic deletion-only repair of the bytes already in hand.
+        Deletion-only because a synthesized closer would pass a truncated
+        review as a clean one (F-E2). Never for gates: a verdict is the one
+        result whose consumers act without a human re-reading raw bytes.
+        Licensed by the same flag as the corrective (shell stays terminal on
+        mismatch, AMENDMENTS A4). Returns (validated value, repaired text) or
+        None — including when the pre-repair evidence cannot be preserved."""
+        if node.role == "gate" or not getattr(executor, "supports_corrective_respawn", False):
+            return None
+        # Two candidate inputs, in order: the channel's own pick, then — FILE
+        # channel only — the raw result-file bytes. The real executor salvages
+        # a non-JSON file down to its last balanced inner value (E2) before
+        # validation, so a dangling-comma file arrives here as `[]` and only
+        # the raw bytes can be repaired. The stdout channel gets no such
+        # fallback: raw stdout is narration, and a narrated example object
+        # that happens to validate must never be adopted as the result.
+        candidates = [raw.result_text or ""]
+        if raw.source == "file":
+            file_text = self._raw_channel_text(phase_dir, raw)
+            if file_text is not None and file_text not in candidates:
+                candidates.append(file_text)
+        repaired_text = None
+        for candidate in candidates:
+            attempt = repair_json(candidate)
+            if attempt is None:
+                continue
+            try:
+                value = validate_result(attempt[0], contract_ref)
+            except ContractError:
+                continue
+            repaired_text, deletions = attempt
+            break
+        if repaired_text is None:
+            return None
+        # Rotation-first is an evidence obligation (F-E3/F-S7): on the file
+        # channel the raw bytes exist ONLY in the result file, rotation
+        # normally happens at the NEXT execute (which repair's whole point is
+        # to avoid), and write_result would clobber them. A rotation that
+        # cannot happen refuses the repair — the corrective decides instead.
+        rotated = self._rotate_invalid_result(phase_dir, raw)
+        if raw.source == "file" and rotated is None:
+            return None
+        label = node.id if item_index is None else f"{node.id}[{item_index}]"
+        append_event(self.store.run_dir, {
+            "kind": "repair", "node": label, "rotated": rotated, "deleted": deletions,
+        })
+        self.log(f"[{label}] invalid output accepted after deletion-only repair "
+                 f"(no re-spawn): {'; '.join(deletions)}")
+        return value, repaired_text
+
+    @staticmethod
+    def _rotate_invalid_result(phase_dir: Path, raw: RawResult) -> str | None:
+        """Rotate the invalid result file to the next -attemptN name (the
+        executors' own rotation scheme). None when there is nothing to rotate
+        (stdout channel: the raw bytes live untouched in stdout.log) or when
+        rotation failed."""
+        if raw.source != "file":
+            return None
+        for name in ("result.json", "result.txt"):
+            p = phase_dir / name
+            if not p.exists():
+                continue
+            n = 1
+            while (phase_dir / f"{p.stem}-attempt{n}{p.suffix}").exists():
+                n += 1
+            target = phase_dir / f"{p.stem}-attempt{n}{p.suffix}"
+            for _ in range(2):  # this machine's AV: one retry on a transient denial
+                try:
+                    p.rename(target)
+                    return target.name
+                except OSError:
+                    time.sleep(0.1)
+            return None
+        return None
+
+    @staticmethod
+    def _raw_channel_text(phase_dir: Path, raw: RawResult) -> str | None:
+        """The result channel's RAW bytes (§8.3): the result file for the file
+        channel, stdout for the fallback — what extraction salvaged FROM,
+        which one corrupted token can make longer and more useful than what
+        it salvaged (C3)."""
+        paths = []
+        if raw.source == "file":
+            paths = [phase_dir / "result.json", phase_dir / "result.txt"]
+        elif raw.stdout_path:
+            paths = [Path(raw.stdout_path)]
+        for p in paths:
+            try:
+                if p.exists():
+                    return p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        return None
+
+    def _corrective_fence_text(self, phase_dir: Path, raw: RawResult) -> str | None:
+        """C3 (ROADMAP-NOTES 2026-08-15, chronicle forensics): when the raw
+        channel holds a longer near-object than the salvaged value — one
+        corrupted token collapsed extraction to the last balanced INNER value
+        — fence the model's own truncated output so it corrects instead of
+        re-deriving. Capped at max_interp_chars; §7 fencing is applied by
+        _corrective_prompt as always."""
+        fence_text = raw.result_text
+        src = self._raw_channel_text(phase_dir, raw)
+        if src:
+            near = longest_near_object(src)
+            if near is not None and len(near) > len(fence_text or ""):
+                fence_text = near[: self.tg.max_interp_chars]
+        return fence_text
+
     def _validate_with_respawn(
         self, node: Node, executor, work: PlannedWork, phase_dir: Path, raw: RawResult
     ) -> tuple[object, str] | None:
@@ -1505,12 +1627,18 @@ class Engine:
             return validate_result(raw.result_text or "", ref), raw.result_text or ""
         except ContractError as e:
             first_error = str(e)
+        repaired = self._try_repair(node, executor, phase_dir, raw, ref)
+        if repaired is not None:
+            rec.repaired = True
+            return repaired
         if not getattr(executor, "supports_corrective_respawn", False):
             rec.error = f"contract validation failed: {first_error}"
             return None
         corrective = work.model_copy(
             update={
-                "render": self._corrective_prompt(node, work, raw.result_text, first_error),
+                "render": self._corrective_prompt(
+                    node, work, self._corrective_fence_text(phase_dir, raw), first_error
+                ),
                 "meta": {**work.meta, "corrective": True},
             }
         )
@@ -2001,10 +2129,18 @@ class Engine:
                 try:
                     validate_result(text, contract_ref)
                 except ContractError as e:
-                    if getattr(executor, "supports_corrective_respawn", False):
+                    repaired = self._try_repair(
+                        node, executor, phase_dir, raw, contract_ref, item_index=i
+                    )
+                    if repaired is not None:
+                        irec.repaired = True
+                        text = repaired[1]
+                    elif getattr(executor, "supports_corrective_respawn", False):
                         corrective = work.model_copy(
                             update={
-                                "render": self._corrective_prompt(node, work, text, str(e)),
+                                "render": self._corrective_prompt(
+                                    node, work, self._corrective_fence_text(phase_dir, raw), str(e)
+                                ),
                                 "meta": {**work.meta, "corrective": True},
                             }
                         )
@@ -2074,7 +2210,7 @@ class Engine:
         self._set_status(node.id, "done")
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path, irec: ItemRecord) -> RawResult | None:
-        retry = self._effective_retry(node, executor)
+        retry = self._effective_retry(node, executor, work)
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0
         auto_used = False

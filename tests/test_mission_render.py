@@ -825,3 +825,33 @@ def test_the_ledger_words_match_cockpit_ps1():
     assert mv.LEDGER_STATE_WORDS == (
         ("new", "new"), ("persisting", "persisting"),
         ("reported-resolved", "resolved"), ("accepted-risk", "accepted risk"))
+
+
+# ---------------------------------------------------------------- G1 (cache line)
+
+
+def test_cost_lines_cache_line_when_reported(tmp_path, monkeypatch):
+    (tmp_path / "cost-fields.toml").write_text(COST_FIELDS + (
+        'cache_read_tokens = "usage.cache_read_input_tokens"\n'
+        'cache_write_tokens = "usage.cache_creation_input_tokens"\n'
+    ), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    flow = {"nodes": [{"id": "plan", "role": "work", "kind": "harness"}]}
+    run = make_run(tmp_path, {"plan": rec("done")}, flow=flow)
+    d = run / "phases" / "plan"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "argv.json").write_text(json.dumps(["claude", "-p"]), encoding="utf-8")
+    env = {"type": "result",
+           "usage": {"input_tokens": 10, "output_tokens": 5,
+                     "cache_read_input_tokens": 8400, "cache_creation_input_tokens": 1600},
+           "total_cost_usd": 0.05, "result": "OK"}
+    (d / "stdout.log").write_text(json.dumps(env), encoding="utf-8")
+    text = "\n".join(mv.cost_lines(run, mode="history", now=NOW))
+    assert "cache: 84% read (8.4k read / 1.6k written)" in text
+
+
+def test_cost_lines_no_cache_line_when_not_reported(tmp_path, cost_cwd):
+    # The field map carries no cache paths: absent must print as ABSENT.
+    run = make_cost_run(tmp_path)
+    text = "\n".join(mv.cost_lines(run, mode="history", now=NOW))
+    assert "cache:" not in text

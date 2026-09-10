@@ -283,6 +283,12 @@ def test_no_stanza_combines_mode_json_with_readonly_enforcement():
     `[executors.pi-guarded]`, while six documents told the reader to make every
     judgement node readonly on pi. Nothing caught it, because the driver's
     tests use a fake harness and the live-pi flows all write files.
+
+    The ONE legal exception (throughput-parity D, 2026-09-09): a stanza that
+    declares `envelope = "pi-stream"` — the driver then parses the stream
+    structurally and a readonly node's stdout channel works again. That is
+    the combination this invariant exists to permit, not the loophole it
+    exists to catch.
     """
     import tomllib
 
@@ -292,6 +298,7 @@ def test_no_stanza_combines_mode_json_with_readonly_enforcement():
         name
         for name, stanza in cfg.get("executors", {}).items()
         if stanza.get("readonly_argv") and "--mode" in (stanza.get("argv") or [])
+        and stanza.get("envelope") != "pi-stream"
     ]
     assert offenders == [], (
         f"{offenders} declare readonly_argv while forcing a structured stdout mode; "

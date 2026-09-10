@@ -19,9 +19,10 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from ..contracts import ContractError, describe_contract, resolve_contract
 from ..interpolate import fence_context_file, render_scope, render_template
+from ..pistream import pi_stream_result
 from ..reads import apply_reads, reads_manifest_text
 from ..protocols import PlannedWork, RawResult, RenderCtx
-from ..registry import ExecutorStanza, LockstepConfig
+from ..registry import SCHEDULING_FIELDS, V1_DIGEST_FIELDS, ExecutorStanza, LockstepConfig
 from ..state import part_digest
 from ..taskgraph import Node, RetrySpec
 from .proc import record_spawn_handles, resolve_inside, spawn, wait_or_kill
@@ -157,8 +158,26 @@ def extract_last_json(text: str) -> str | None:
 def stanza_digest(name: str, stanza: ExecutorStanza) -> str:
     """Per-stanza digest (AMENDMENTS-r5 B1): a node's fingerprint covers only
     the stanza it RESOLVES, so editing an unrelated stanza (e.g. repointing a
-    broken model during an outage) invalidates nothing it shouldn't."""
-    canonical = json.dumps(stanza.model_dump(), sort_keys=True, ensure_ascii=False)
+    broken model during an outage) invalidates nothing it shouldn't.
+
+    Canonicalized over a frozen field set (throughput-parity A1, DEVIATIONS
+    2026-09-09): the v1 fields always, defaults included — byte-identical to
+    the pre-A1 whole-model digest; a later behaviour-bearing field only when
+    set away from its default; scheduling-only fields never. Before this,
+    adding ANY field to ExecutorStanza changed every stanza's digest and
+    re-billed every cached harness node on upgrade (ROADMAP-NOTES
+    2026-08-15)."""
+    dump = stanza.model_dump()
+    parts = {k: dump[k] for k in V1_DIGEST_FIELDS}
+    for key, value in dump.items():
+        if key in parts or key in SCHEDULING_FIELDS:
+            continue
+        default = ExecutorStanza.model_fields[key].get_default(call_default_factory=True)
+        if isinstance(default, BaseModel):
+            default = default.model_dump()
+        if value != default:
+            parts[key] = value
+    canonical = json.dumps(parts, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(f"{name}\x00{canonical}".encode("utf-8")).hexdigest()
 
 
@@ -316,11 +335,37 @@ class HarnessExecutor:
         prompt = "\n\n".join(prompt_parts)
         hash_prompt = "\n\n".join(hash_parts)
 
+        # C1 (DEVIATIONS 2026-09-09): schema pass-through. The schema is the
+        # CONTRACT's, not the model's — a Name[] contract schema-constrains
+        # the harness to an ARRAY of the model, or this flag would GUARANTEE
+        # the corrective re-spawn it exists to kill on every reviewer node
+        # (F-S5). When the schema cannot be produced, skip the flag AND the
+        # fingerprint part, symmetrically with the description block above
+        # (F-S6).
+        schema_json: str | None = None
+        if node.output == "json" and node.contract and stanza.schema_argv:
+            try:
+                ref = resolve_contract(node.contract, ctx.contracts_module)
+                schema = ref.model.model_json_schema()
+                if ref.is_array:
+                    schema = {"type": "array", "items": schema}
+                schema_json = json.dumps(
+                    schema, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                )
+            except ContractError:
+                pass  # verify reports unresolvable contracts; not plan's job
+            except Exception:
+                pass  # an exotic model whose schema rendering chokes: no flag
         argv_template = list(stanza.argv)
         if spec.persona and stanza.persona_flag:
             argv_template += [*stanza.persona_flag, str((ctx.personas_dir / f"{spec.persona}.md").resolve())]
         if spec.readonly:
             argv_template += list(stanza.readonly_argv or [])
+        if schema_json is not None:
+            # Placeholders stay intact here and in the hashed argv part (the
+            # {prompt} rule): {schema} expands at execute; {schema_file} is a
+            # run-specific path, excluded from input_hash like every other.
+            argv_template += list(stanza.schema_argv)
         cwd = resolve_inside(self.repo_root, spec.cwd)
         # Parity 3.1: declared file inputs. Empty/absent contributes NOTHING —
         # the parts list below is byte-identical to every release before this
@@ -339,7 +384,13 @@ class HarnessExecutor:
                 f"argv:{json.dumps(argv_template, ensure_ascii=False)}",
                 # r5 B1: the RESOLVED stanza's digest, not the whole config file.
                 f"config:{stanza_digest(stanza_name, stanza)}",
-            ] + reads_parts,
+            ] + reads_parts + (
+                # C1: the FILLED schema (additive — absent means today's
+                # bytes, M3): the stanza digest covers the template and the
+                # hashed contract description is lossy prose, so a Field
+                # constraint edit would otherwise serve a stale result.
+                [f"schema:{schema_json}"] if schema_json is not None else []
+            ),
             costs_tokens=True,
             exclusive=[] if spec.readonly else ["tree"],
             meta={
@@ -354,6 +405,15 @@ class HarnessExecutor:
                 "writes": render_scope(list(spec.writes), ctx.args) if "writes" in node.spec else None,
                 "prompt_via": stanza.prompt_via,
                 "json_field": stanza.json_field,
+                "envelope": stanza.envelope,
+                "schema_json": schema_json,
+                # A2: the stanza-tier retry default rides meta because
+                # _effective_retry never sees the stanza. Scheduling-only:
+                # excluded from the digest above, so setting it re-bills
+                # nothing.
+                "stanza_default_retry": (
+                    stanza.default_retry.model_dump() if stanza.default_retry is not None else None
+                ),
                 "output": node.output,
                 "cwd": str(cwd),
                 "node_id": node.id,
@@ -395,6 +455,21 @@ class HarnessExecutor:
             # phase dir): expanded at spawn, left intact in the fingerprint —
             # run-specific paths are excluded from input_hash, same rule as
             # spill stubs and the footer placeholder.
+            # C1's placeholders expand on the TEMPLATE part, BEFORE the prompt
+            # is substituted in: fenced upstream data inside a prompt is DATA
+            # (§7), and data containing the literal "{schema}" must reach the
+            # spawn verbatim, never rewrite the command line.
+            schema_json = work.meta.get("schema_json")
+            if schema_json is not None:
+                if "{schema_file}" in part:
+                    # Written UNCONDITIONALLY: this name is not in the
+                    # rotation list above, so an exists-guard would hand a
+                    # re-plan after a contract edit the STALE schema while
+                    # the input hash said otherwise.
+                    sf = phase_dir / "contract-schema.json"
+                    sf.write_text(schema_json, encoding="utf-8")
+                    part = part.replace("{schema_file}", str(sf.resolve()))
+                part = part.replace("{schema}", schema_json)
             argv.append(
                 part.replace("{prompt}", prompt).replace("{phase_dir}", str(phase_dir.resolve()))
             )
@@ -466,7 +541,17 @@ class HarnessExecutor:
         # extracting before unwrapping returned the prose and failed validation).
         result_text: str | None = None
         field = work.meta.get("json_field")
-        if work.meta["output"] == "text" and not field:
+        if work.meta.get("envelope") == "pi-stream":
+            # D (DEVIATIONS 2026-09-09): this stanza's stdout is pi's JSONL
+            # event stream; the result is the last assistant message's text
+            # blocks, structurally — not the last balanced JSON value in the
+            # chatter. Only THIS leg changes: the file channel above already
+            # won if the node wrote its result. A stream with no assistant
+            # text is a named error, never a silent empty result.
+            result_text, stream_err = pi_stream_result(stdout)
+            if result_text is None:
+                err = err or stream_err
+        elif work.meta["output"] == "text" and not field:
             # A TEXT node on a harness that answers in raw stdout: the text IS
             # the answer, and JSON extraction would destroy it. Source code is
             # full of balanced brackets — a model asked for a Python module had

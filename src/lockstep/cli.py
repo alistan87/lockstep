@@ -962,6 +962,17 @@ def cmd_status(ns) -> int:
         # with inputs that may not have moved at all.
         print(f"forced stale: {len(forced)} node(s) re-ran by --force-stale — "
               f"{', '.join(forced)}")
+    repaired = sorted(
+        n for n, r in state.nodes.items()
+        if r.repaired or any(ir.repaired for ir in r.items.values())
+    )
+    if repaired:
+        # C2 honesty: these recorded results are the model's bytes minus a
+        # journaled deletion-only repair; the raw attempt is rotated in the
+        # phase dir. A journal-only marker would be silent exactly where the
+        # result gets quoted.
+        print(f"repaired: {len(repaired)} node(s) accepted after deletion-only "
+              f"JSON repair — {', '.join(repaired)}")
     adopted = sorted(n for n, r in state.nodes.items() if r.adopted)
     for n in adopted:
         # S3 provenance where a reader will meet it: NEVER rendered as a

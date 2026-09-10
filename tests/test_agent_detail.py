@@ -191,7 +191,7 @@ def test_envelope_turns_never_claims_to_count_tool_calls():
     under its own name and the tool count stays absent."""
     env = {"num_turns": 10, "permission_denials": [{"tool_name": "Write"}]}
     got = cost_report.envelope_turns(env)
-    assert got == {"turns": 10, "denials": 1}
+    assert got == {"turns": 10, "denials": 1, "usage_messages": 10}  # G2: turns under the honest cross-harness name
     assert "tools" not in got
 
 

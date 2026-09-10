@@ -12,7 +12,9 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+from .taskgraph import RetrySpec
 
 
 class ExecutorStanza(BaseModel):
@@ -23,6 +25,58 @@ class ExecutorStanza(BaseModel):
     persona_flag: list[str] = []  # empty ⇒ prepend persona body to the prompt
     readonly_argv: list[str] | None = None  # appended for spec.readonly nodes; absent ⇒
     # readonly nodes on this executor are a verification error (SPEC §6.11)
+    # --- Fields below were added after v1. Digest rule (throughput-parity A1,
+    # DEVIATIONS 2026-09-09): classify each new field when it is added —
+    # scheduling-only fields go in SCHEDULING_FIELDS and are never hashed;
+    # behaviour-bearing fields are hashed only when set away from a default
+    # whose absence-semantics equal the pre-field behaviour. ---
+    default_retry: RetrySpec | None = None  # scheduling-only (A2): stanza-tier
+    # retry default between node `retry` and the kind default. Changes when a
+    # failed spawn retries, never what the spawn is — unhashed, like node
+    # `retry` (r5 B3) and the persona `readonly` key.
+    schema_argv: list[str] | None = None  # behaviour-bearing (C1): argv
+    # fragment appended when the node has output:"json" and a resolvable
+    # contract — {schema} fills with the CONTRACT's JSON schema (array
+    # wrapper for Name[]), {schema_file} with a path to it in the phase dir.
+    # Hashed only when set (A1); the FILLED schema is its own fingerprint
+    # part (`schema:<compact-json>`), because the template cannot see a
+    # Field-constraint edit.
+    envelope: Literal["pi-stream"] | None = None  # behaviour-bearing (D): the
+    # §8.3 stdout-fallback leg parses pi's JSONL event stream instead of
+    # extracting the last balanced JSON value. Hashed only when set (A1) —
+    # it changes what the result IS. The file channel still wins.
+
+    @model_validator(mode="after")
+    def _empty_schema_argv_is_absent(self):
+        # A1 hygiene: [] is behaviourally identical to absent (plan() checks
+        # truthiness), so hashing it would re-bill on inert config — the
+        # spurious-invalidation class the digest carve-out exists to kill.
+        if self.schema_argv == []:
+            self.schema_argv = None
+        return self
+
+    @model_validator(mode="after")
+    def _envelope_excludes_json_field(self):
+        if self.envelope is not None and self.json_field is not None:
+            raise ValueError(
+                "envelope and json_field are mutually exclusive: json_field "
+                "unwraps ONE stdout envelope object, envelope parses an event "
+                "stream — a stanza cannot speak both"
+            )
+        return self
+
+
+# The v1 field set: ALWAYS serialized into the stanza digest, defaults
+# included — byte-identical to the pre-A1 model_dump() digest for every
+# stanza that existed then (pinned by tests/test_stanza_digest.py RECORDED).
+V1_DIGEST_FIELDS: tuple[str, ...] = (
+    "argv", "prompt_via", "json_field", "persona_flag", "readonly_argv",
+)
+# Scheduling-only fields: change when/whether a spawn retries or waits, never
+# what the spawn is. NEVER hashed — hashing one re-bills cached nodes on a
+# knob that does not reach the spawn, the spurious-invalidation class r5 B1
+# exists to kill.
+SCHEDULING_FIELDS: frozenset[str] = frozenset({"default_retry"})
 
 
 class LockstepConfig(BaseModel):

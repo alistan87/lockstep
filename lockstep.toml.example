@@ -32,12 +32,53 @@ default = "claude-code"
 # must RUN commands still get denied Bash — escalate that stanza to
 # `--permission-mode bypassPermissions` as a deliberate, named decision, never
 # as the default.
-argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits"]
+# --exclude-dynamic-system-prompt-sections (B1, verified against claude
+# 2.1.228 --help): moves the per-machine system-prompt sections (cwd, env,
+# git status) into the first user message, so the cached prefix survives
+# across spawns — lockstep's exact access pattern, N stateless spawns
+# against one repo. Only applies with the default system prompt (true
+# here). What it buys is CACHE-HIT RATE — latency and usage-limit headroom
+# under subscription billing, not dollars; the cost surfaces' `cache:` line
+# (G1) is how the claim is measured. Adding the flag re-bills claude nodes
+# once (argv is hashed, by design), so in your LIVE lockstep.toml flip it
+# only after a baseline run has recorded the `cache:` line to compare
+# against, and re-run `lockstep doctor` after flipping.
+argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits",
+        "--exclude-dynamic-system-prompt-sections"]
 prompt_via = "argv"                        # "argv" | "stdin"
 json_field = "result"                      # unwrap this envelope field; omit for raw
 persona_flag = []                          # empty => prepend persona body to the prompt
 readonly_argv = ["--disallowed-tools", "Edit,Write,NotebookEdit,Bash"]  # for spec.readonly nodes;
                                            # absent => readonly nodes error at verify
+# schema_argv (C1): appended when a node has output:"json" and a resolvable
+# contract; {schema} fills with the CONTRACT's JSON schema (a Name[]
+# contract becomes {"type":"array","items":...} — the shape the validator
+# will demand), {schema_file} with a path to it in the phase dir. This is
+# what kills the ~2.5x corrective re-spawn at the source: the harness is
+# constrained to the schema the driver validates against. --json-schema
+# exists on claude 2.1.228 (probed via --help); its RUNTIME behaviour on
+# your build is doctor's job — probe a contract-bearing node before
+# trusting it, and know that enabling this re-bills contract nodes once
+# (the filled schema is a new fingerprint part, by design). Inline {schema}
+# beside prompt_via="argv" shares one ~32k command line (`verify --lint`
+# warns: lint-schema-argv).
+# schema_argv = ["--json-schema", "{schema}"]
+
+# B2: the RESILIENT claude stanza — --fallback-model (claude 2.1.228)
+# degrades to a weaker model instead of waiting out a 3-minute overload
+# retry. A separately NAMED stanza, never the default: a silent model
+# downgrade changes what the node is, so a node opts in per `spec.executor`
+# when its author prefers "a weaker answer now" over "the right answer in
+# three minutes" (status digests, triage — not reviews). The envelope's
+# modelUsage is how the cost surfaces keep the downgrade honest; the r5 B2
+# retry posture stays the default everywhere else.
+[executors.claude-code-resilient]
+argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits",
+        "--exclude-dynamic-system-prompt-sections", "--fallback-model", "claude-sonnet-5"]
+prompt_via = "argv"
+json_field = "result"
+persona_flag = []
+readonly_argv = ["--disallowed-tools", "Edit,Write,NotebookEdit,Bash"]
 
 [executors.pi]                             # work machine: pi carries the Copilot login
 # pi >= 0.81: JSON output is `--mode json`. `--no-session` keeps doctor probes
@@ -122,15 +163,21 @@ prompt_via = "stdin"                       # not argv: a corrective re-spawn's p
 # reviewers fan out in parallel instead of queueing; and on a request-metered
 # plan a node that cannot edit cannot spend a round trip trying to.
 #
-# The price, stated honestly: no `--mode json` means no usage envelope, so
-# these nodes report `no envelope` in the cost views. Task counts and wall time
-# still work. Removing that trade needs the driver to understand pi's event
-# stream on the RESULT path (it already does on the cost path — see
-# `contrib/cost-fields.toml.example`, `format = "pi-stream"`); until then,
-# telemetry on reviewers costs correctness, and correctness wins.
+# The trade this stanza used to state — "no --mode json means no usage
+# envelope, because the stream would be read as the answer" — ended
+# 2026-09-09: `envelope = "pi-stream"` (D) tells the driver to parse pi's
+# JSONL event stream on the §8.3 stdout leg, structurally: the result is
+# the last assistant message's text blocks (thinking excluded), the file
+# channel still wins for writers, and a stream that settles with no
+# assistant text is a NAMED error, never a silent empty result. Reviewers
+# now report usage, tool counts and model IDs in every cost surface.
+# Adding --mode json re-bills these nodes once (argv is hashed, by
+# design). The stream shape is pi's, not ours: after a pi upgrade, re-run
+# `lockstep doctor` — its probe exercises this parser end to end.
 [executors.pi-review]
-argv = ["pi", "-p", "--no-session", "--no-context-files", "--no-skills", "{prompt}"]
+argv = ["pi", "-p", "--mode", "json", "--no-session", "--no-context-files", "--no-skills", "{prompt}"]
 prompt_via = "stdin"
+envelope = "pi-stream"
 readonly_argv = ["--tools", "read,submit_result"]
 
 # COPILOT CLI — the stub below runs, but know four things before pointing real
@@ -151,12 +198,14 @@ readonly_argv = ["--tools", "read,submit_result"]
 #    readonly_argv = ["--deny-tool", "write", "--deny-tool", "shell"] (names
 #    UNVERIFIED — check them) would make copilot legal for reviewers; record
 #    what you verify, the way the pi-review stanza above records its probe.
-# 3. REQUEST METERING. A copilot 429 usually means QUOTA, not a blip: set
-#    `"retry": {"max": 0}` on every node using this stanza (the harness-kind
-#    default of 2×60s retries burns two more requests against the same wall;
-#    a per-stanza retry default is a recorded roadmap item, not yet real).
-#    The driver names quota errors from raw output ("provider limit/overload
-#    (no envelope)") — wait, then `resume`.
+# 3. REQUEST METERING. A copilot 429 usually means QUOTA, not a blip: the
+#    `default_retry` below turns off the harness-kind default (2×60s
+#    retries, which burn two more requests against the same wall) for every
+#    node on this stanza; a node can still opt back in with its own `retry`
+#    (node retry > stanza default_retry > kind default). Scheduling-only:
+#    setting or changing it never re-bills a cached node. The driver names
+#    quota errors from raw output ("provider limit/overload (no envelope)")
+#    — wait, then `resume`.
 # 4. UNHASHED INSTRUCTION CHANNEL. Copilot reads repo instruction files
 #    (.github/copilot-instructions.md and friends) into every spawn — same
 #    class as claude's CLAUDE.md and pi's AGENTS.md discovery above. No
@@ -172,6 +221,7 @@ readonly_argv = ["--tools", "read,submit_result"]
 [executors.copilot-cli]
 argv = ["copilot", "-p", "{prompt}"]
 prompt_via = "argv"
+default_retry = { max = 0 }
 
 # A LOCAL model — no network, no credential, no token cost. `ollama run` has no
 # file tools at all, so nodes on this stanza answer on the §8.3 stdout channel

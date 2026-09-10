@@ -729,6 +729,13 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     out.append(f"  attempts   : {rec.get('attempts')}")
     if rec.get("heal_round"):
         out.append(f"  rework     : round {rec['heal_round']}")
+    if rec.get("repaired") or any(
+        (ir or {}).get("repaired") for ir in (rec.get("items") or {}).values()
+    ):
+        # C2: the recorded result is the model's bytes after a deletion-only
+        # repair; the untouched original is rotated in the artifacts below.
+        out.append("  repaired   : accepted after a deletion-only repair of the "
+                   "model's raw output (the original is in the artifacts)")
     for field in ("started_at", "ended_at"):
         if rec.get(field):
             out.append(f"  {field:<11}: {rec[field]}")
@@ -856,6 +863,12 @@ def node_agent_lines(run_dir: Path, node_id: str, *, rec: dict | None = None,
     if row.get("turns") is not None:
         out.append(line("turns", f"{row['turns']} (a turn is a model reply, "
                                  "not a tool call)"))
+    elif row.get("usage_messages") is not None:
+        # G2, pi streams (claude's count is the turns line above). The honest
+        # name: a correlate for a request-metered dashboard, never "requests".
+        out.append(line("usage msgs", f"{row['usage_messages']} assistant "
+                                      "message(s) reporting usage - not the "
+                                      "billed premium-request unit"))
     if row.get("denials"):
         out.append(line("refused", f"{row['denials']} tool call(s) the harness blocked"))
 
@@ -1234,7 +1247,25 @@ def cost_lines(run_dir: Path, mode: str = "history",
         header += f" · {_elapsed_str(max(0.0, (until - began).total_seconds()))}"
     tag = ("history: every attempt is counted" if mode == "history"
            else "head: kept attempts only")
-    out = [header, f"  ({tag})", ""]
+    out = [header, f"  ({tag})"]
+    # G1: the cache-hit line, mode-consistent with the panel's totals. The
+    # formatter lives in cost_report (one implementation, both surfaces);
+    # when the reader is absent the panel already said so above.
+    try:
+        import cost_report
+        cache_totals: dict[str, float] = {}
+        for r in rows.values():
+            src = r if mode == "history" else (r.get("head") or {})
+            for f in ("cache_read_tokens", "cache_write_tokens"):
+                v = src.get(f)
+                if v is not None:
+                    cache_totals[f] = cache_totals.get(f, 0.0) + v
+        cl = cost_report.cache_line(cache_totals)
+        if cl:
+            out.append(f"  ({cl})")
+    except Exception:  # noqa: BLE001 - a view never raises
+        pass
+    out.append("")
 
     id_w = max((len(n) for n in node_ids), default=2)
     kind_w = max((len(rows[n].get("kind") or "?") for n in node_ids), default=4)

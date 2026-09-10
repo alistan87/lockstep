@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from .executors.harness import FOOTER, extract_last_json, stanza_digest
+from .pistream import pi_stream_result
 from .executors.proc import spawn, wait_or_kill
 from .registry import ExecutorStanza, LockstepConfig
 from .state import utcnow
@@ -135,14 +136,23 @@ def _probe_once(
             break
     if answer is None:
         stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
-        candidate = extract_last_json(stdout)
-        if candidate is not None and stanza.json_field:
-            value = json.loads(candidate)
-            if isinstance(value, dict) and stanza.json_field in value:
-                inner = value[stanza.json_field]
-                answer = inner if isinstance(inner, str) else json.dumps(inner)
-        if answer is None:
-            answer = stdout
+        if stanza.envelope == "pi-stream":
+            # D: probe the STREAM channel the executor will actually use —
+            # including its no-assistant-text edge. Falling back to raw
+            # stdout here would pass a stanza whose stream the driver
+            # cannot read, on the strength of "ok" appearing in the chatter.
+            answer, stream_err = pi_stream_result(stdout)
+            if answer is None:
+                return False, f"pi-stream channel: {stream_err}"
+        else:
+            candidate = extract_last_json(stdout)
+            if candidate is not None and stanza.json_field:
+                value = json.loads(candidate)
+                if isinstance(value, dict) and stanza.json_field in value:
+                    inner = value[stanza.json_field]
+                    answer = inner if isinstance(inner, str) else json.dumps(inner)
+            if answer is None:
+                answer = stdout
     if "ok" not in answer.lower():
         return False, f"no OK in response ({len(answer)} chars); parseable channel though"
     return True, f"OK in {rtt:.1f}s"

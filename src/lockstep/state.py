@@ -123,6 +123,8 @@ class ItemRecord(BaseModel):
     # label -> sha256(part) for the parts that composed input_hash (see
     # `label_parts`). A record for `lockstep explain`; never a hash input.
     hash_parts: dict[str, str] | None = None
+    # C2 (DEVIATIONS 2026-09-09): see PhaseRecord.repaired.
+    repaired: bool = False
 
 
 class PhaseRecord(BaseModel):
@@ -175,6 +177,13 @@ class PhaseRecord(BaseModel):
     # existed; an older driver reading a newer state.json ignores it and
     # degrades to hash-governed revalidation.
     adopted: AdoptionRecord | None = None
+    # C2 (DEVIATIONS 2026-09-09): the recorded result is the model's bytes
+    # AFTER a deletion-only repair; the pre-repair bytes are rotated in the
+    # phase dir and the `kind:"repair"` journal event names what was deleted.
+    # Surfaced by `status` and the mission drawer — a journal-only marker is
+    # silent at every surface that quotes the result, and the human deciding
+    # from a quoted result must be able to see the bytes were touched.
+    repaired: bool = False
 
 
 class TerminalRecord(BaseModel):

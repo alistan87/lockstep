@@ -225,7 +225,10 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   field to ExecutorStanza changes every stanza's digest and re-bills every
   cached harness node on upgrade. Doing this needs a digest-migration story
   (e.g. exclude-if-default serialization) decided FIRST - which is why it is
-  a note and not a patch.
+  a note and not a patch. **RESOLVED 2026-09-09** (throughput-parity A1/A2,
+  DEVIATIONS): frozen-field canonicalization with a scheduling carve-out;
+  `default_retry` shipped as its first consumer, unhashed, on the example's
+  copilot-cli stanza. Recorded digests pinned in tests/test_stanza_digest.py.
 
 - **2026-08-15 (chronicle composition adoption): flow-node config digest is
   whole-file, not per-stanza.** `FlowExecutor.plan()` folds `ctx.config_digest`
@@ -240,7 +243,11 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   child at plan time - which it already does. Narrowing the digest to the
   union of the child's referenced stanzas (+ default) would restore B1
   parity; the trap is the same digest-migration story as per-stanza
-  `default_retry` above - decide that first.
+  `default_retry` above - decide that first. **Migration story decided
+  2026-09-09** (A1); the narrowing itself (proposal A3) stays deliberately
+  unbuilt until a composing client exists locally - the moved flow-node hash
+  restarts every composed child lineage from scratch, and `--seed` cannot
+  bridge it (PROPOSAL-throughput-and-harness-parity §2, F-S4).
 
 - **2026-08-15 (pi-gemma chronicle run forensics): corrective re-spawns can
   feed the model fence-salvaged rubble instead of its own output.** When a

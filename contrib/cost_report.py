@@ -494,6 +494,16 @@ def wall_and_heals(events: list[dict]) -> tuple[dict[str, float], dict[str, int]
     return wall, heals
 
 
+try:  # D: the driver owns the pi-stream parsers now (lockstep.pistream);
+    # these local bodies remain as the standalone fallback for a cockpit
+    # copied without the driver — the missing-part honesty rule, same
+    # pattern as `last_envelope` above.
+    from lockstep.pistream import pi_stream_tools as _drv_stream_tools
+    from lockstep.pistream import pi_stream_usage as _drv_stream_usage
+except Exception:  # pragma: no cover - standalone fallback
+    _drv_stream_usage = _drv_stream_tools = None
+
+
 def pi_stream_usage(text: str) -> tuple[dict[str, float], int, dict[str, float]]:
     """Sum per-message usage from a pi `--mode json` event stream (probed
     against pi 0.83.0): each assistant `message_end` carries
@@ -505,6 +515,8 @@ def pi_stream_usage(text: str) -> tuple[dict[str, float], int, dict[str, float]]
     Third return: model id -> weight (dollars, else output tokens, else a
     count of messages) — `message.model` is per-message, so a stream can name
     several; the weight picks the dominant one for display."""
+    if _drv_stream_usage is not None:
+        return _drv_stream_usage(text)
     sums: dict[str, float] = {}
     models: dict[str, float] = {}
     seen = 0
@@ -559,6 +571,8 @@ def pi_stream_tools(text: str) -> dict[str, int] | None:
     `turn_end` — six blocks for one execution. Same repeat that makes
     `pi_stream_usage` sum `message_end` only.
     """
+    if _drv_stream_tools is not None:
+        return _drv_stream_tools(text)
     out: dict[str, int] = {}
     events = 0
     for line in text.splitlines():
@@ -595,6 +609,9 @@ def envelope_turns(env: dict) -> dict:
     turns = dig(env, "num_turns")
     if turns is not None:
         out["turns"] = int(turns)
+        # G2: on a single-envelope harness the per-node count of
+        # usage-bearing assistant messages IS num_turns.
+        out["usage_messages"] = int(turns)
     denials = env.get("permission_denials")
     if isinstance(denials, list):
         out["denials"] = len(denials)
@@ -627,7 +644,15 @@ def _log_usage(
         # a spawn can call tools and settle with no assistant message_end that
         # carries usage (a local provider reports none), so it is read whenever
         # the stream mode is selected rather than only when `seen`.
-        return got, models, bool(seen), {"tools": pi_stream_tools(text)}
+        # G2: `seen` is the count of usage-bearing assistant messages — the
+        # honest per-node correlate for request-metered work. It is NOT
+        # Copilot's billed premium-request unit (an agentic session bills
+        # per user prompt with a model multiplier); the surfaces label it
+        # accordingly and never as "requests".
+        return got, models, bool(seen), {
+            "tools": pi_stream_tools(text),
+            **({"usage_messages": seen} if seen else {}),
+        }
     env = last_envelope(text)
     if env is None:
         return {}, {}, False, {}
@@ -684,7 +709,7 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
     attempts: list[dict] = []
     tools: dict[str, int] = {}
     tools_reported = False
-    turns = denials = None
+    turns = denials = usage_messages = None
     envelopes = 0
     logs_seen = 0
     for scope, d in scopes:
@@ -714,6 +739,11 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
                 turns = (turns or 0) + activity["turns"]
             if activity.get("denials") is not None:
                 denials = (denials or 0) + activity["denials"]
+            if activity.get("usage_messages") is not None:
+                # Sums over EVERY attempt, like tools and turns: a count that
+                # moves with retries is exactly the early-warning signal a
+                # request-metered operator wants.
+                usage_messages = (usage_messages or 0) + activity["usage_messages"]
             rec_models = dominant_models(models)
             attempts.append({
                 "scope": scope,
@@ -733,6 +763,7 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
             "models": dominant_models(model_w), "note": note,
             "tools": tools if tools_reported else None,
             "turns": turns, "denials": denials,
+            "usage_messages": usage_messages,
             "argv": argv_facts(phase_dir)}
 
 
@@ -768,7 +799,8 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
             node_tokens(phase_dir, maps)
             if rec.get("kind") != "shell" and phase_dir.is_dir()
             else {"sums": {}, "head": {}, "attempts": [], "models": [], "note": "",
-                  "tools": None, "turns": None, "denials": None, "argv": {}}
+                  "tools": None, "turns": None, "denials": None,
+                  "usage_messages": None, "argv": {}}
         )
         note = tokens["note"]
         if status == RUNNING:
@@ -800,6 +832,7 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
                            if tokens["tools"] is not None else None),
             "turns": tokens["turns"],
             "denials": tokens["denials"],
+            "usage_messages": tokens["usage_messages"],
             "note": note,
         })
     return {
@@ -824,6 +857,34 @@ def _running_wall(rec: dict) -> float | None:
 
 
 # --- rendering -----------------------------------------------------------------
+
+def _human_tokens(v: float) -> str:
+    if v >= 1e6:
+        return f"{v / 1e6:.1f}M".replace(".0M", "M")
+    if v >= 1e3:
+        return f"{v / 1e3:.1f}k".replace(".0k", "k")
+    return f"{v:,.0f}"
+
+
+def cache_line(totals: dict) -> str | None:
+    """G1 (throughput-parity §8): `cache: 84% read (12.3M read / 2.4M
+    written)` — the instrument that turns the cache-section flag (and the
+    deferred prompt reorder) into a measurable claim. What it measures is
+    cache-HIT RATE: latency and usage-limit headroom under subscription
+    billing, real dollars only where billing is metered. Absent fields mean
+    NO line, never 0% — a harness that reports no cache fields is not a
+    cold cache. Reported-and-zero is a real fact and gets the raw numbers,
+    but no percentage is invented over a zero denominator."""
+    r = totals.get("cache_read_tokens")
+    w = totals.get("cache_write_tokens")
+    if r is None and w is None:
+        return None
+    r0, w0 = float(r or 0), float(w or 0)
+    if r0 + w0 <= 0:
+        return "cache: 0 read / 0 written"
+    pct = round(100 * r0 / (r0 + w0))
+    return f"cache: {pct}% read ({_human_tokens(r0)} read / {_human_tokens(w0)} written)"
+
 
 def _fmt(v, money: bool = False) -> str:
     if v is None:
@@ -900,6 +961,21 @@ def render(runs: list[dict]) -> str:
             f"| {_fmt(totals.get('cache_write_tokens'))} | {_fmt(totals.get('cost'), money=True)} "
             f"| token spawns: {run['token_spawns']} |"
         )
+        cl = cache_line(totals)
+        msgs = [r for r in run["rows"] if r.get("usage_messages") is not None]
+        if cl or msgs:
+            out.append("")
+        if cl:
+            out.append(f"- {cl}")
+        if msgs:
+            per_node = ", ".join(f"{r['node']} {r['usage_messages']}" for r in msgs)
+            total_msgs = sum(r["usage_messages"] for r in msgs)
+            # The honest name (F-E5/F-S8): a correlate to line up against a
+            # request-metered dashboard, not the billed premium-request unit
+            # (an agentic session bills per user prompt, model-multiplied).
+            out.append(f"- assistant messages reporting usage: {total_msgs} "
+                       f"({per_node}) - a correlate for request-metered "
+                       f"dashboards, not the billed premium-request unit")
         out.append("")
         for f, v in totals.items():
             grand[f] = grand.get(f, 0.0) + v

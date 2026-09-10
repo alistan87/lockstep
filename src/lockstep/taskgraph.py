@@ -1041,6 +1041,23 @@ def lint_flow(
                     "(ArgvTooLong fails cleanly, but prompt_via = \"stdin\" removes the "
                     "ceiling)",
                 )
+            # C1: a schema on the same command line as the prompt shares the
+            # same ~32k Windows cap; a {schema_file} template or stdin
+            # prompting removes the pressure.
+            if (
+                stanza is not None and getattr(stanza, "schema_argv", None)
+                and stanza.prompt_via == "argv"
+                and n.output == "json" and n.contract  # else schema_argv is inert here
+                and any("{schema}" in str(part) for part in stanza.schema_argv)
+                and f"schema:{name}" not in flagged
+            ):
+                flagged.add(f"schema:{name}")
+                warn(
+                    "lint-schema-argv",
+                    f"stanza {name!r} appends an inline JSON schema to argv while also "
+                    "prompting via argv: schema + prompt + a corrective re-spawn share "
+                    "one ~32k command line (use {schema_file} or prompt_via = \"stdin\")",
+                )
 
     # W5 (consumer report 2026-08-13 item 1) — more than one live-tree capture
     # in one flow. `worktree_diff` reports the tree AS IT IS NOW, and shell

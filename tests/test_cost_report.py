@@ -375,3 +375,94 @@ def test_a_heal_round_closes_the_interval_it_ends():
     wall, heals = cost_report.wall_and_heals(events)
     assert wall == {"g": 40.0}          # 30s + 10s, both attempts counted
     assert heals == {"g": 1}            # and the heal is still tallied once
+
+
+# ---------------------------------------------------------------- G1/G2
+# (PROPOSAL-throughput-and-harness-parity §8: the telemetry that proves the rest)
+
+
+def test_cache_line_formats_and_percent():
+    line = cost_report.cache_line(
+        {"cache_read_tokens": 12_300_000, "cache_write_tokens": 2_400_000})
+    assert line == "cache: 84% read (12.3M read / 2.4M written)"
+
+
+def test_cache_line_absent_fields_is_no_line():
+    # The honesty rule everywhere: absent prints as ABSENT, never as 0%.
+    assert cost_report.cache_line({}) is None
+    assert cost_report.cache_line({"input_tokens": 5.0}) is None
+
+
+def test_cache_line_reported_zero_is_a_fact_not_a_percent():
+    # Reported-and-zero differs from not-reported; and no percentage is
+    # invented over a zero denominator.
+    line = cost_report.cache_line({"cache_read_tokens": 0.0, "cache_write_tokens": 0.0})
+    assert line is not None and "%" not in line
+
+
+def test_pi_usage_messages_counted_per_node(tmp_path, fields_file):
+    # G2: the count of usage-bearing assistant messages, under that name —
+    # NEVER Copilot's billed premium-request unit, which bills per user
+    # prompt with a model multiplier. It MOVES with retries (2 here).
+    run = tmp_path / "pi-run"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({
+        "flow_name": "pi-flow", "flow_hash": "z", "format_version": "1.0",
+        "args": {}, "token_spawns": 2,
+        "nodes": {"n": {"node_id": "n", "role": "work", "kind": "harness",
+                        "status": "done", "attempts": 2}},
+    }), encoding="utf-8")
+    node = run / "phases" / "n"
+    (node / "argv.json").write_text(json.dumps(["pi.cmd", "-p"]), encoding="utf-8")
+    (node / "stdout.log").write_text(pi_stream(100, 10, 0.01), encoding="utf-8")
+    (node / "stdout-attempt1.log").write_text(pi_stream(50, 5, 0.005), encoding="utf-8")
+    maps = cost_report.load_field_maps(str(fields_file))
+    row = rows_by_node(cost_report.collect_run(run, maps))["n"]
+    assert row["usage_messages"] == 2
+
+
+def test_claude_usage_messages_from_num_turns(tmp_path, fields_file):
+    run = tmp_path / "cl-run"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({
+        "flow_name": "cl-flow", "flow_hash": "z", "format_version": "1.0",
+        "args": {}, "token_spawns": 1,
+        "nodes": {"n": {"node_id": "n", "role": "work", "kind": "harness",
+                        "status": "done", "attempts": 1}},
+    }), encoding="utf-8")
+    node = run / "phases" / "n"
+    (node / "argv.json").write_text(json.dumps(["claude", "-p"]), encoding="utf-8")
+    env = {"type": "result", "usage": {"input_tokens": 10, "output_tokens": 5},
+           "total_cost_usd": 0.01, "num_turns": 4, "result": "OK"}
+    (node / "stdout.log").write_text(json.dumps(env), encoding="utf-8")
+    maps = cost_report.load_field_maps(str(fields_file))
+    row = rows_by_node(cost_report.collect_run(run, maps))["n"]
+    assert row["usage_messages"] == 4
+    assert row["turns"] == 4
+
+
+def test_no_usage_messages_is_none_never_zero(tmp_path, fields_file):
+    run = make_run(tmp_path)
+    maps = cost_report.load_field_maps(str(fields_file))
+    rows = rows_by_node(cost_report.collect_run(run, maps))
+    assert rows["plain"]["usage_messages"] is None  # no envelope at all
+
+
+def test_render_carries_cache_and_usage_lines(tmp_path, fields_file):
+    run = tmp_path / "pi-run"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({
+        "flow_name": "pi-flow", "flow_hash": "z", "format_version": "1.0",
+        "args": {}, "token_spawns": 1,
+        "nodes": {"n": {"node_id": "n", "role": "work", "kind": "harness",
+                        "status": "done", "attempts": 1}},
+    }), encoding="utf-8")
+    node = run / "phases" / "n"
+    (node / "argv.json").write_text(json.dumps(["pi.cmd", "-p"]), encoding="utf-8")
+    (node / "stdout.log").write_text(pi_stream(100, 10, 0.01), encoding="utf-8")
+    maps = cost_report.load_field_maps(str(fields_file))
+    text = cost_report.render([cost_report.collect_run(run, maps)])
+    assert "cache:" in text
+    # the honest name, and the explicit disclaimer of the billed unit
+    assert "assistant messages reporting usage" in text
+    assert "not the billed premium-request unit" in text
