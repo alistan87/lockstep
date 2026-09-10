@@ -879,7 +879,16 @@ def cache_line(totals: dict) -> str | None:
     w = totals.get("cache_write_tokens")
     if r is None and w is None:
         return None
-    r0, w0 = float(r or 0), float(w or 0)
+    if r is None or w is None:
+        # One side unreported (round-2 finding 6): printing it as 0 would
+        # invent "100% read" out of a field-map gap. Name the present side
+        # and the gap; no percentage over a half-known denominator.
+        present, side, gap = (
+            (r, "read", "writes") if r is not None else (w, "written", "reads")
+        )
+        return (f"cache: {_human_tokens(float(present))} {side} "
+                f"(cache {gap} not reported)")
+    r0, w0 = float(r), float(w)
     if r0 + w0 <= 0:
         return "cache: 0 read / 0 written"
     pct = round(100 * r0 / (r0 + w0))

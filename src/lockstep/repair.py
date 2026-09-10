@@ -64,7 +64,7 @@ def _decode_travel(s: str, start: int) -> int:
         return max(e.pos if e.pos is not None else start + 1, start + 1)
 
 
-def repair_json(text: str) -> tuple[str, list[str]] | None:
+def repair_json(text: str, *, single_value: bool = False) -> tuple[str, list[str]] | None:
     """Deletion-only repair of a result that failed to decode: strip markdown
     fence lines, take the LONGEST raw_decode-complete value (extraction takes
     the last; the intended output beats trailing chatter), drop everything
@@ -72,7 +72,16 @@ def repair_json(text: str) -> tuple[str, list[str]] | None:
     (repaired_text, human-readable deletions) or None when no deletion
     produces a decodable value — including when the text already decodes
     (wrong shape is not repair's problem) and when the only fix would be to
-    synthesize a closing token."""
+    synthesize a closing token.
+
+    `single_value=True` is the FILE-channel posture (adversarial round 2,
+    finding 1): the §7 footer says the result file contains ONLY the JSON,
+    so repair there may fix byte damage to that one value — and must refuse
+    any file holding more than one value-shaped span. Without this, a
+    narrated schema example (which validates by construction, being the
+    contract's own shape) or a superseded draft sitting BEFORE a truncated
+    real answer would be adopted as the result; the corrective, whose C3
+    fence carries the truncated REAL answer, owns those files."""
     deletions: list[str] = []
     work = text
     if _FENCE_RE.search(work):
@@ -93,6 +102,8 @@ def repair_json(text: str) -> tuple[str, list[str]] | None:
             travelled = _decode_travel(work, i)
             failed.append((i, travelled))
         i += 1
+    if single_value and (failed or len(candidates) != 1):
+        return None
     # The F-E2 rule with teeth: a complete value enclosed by a broken outer
     # container is not "a value surrounded by garbage" — it is a fragment of
     # a truncated result, and accepting it silently drops the rest. Refuse;

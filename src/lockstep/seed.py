@@ -147,6 +147,11 @@ class SeedExecutor:
         if seed is None or _item_index(phase_dir) is not None:
             return self.inner.execute(work, phase_dir, timeout_s)
         recording = seed["recording"]
+        if recording.repaired:
+            # Round-2 finding 3: served bytes are the SOURCE's repaired bytes;
+            # _finish reads this and marks the new record, so status and the
+            # drawer never present repaired output unmarked.
+            work.meta["_served_repaired"] = True
         name = "result.json" if recording.json_output else "result.txt"
         target = Path(phase_dir) / name
         target.parent.mkdir(parents=True, exist_ok=True)

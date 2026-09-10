@@ -10,8 +10,10 @@ cannot drift apart; contrib imports these and keeps a standalone fallback
 for a cockpit copied without the driver (the missing-part honesty rule).
 
 The stream shape is pi's, not ours: after a pi upgrade, re-run
-`lockstep doctor` — its probe of a pi-stream stanza exercises this parser
-end to end, including the no-assistant-text edge below.
+`lockstep doctor` — its probe exercises this parser whenever the stanza
+answers on the stdout leg (readonly stanzas always do; a writing stanza
+whose model obeys the footer satisfies the probe on the file channel
+first), including the no-assistant-text edge below.
 """
 
 from __future__ import annotations
@@ -55,12 +57,19 @@ def pi_stream_result(text: str) -> tuple[str | None, str | None]:
         return None, "not a pi event stream (no events parsed from stdout)"
     if last_assistant is None:
         return None, "stream ended with no assistant text (no assistant message_end)"
-    parts = [
-        b.get("text", "")
-        for b in (last_assistant.get("content") or [])
-        if isinstance(b, dict) and b.get("type") == "text"
-    ]
-    result = "".join(parts)
+    content = last_assistant.get("content")
+    if isinstance(content, str):
+        # A string-content shorthand (round-2 finding 7): the answer IS the
+        # string; iterating it as blocks would destroy a real answer into
+        # the no-assistant-text error.
+        result = content
+    else:
+        parts = [
+            b.get("text", "")
+            for b in (content or [])
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        result = "".join(parts)
     if not result.strip():
         return None, "stream ended with no assistant text (empty text blocks)"
     return result, None

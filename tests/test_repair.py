@@ -290,3 +290,123 @@ class TestRealFileChannel:
         phase = h.run_dir / "phases" / "w"
         assert (phase / "result-attempt1.json").read_text(encoding="utf-8") == (
             '{"findings": [], "verdict": "pass", "reason": "ok",}')
+
+    def test_repaired_flag_resets_on_clean_rerun(self, tmp_path, git_repo):
+        """`repaired` describes the RECORDED result: a hash-missed re-run
+        that produces clean output must clear it, or `status` and the
+        mission drawer claim a repair that never touched the current bytes.
+        A revalidation-KEPT result keeps the flag with its kept bytes."""
+        from conftest import rebuild
+
+        flow1 = _flow({
+            "id": "w", "role": "work", "kind": "fake", "output": "json",
+            "contract": "Verdict", "final": True,
+            "spec": {"task": "v1", "outputs": [REPAIRABLE]},
+        })
+        h1 = build(tmp_path, flow1, git_repo)
+        assert h1.engine.run() == 0
+        assert load_state(h1.run_dir).nodes["w"].repaired is True
+
+        # Unchanged resume: result kept, flag kept.
+        h2 = rebuild(tmp_path, json.loads(json.dumps(flow1)), git_repo, h1.run_dir)
+        h2.engine.prepare_resume()
+        assert h2.engine.run() == 0
+        assert load_state(h1.run_dir).nodes["w"].repaired is True
+
+        # Task edit -> hash miss -> clean re-run: flag must clear.
+        flow2 = json.loads(json.dumps(flow1))
+        flow2["nodes"][0]["spec"]["task"] = "v2"
+        flow2["nodes"][0]["spec"]["outputs"] = [VALID]
+        h3 = rebuild(tmp_path, flow2, git_repo, h1.run_dir)
+        h3.engine.prepare_resume()
+        assert h3.engine.run() == 0
+        assert load_state(h1.run_dir).nodes["w"].repaired is False
+
+
+# ------------------------------------------- single-value rule (file channel)
+
+
+DECOY_FILE = (
+    'Schema example: [{"severity": "minor", "title": "example", "file": "x", '
+    '"evidence": "e"}]\n'
+    'Actual findings:\n'
+    '[{"severity": "major", "title": "real-1", "file": "y", "evidence": "e"}, '
+    '{"severity": "major", "title": "real-2 truncat'
+)
+
+
+class TestSingleValueMode:
+    """Adversarial round 2, finding 1: on the file channel, repair may fix
+    byte damage to THE one value the footer contract says the file contains —
+    it must never let a narrated example (which validates by construction) or
+    a superseded draft displace a truncated real answer. Multi-value files go
+    to the corrective, where C3 fences the truncated REAL answer."""
+
+    def test_example_before_truncated_real_is_refused(self):
+        assert repair_json(DECOY_FILE, single_value=True) is None
+
+    def test_two_complete_values_are_refused(self):
+        draft_and_final = '{"a": 1, "big": "draft"} {"a": 2}'
+        assert repair_json(draft_and_final, single_value=True) is None
+        # permissive mode (stdout, already-extracted single values) keeps
+        # today's longest-wins behaviour
+        assert repair_json(draft_and_final) is not None
+
+    def test_single_damaged_value_still_repairs(self):
+        repaired, _ = repair_json(
+            '{"findings": [], "verdict": "pass", "reason": "ok",}', single_value=True)
+        assert json.loads(repaired) == VALID
+
+    def test_fenced_single_value_still_repairs(self):
+        repaired, _ = repair_json(
+            '```json\n{"findings": [], "verdict": "pass", "reason": "ok"}\n```',
+            single_value=True)
+        assert json.loads(repaired) == VALID
+
+    def test_decoy_file_goes_to_corrective_not_repair(self, tmp_path, git_repo):
+        from lockstep.registry import ExecutorStanza
+        from conftest import PY, make_config
+
+        write_decoy = (
+            "import sys, pathlib\n"
+            "pathlib.Path(sys.argv[2], 'result.json').write_text("
+            + repr(DECOY_FILE) + ")\n"
+        )
+        cfg = make_config(writer=ExecutorStanza(
+            argv=[PY, "-c", write_decoy, "{prompt}", "{phase_dir}"]))
+        h = build(tmp_path, _flow({
+            "id": "w", "role": "work", "kind": "harness", "output": "json",
+            "contract": "Finding[]", "final": True,
+            "spec": {"task": "t", "executor": "writer"},
+        }), git_repo, config=cfg)
+        h.engine.run()  # corrective re-writes the same decoy: terminal failure
+        rec = load_state(h.run_dir).nodes["w"]
+        assert rec.repaired is False, "the example array must NOT become the result"
+        assert rec.attempts == 2, "the corrective ran instead"
+
+
+# ------------------------------------------- provenance across --seed
+
+
+def test_seed_serves_repaired_provenance(tmp_path, git_repo):
+    """Round 2, finding 3: a seeded record's result IS the source's repaired
+    bytes — the new run's status/drawer must say so, not present them
+    unmarked (the surfaces the repaired flag exists for)."""
+    from lockstep.seed import SeedIndex, wrap_registry
+
+    flow = _flow({
+        "id": "w", "role": "work", "kind": "fake", "output": "json",
+        "contract": "Verdict", "final": True,
+        "spec": {"task": "t", "outputs": [REPAIRABLE]},
+    })
+    h1 = build(tmp_path, flow, git_repo)
+    assert h1.engine.run() == 0
+    assert load_state(h1.run_dir).nodes["w"].repaired is True
+
+    h2 = build(tmp_path, json.loads(json.dumps(flow)), git_repo)
+    wrap_registry(h2.engine.registry, SeedIndex.from_run_dir(h1.run_dir),
+                  log=lambda *a: None, on_hit=h2.engine.note_seeded)
+    assert h2.engine.run() == 0
+    rec = load_state(h2.run_dir).nodes["w"]
+    assert rec.seeded_from, "precondition: the result was served, not spawned"
+    assert rec.repaired is True, "served repaired bytes must keep the marker"

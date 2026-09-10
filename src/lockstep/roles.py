@@ -1435,6 +1435,13 @@ class Engine:
         automatic retry on timeout or empty result, additive, even when
         retry.max == 0 (SPEC §9.3, AMENDMENTS M4)."""
         rec = self._rec(node.id)
+        # C2: `repaired` describes the RECORDED result. A new execution is a
+        # new result — the flag resets here (and re-sets only if THIS
+        # attempt's output is repaired), or a clean re-run after a hash miss
+        # would keep claiming a repair on `status` and the mission drawer.
+        # It persists across revalidation-kept results, where the repaired
+        # bytes are still the recorded ones.
+        rec.repaired = False
         retry = self._effective_retry(node, executor, work)
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0
@@ -1528,7 +1535,10 @@ class Engine:
                 candidates.append(file_text)
         repaired_text = None
         for candidate in candidates:
-            attempt = repair_json(candidate)
+            # File channel: single-value posture (see repair_json) — a
+            # multi-value result file goes to the corrective, never to a
+            # longest-value pick that could displace the real answer.
+            attempt = repair_json(candidate, single_value=raw.source == "file")
             if attempt is None:
                 continue
             try:
@@ -1713,6 +1723,11 @@ class Engine:
             value, text = validated
         else:
             value, text = None, raw.result_text
+        if work.meta.get("_served_repaired"):
+            # Round-2 finding 3: a served recording's bytes ARE the source
+            # run's repaired bytes; the marker travels with them or the new
+            # run's status/drawer present repaired output unmarked.
+            rec.repaired = True
         if node.role == "gate":
             verdict = Verdict.model_validate(value)
             if self.store.state.baseline_findings.get(node.id):
@@ -2172,6 +2187,8 @@ class Engine:
                         errors[i] = irec.error
                         self.store.record(rec)
                         return
+            if work.meta.get("_served_repaired"):
+                irec.repaired = True  # replayed items serve repaired bytes too
             path = self.store.write_result(node.id, text, json_output=node.output == "json", item_index=i)
             irec.result_path = str(path)
             irec.status = "done"
@@ -2210,6 +2227,9 @@ class Engine:
         self._set_status(node.id, "done")
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path, irec: ItemRecord) -> RawResult | None:
+        irec.repaired = False  # C2: same reset rule as _execute_with_retries;
+        # the per-item reuse path returns before reaching here, so a kept
+        # item's flag persists with its kept bytes.
         retry = self._effective_retry(node, executor, work)
         retries_left = retry.max
         backoff_s = retry.backoff_ms / 1000.0

@@ -184,3 +184,12 @@ class TestExecutorStreamChannel:
             argv=[PY, "-c", script, "{prompt}"], envelope="pi-stream")
         raw = _run_node(tmp_path, stanza)
         assert json.loads(raw.result_text) == {"answer": 2}
+
+
+def test_string_content_shorthand_is_an_answer():
+    # Round-2 finding 7: content as a plain string is the answer, not an
+    # empty block list.
+    stream = json.dumps({"type": "message_end",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}})
+    text, err = pi_stream_result(stream)
+    assert (text, err) == ('{"a": 1}', None)

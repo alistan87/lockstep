@@ -29,6 +29,9 @@ class Recording:
     result_text: str | None
     error: str | None = None
     json_output: bool = False
+    # C2 provenance (round-2 finding 3): the recorded bytes are post-repair;
+    # a run that SERVES them must carry the marker to its own surfaces.
+    repaired: bool = False
 
 
 @dataclass
@@ -54,6 +57,7 @@ class ReplayIndex:
                 result_text=text,
                 error=rec.error,
                 json_output=is_json,
+                repaired=rec.repaired,
             )
             for idx, irec in rec.items.items():
                 item_phase = phase / "items" / str(idx)
@@ -64,6 +68,7 @@ class ReplayIndex:
                     result_text=itext,
                     error=irec.error,
                     json_output=i_is_json,
+                    repaired=irec.repaired,
                 )
         return index
 
@@ -168,6 +173,10 @@ class ReplayExecutor:
                 source="none",
                 error=f"replayed failure: {recording.error or recording.status}",
             )
+        if recording.repaired:
+            # Same provenance rule as the seed wrapper: served bytes are the
+            # source's repaired bytes, and the marker travels with them.
+            work.meta["_served_repaired"] = True
         name = "result.json" if recording.json_output else "result.txt"
         target = phase_dir / name
         target.parent.mkdir(parents=True, exist_ok=True)

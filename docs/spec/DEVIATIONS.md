@@ -809,8 +809,23 @@ file records implementation-level departures below that bar.
   decode's reach — complete values are deliberately not candidates, so a
   harness envelope never displaces its own unwrapped result) instead of
   the salvaged inner rubble, capped at max_interp_chars — the
-  chronicle-forensics fix, verbatim from ROADMAP-NOTES 2026-08-15. Pinned
-  by tests/test_repair.py.
+  chronicle-forensics fix, verbatim from ROADMAP-NOTES 2026-08-15.
+  Refined by adversarial round 2 (2026-09-09, same day): (a) on the FILE
+  channel, repair also considers the raw result-file bytes — the E2
+  salvage collapses a dangling-comma file to inner rubble before
+  validation ever runs — but ONLY under a single-value rule: the §7
+  footer says the file contains ONLY the JSON, so a file holding more
+  than one value-shaped span (a narrated example, which validates by
+  construction; a superseded draft before a truncated real answer) is
+  refused wholesale and goes to the corrective, whose C3 fence carries
+  the truncated REAL answer. The stdout channel gets no raw-bytes
+  fallback at all. (b) `repaired` describes the RECORDED result: it
+  resets at every new execution and persists across revalidation-kept
+  and per-item-cached results. (c) The marker travels with served bytes
+  — `--seed` and `--replay` recordings carry `repaired`, and the serving
+  run's record inherits it, so no surface presents repaired bytes
+  unmarked in a lineage that never ran the repair. Pinned by
+  tests/test_repair.py.
 
 - **2026-09-09 — `envelope = "pi-stream"`: the pi event stream as a result
   channel** (throughput-parity D; redefines only SPEC §8.3's
@@ -831,8 +846,13 @@ file records implementation-level departures below that bar.
   (`lockstep.pistream`); contrib/cost_report.py imports them with its
   standalone fallback kept (a cockpit copied without the driver degrades,
   per the missing-part honesty rule). `doctor` probes the stream channel
-  itself and fails a stanza whose stream yields no assistant text, instead
-  of passing on "ok" appearing in raw chatter. Payoff recorded in
+  when the probe answers on the stdout leg, failing a stanza whose stream
+  yields no assistant text instead of passing on "ok" in raw chatter — a
+  caveat stated honestly (round-2 finding 4): a WRITING pi-stream stanza
+  whose model obeys the footer's result-file order satisfies the probe on
+  the file channel first, so the guarantee is per-stanza-shape (the
+  shipped pi-review probes the stream via its readonly leg, which has no
+  file channel). Payoff recorded in
   lockstep.toml.example: pi-review regains `--mode json`, ending the named
   honesty gap ("telemetry on reviewers costs correctness") — reviewers
   now carry usage envelopes in every cost surface. Pinned by

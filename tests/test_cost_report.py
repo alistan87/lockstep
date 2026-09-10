@@ -466,3 +466,13 @@ def test_render_carries_cache_and_usage_lines(tmp_path, fields_file):
     # the honest name, and the explicit disclaimer of the billed unit
     assert "assistant messages reporting usage" in text
     assert "not the billed premium-request unit" in text
+
+
+def test_cache_line_one_side_unreported_invents_no_percent():
+    # Round-2 finding 6: a field map that carries only reads must not render
+    # the unreported writes as 0 and claim "100% read".
+    line = cost_report.cache_line({"cache_read_tokens": 12_000_000.0})
+    assert line is not None and "%" not in line
+    assert "not reported" in line and "12M read" in line
+    line_w = cost_report.cache_line({"cache_write_tokens": 500.0})
+    assert "%" not in line_w and "not reported" in line_w

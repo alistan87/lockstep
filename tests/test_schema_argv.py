@@ -215,3 +215,31 @@ class TestPlaceholderInjection:
             ex.execute(work, phase, 60)
             assert (phase / "contract-schema.json").read_text(
                 encoding="utf-8") == work.meta["schema_json"]
+
+    def test_schema_bytes_cannot_inject_prompt_placeholder(self, tmp_path):
+        """The reverse direction (round-2 finding 5): a contract schema whose
+        Field description contains the literal "{prompt}" must reach argv
+        verbatim — single-pass expansion never re-scans a replacement's
+        output, so spawned argv cannot diverge from the hashed schema: part."""
+        echo_both = (
+            "import sys, json, pathlib\n"
+            "pathlib.Path(sys.argv[3], 'result.json').write_text("
+            "json.dumps({'prompt': sys.argv[1], 'schema': sys.argv[2]}))\n"
+        )
+        stanza = ExecutorStanza(
+            argv=[PY, "-c", echo_both, "{prompt}"],
+            schema_argv=["{schema}", "{phase_dir}"])
+        cfg = _config(mine=stanza)
+        ex = HarnessExecutor(config=cfg, repo_root=tmp_path)
+        node = Node(id="n", kind="harness", spec={"task": "t"},
+                    output="json", contract="Verdict")
+        work = ex.plan(node, _ctx(tmp_path, "mine"))
+        # Simulate the hostile schema (a project-owned model COULD carry this
+        # in a Field description) without needing a custom contracts module.
+        hostile = '{"description": "fill like {prompt} and {phase_dir}", "type": "object"}'
+        work.meta["schema_json"] = hostile
+        phase = tmp_path / "ph"
+        phase.mkdir(exist_ok=True)
+        raw = ex.execute(work, phase, 60)
+        got = json.loads(raw.result_text)
+        assert got["schema"] == hostile, "schema bytes were rewritten at spawn"

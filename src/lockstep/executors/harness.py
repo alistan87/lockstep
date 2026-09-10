@@ -155,6 +155,31 @@ def extract_last_json(text: str) -> str | None:
     return last
 
 
+_PLACEHOLDER_RE = re.compile(r"\{(prompt|phase_dir|schema|schema_file)\}")
+
+
+def _fill_placeholder(key: str, prompt: str, phase_dir: Path, work) -> str:
+    """One placeholder's value, for the single-pass expansion in execute().
+    A schema placeholder on a node whose plan produced no schema stays
+    literal — matching the pre-single-pass behaviour, where schema
+    replacement simply did not run."""
+    if key == "prompt":
+        return prompt
+    if key == "phase_dir":
+        return str(phase_dir.resolve())
+    schema_json = work.meta.get("schema_json")
+    if schema_json is None:
+        return "{" + key + "}"
+    if key == "schema_file":
+        # Written UNCONDITIONALLY: this name is not in the rotation list at
+        # execute start, so an exists-guard would hand a re-plan after a
+        # contract edit the STALE schema while the input hash said otherwise.
+        sf = phase_dir / "contract-schema.json"
+        sf.write_text(schema_json, encoding="utf-8")
+        return str(sf.resolve())
+    return schema_json
+
+
 def stanza_digest(name: str, stanza: ExecutorStanza) -> str:
     """Per-stanza digest (AMENDMENTS-r5 B1): a node's fingerprint covers only
     the stanza it RESOLVES, so editing an unrelated stanza (e.g. repointing a
@@ -455,24 +480,18 @@ class HarnessExecutor:
             # phase dir): expanded at spawn, left intact in the fingerprint —
             # run-specific paths are excluded from input_hash, same rule as
             # spill stubs and the footer placeholder.
-            # C1's placeholders expand on the TEMPLATE part, BEFORE the prompt
-            # is substituted in: fenced upstream data inside a prompt is DATA
-            # (§7), and data containing the literal "{schema}" must reach the
-            # spawn verbatim, never rewrite the command line.
-            schema_json = work.meta.get("schema_json")
-            if schema_json is not None:
-                if "{schema_file}" in part:
-                    # Written UNCONDITIONALLY: this name is not in the
-                    # rotation list above, so an exists-guard would hand a
-                    # re-plan after a contract edit the STALE schema while
-                    # the input hash said otherwise.
-                    sf = phase_dir / "contract-schema.json"
-                    sf.write_text(schema_json, encoding="utf-8")
-                    part = part.replace("{schema_file}", str(sf.resolve()))
-                part = part.replace("{schema}", schema_json)
-            argv.append(
-                part.replace("{prompt}", prompt).replace("{phase_dir}", str(phase_dir.resolve()))
-            )
+            # SINGLE-PASS placeholder expansion (adversarial rounds 1+2):
+            # every placeholder is substituted exactly once on the TEMPLATE,
+            # and no replacement's output is ever re-scanned. Both injection
+            # directions die structurally — interpolated prompt DATA (§7)
+            # containing the literal "{schema}" reaches the spawn verbatim,
+            # and a contract schema whose Field description contains
+            # "{prompt}" never has the rendered prompt injected into it
+            # (which would also diverge spawned argv from the hashed
+            # schema: part).
+            argv.append(_PLACEHOLDER_RE.sub(
+                lambda m: _fill_placeholder(m.group(1), prompt, phase_dir, work), part
+            ))
         if work.meta["prompt_via"] == "stdin":
             stdin_text = prompt
         (phase_dir / "argv.json").write_text(
