@@ -114,13 +114,17 @@ is fine.
   for.
 
   **The stanza must also leave stdout usable**, because that is where a
-  readonly node's answer comes back. On pi that means the readonly stanza must
-  NOT carry `--mode json`: measured against 0.83.0 it is an event STREAM, and
-  the last object in it is `{"type":"agent_settled"}` — which is exactly what
-  the driver hands to contract validation. Keep two stanzas (`pi` and
-  `pi-review` in `lockstep.toml.example`); writers keep `--mode json` and its
-  usage telemetry because they answer in a file, and readonly nodes trade that
-  telemetry for a working result channel.
+  readonly node's answer comes back. On pi, `--mode json` turns stdout into
+  an event STREAM (the last object is `{"type":"agent_settled"}`), so it is
+  legal only on a stanza that also declares `envelope = "pi-stream"`
+  (0.13.0) — the driver then reads the stream structurally (the last
+  assistant message's text blocks; thinking excluded; a stream with no
+  assistant text is a named error) and readonly reviewers get usage
+  envelopes, tool counts, and model IDs in every cost surface. The shipped
+  `pi-review` stanza is that shape. A stanza carrying `--mode json` WITHOUT
+  the envelope key still hands `agent_settled` to contract validation —
+  keep the pair together, and re-run `doctor` after any pi upgrade (the
+  stream shape is pi's, not ours).
 
   Readonly is not only for reviewers. Any node whose product is a *judgement*
   — triage, estimation, planning, a verdict — should be readonly: it fans out,
@@ -142,6 +146,7 @@ reading as clean.
 | `lint-map-over-manifest` | a map fans out over a `PathManifest` node | file-audit's `path\|fingerprint` convention: item strings are the cache keys; bare paths never invalidate on content edits |
 | `lint-map-without-budget` | a flow has a map node but no explicit `budget` | fan-out width is decided by runtime data; the spawn budget is the only ceiling |
 | `lint-argv-prompt` *(config)* | a reachable stanza uses `prompt_via = "argv"` | the 59,028-char corrective prompt vs Windows' 32,767 cap; `ArgvTooLong` fails cleanly, stdin removes the ceiling |
+| `lint-schema-argv` *(config)* | a contract-bearing json node rides a stanza with inline `{schema}` in `schema_argv` AND `prompt_via = "argv"` | schema + prompt + a corrective share one ~32k command line; `{schema_file}` or stdin removes the pressure |
 | `lint-serialized-map` | a map with `concurrency > 1` whose items are not readonly | items hold the `tree` token and serialize anyway; the fan-out buys nothing and reads as a hang |
 | `lint-concurrent-heal-rollback` | two healing gates with `rollback: true` whose windows can overlap | a rollback discards every path changed since ITS baseline, not just its target's, so the gates undo each other; recorded twice on `webapp-local`, the second time exiting 0 with half the deliverable deleted |
 | `lint-missing-write-scope` | a write-capable work node declares no `spec.writes` | prose scoping is advisory text a model rationalizes past under gate pressure; becomes a verify ERROR at `format_version` 1.1 |

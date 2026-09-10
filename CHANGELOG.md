@@ -6,6 +6,88 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.13.0 — 2026-09-10
+
+The harness-parity release: PROPOSAL-throughput-and-harness-parity, adopted
+at rev 3 and built in one day under three adversarial review rounds — each
+round attacking the previous round's fixes, every fix landing test-first.
+Feature E (event-driven dispatch) was deferred at adoption on structural
+evidence (2 of 40 shipped flows have any node that could start before its
+wave's barrier; the flagships are fan-out→join, which no dispatch strategy
+beats); A3 (flow-digest narrowing) waits for a composing client. Both carry
+recorded triggers in the proposal's §10.
+
+### The digest unblock (A1/A2)
+
+`stanza_digest` is canonicalized over a frozen field set: the v1 fields
+always (byte-identical to every earlier digest, pinned against recorded
+values of the shipped example), later behaviour-bearing fields only when
+set, scheduling-only fields never. Adding a field to `ExecutorStanza` no
+longer re-bills every cached harness node on upgrade — the dead-end that
+blocked three roadmap items. First consumer: per-stanza `default_retry`
+(node `retry` > stanza > kind default), shipped live on the example's
+copilot-cli stanza, whose digest did not move — the carve-out proving
+itself. DEVIATIONS 2026-09-09.
+
+### Request-thrift: deletion-only repair (C2/C3)
+
+Before spending the corrective re-spawn — on a request-metered harness, a
+second billed request — the driver tries a deterministic repair that may
+only DELETE: fence lines, dangling commas before existing closers, garbage
+around the value. It never synthesizes a closing token (a synthesized `]`
+would pass a truncated review as a clean one), and on the file channel it
+obeys a single-value rule at BOTH the salvage and repair layers: the §7
+footer says the file contains only the JSON, so a file holding a second
+value-shaped span, a failed span, or trailing bytes goes to the corrective
+— where the model, not the driver, disambiguates. Acceptance rotates the
+raw bytes first, journals a `kind:"repair"` event naming every deletion,
+and sets `repaired` on the record — surfaced by `status` and the mission
+drawer, reset on every new execution, and carried across `--seed`/
+`--replay` so no lineage presents repaired bytes unmarked. The corrective
+fence now embeds the longest near-object from the raw channel instead of
+salvaged inner rubble (the chronicle-forensics fix).
+
+### The pi-stream result channel (D)
+
+`envelope = "pi-stream"` on a stanza has the driver parse pi's `--mode
+json` JSONL stream structurally on the §8.3 stdout leg: the result is the
+last assistant message's text blocks (thinking excluded), the file channel
+still wins, and a stream with no assistant text is a named error. The
+shipped `pi-review` stanza regains `--mode json` — readonly reviewers now
+carry usage envelopes, tool counts, and model IDs in every cost surface,
+ending the "telemetry on reviewers costs correctness" trade the example
+file used to state. The parsers moved into the driver
+(`lockstep.pistream`); contrib imports them with its standalone fallback.
+
+### Schema pass-through (C1)
+
+`schema_argv` on a stanza appends a schema-bearing argv fragment when the
+node has `output: "json"` and a resolvable contract — `{schema}` fills
+with the CONTRACT's schema (a `Name[]` contract becomes an array schema,
+or the flag would guarantee the corrective it exists to kill), and the
+filled schema is its own fingerprint part. Placeholder expansion is
+single-pass on the template, so interpolated data and schema bytes can
+never rewrite each other or the command line. `verify --lint` gains
+`lint-schema-argv`.
+
+### The instruments (G1/G2) and config adoptions (B1/B2)
+
+Cost surfaces gain the `cache:` hit-rate line (absent prints as absent,
+never 0%; a half-reported side names the gap instead of inventing 100%)
+and per-node counts of usage-bearing assistant messages under exactly
+that name — a correlate for request-metered dashboards, never the billed
+premium-request unit. The example claude stanza adopts
+`--exclude-dynamic-system-prompt-sections` (flip your live toml only
+after a baseline run records the `cache:` line), and
+`claude-code-resilient` ships `--fallback-model` as a per-node opt-in.
+
+Three adversarial rounds (two agent lenses plus inline) found and fixed
+seven blockers/majors across the build — salvage-starved repair, two argv
+placeholder-injection directions, a stale schema file, decoy adoption at
+two layers, a lying `repaired` flag, dropped provenance — each now a
+pinned test. DEVIATIONS 2026-09-09 records all four departures and their
+round-2/3 refinements.
+
 ## 0.12.0 — 2026-09-08
 
 The trust-the-human release: the two remaining OW-07 acceptances, built and

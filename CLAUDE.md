@@ -111,6 +111,10 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
 - `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
 - `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine; `_writes_of` is the ONE reader of a
   declared scope (quarantine, dirty preflight, heal text, rollback warning)
+- `repair.py` — deletion-only JSON repair + the file channel's single-value
+  salvage (C2/C3; never synthesizes a closer, refuses multi-value files)
+- `pistream.py` — pi `--mode json` stream parsers: the result channel
+  (`envelope = "pi-stream"`) and the cost parsers contrib imports
 - `cli.py`, `render.py`, `doctor.py` — frozen exit codes, Mermaid, executor probes
 - `replay.py`, `seed.py` — result-serving wrappers over the real executors:
   replay serves EVERY node and errors on a miss (reproduce a run), a seed
@@ -151,6 +155,12 @@ a feature over adding a dependency. Full pytest after every change.
   a process for later nodes — closing there would kill it at node exit and
   diverge from POSIX. The guarantee is nothing outlives the RUN, not the node;
   the kernel reaps the rest when the driver exits (DEVIATIONS 2026-08-10).
+- The file channel refuses to salvage OR repair a result file holding more
+  than one JSON value, any broken span, or trailing bytes — it goes to the
+  corrective instead (0.13.0, DEVIATIONS 2026-09-09). Looks like a missed
+  cheap save; it is the anti-decoy rule: a narrated schema example validates
+  by construction, and only the model can say which value it meant. Repair
+  never fires for gates, and `repaired` resets on every new execution.
 - `kill_tree`/`kill_pid_tree` run `taskkill /T /F` **first and unconditionally**,
   then the job terminate. The walk is only useful while the top process lives,
   and gating it on "the job failed" made it unreachable exactly when it was the

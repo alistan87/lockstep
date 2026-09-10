@@ -493,11 +493,22 @@ Four rules it is built on:
   the difference matters most is the one where an agent was supposed to touch
   files and did not. The same rule catches a *pi* stanza with no `--mode json`:
   the field map is keyed by binary, so the stream parser is selected for every
-  pi node including the readonly ones that must print prose — `pi_stream_tools`
+  pi node including the ones that print prose (any stanza without
+  `envelope = "pi-stream"` — since 0.13.0 the shipped readonly `pi-review`
+  DOES stream, and reports real usage) — `pi_stream_tools`
   returns `None` for a log with no events, and `{}` only for a real stream that
   ran nothing. claude's envelope has no tool events at all, so its `num_turns`
   is reported as `turns`, glossed *a model reply, not a tool call*, rather than
-  dressed up as a count it is not.
+  dressed up as a count it is not. The pi analogue (0.13.0) is `usage msgs` —
+  usage-bearing assistant messages, glossed as NOT the billed premium-request
+  unit: a correlate the operator lines up against a request-metered
+  dashboard, never a claim on the meter. Two more 0.13.0 lines with the same
+  posture: the cost panel's `cache:` hit-rate line prints nothing when the
+  harness reports no cache fields (absent is never 0%), and a step whose
+  recorded result was accepted after a deletion-only repair says `repaired`
+  in its drawer — the raw pre-repair bytes are rotated in the artifacts,
+  because a human deciding from a quoted result must be able to see the
+  bytes were touched.
 
 **The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick parses only
 the journal lines past the cursor and carries one extra bit (`live` — whether

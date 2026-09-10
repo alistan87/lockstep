@@ -207,12 +207,29 @@ A node declaring `output: "json"` must name a contract — a pydantic model
 resolved from the built-ins (`Verdict`, `Finding[]`, `PathManifest`, …) or from
 your own module. The driver validates before the value is allowed downstream.
 
-On a validation failure the driver issues **exactly one corrective re-spawn**,
-carrying the original task and the invalid output back to the agent. This is not
-a retry: retries are for transport failures, correctives are for shape failures,
-and they are counted separately because they mean different things. A high
-corrective count is a prompt-craft signal — the contract wording is unclear —
-not a model failure.
+On a validation failure the driver first tries a **deletion-only repair**
+(0.13.0, DEVIATIONS 2026-09-09): strip markdown fence lines, remove a
+dangling comma before an existing closer, drop garbage around the value —
+never synthesize a closing token, because a synthesized `]` would pass a
+truncated review as a clean one. On the file channel the repair (and the
+salvage step before it) obeys a **single-value rule**: the footer told the
+model the file must contain only the JSON, so a file holding a second
+value, a broken span, or trailing bytes is refused wholesale — a narrated
+schema example validates by construction, and only the model can say which
+value it meant. An accepted repair rotates the raw bytes first, journals
+what it deleted, and marks the record `repaired` (visible in `status` and
+the mission drawer, and carried across `--seed`/`--replay`). Never for a
+gate: a verdict's consumers act without a human re-reading raw bytes.
+
+When repair does not apply, the driver issues **exactly one corrective
+re-spawn**, carrying the original task and the invalid output back to the
+agent — with the raw channel's longest near-object in the fence when one
+corrupted token collapsed extraction to inner rubble, so the model corrects
+its own output instead of re-deriving it. This is not a retry: retries are
+for transport failures, correctives are for shape failures, and they are
+counted separately because they mean different things. A high corrective
+count is a prompt-craft signal — the contract wording is unclear — not a
+model failure.
 
 The corrective is "output-only": it constrains side effects, not context. A
 headless spawn is stateless, so without the original task and the invalid output

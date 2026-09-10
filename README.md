@@ -7,7 +7,8 @@ Copilot CLI) or a plain subprocess (`pytest`, `ruff`, a script).
 
 The driver owns everything else: static verification before anything spawns,
 topological scheduling with resource-exclusion serialization, per-node state on
-disk, input-hash resume, schema validation of results, gate adjudication,
+disk, input-hash resume, schema validation of results (with a deletion-only
+repair tried before the corrective re-spawn), gate adjudication,
 snapshot/rollback on heal, human approvals, budgets, timeouts. **The driver
 never calls a model, never holds an API key, and never makes a network
 request** — model access is whatever credential the spawned harness carries.
