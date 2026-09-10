@@ -410,3 +410,71 @@ def test_seed_serves_repaired_provenance(tmp_path, git_repo):
     rec = load_state(h2.run_dir).nodes["w"]
     assert rec.seeded_from, "precondition: the result was served, not spawned"
     assert rec.repaired is True, "served repaired bytes must keep the marker"
+
+
+# ------------------------------- round 3: the salvage layer + trailing bytes
+
+
+EARLY_TRUNC_DECOY = (
+    '[{"severity": "minor", "title": "example", "file": "x", "evidence": "e"}]\n'
+    'Actual findings:\n'
+    '[{"severity": "major", "title": "real-1 truncat'
+)  # truncation BEFORE the first real finding completes: the last complete
+   # value in the file is the decoy itself
+
+
+class TestSalvageLayer:
+    """Round-3 major: the E2 file salvage ran extract_last_json (last
+    complete value) BEFORE validation — so when truncation lands before the
+    first real value completes, the narrated example was the last complete
+    value, validated by construction, and the node went done with the decoy;
+    repair and its single-value rule were never consulted. The file-channel
+    salvage now carries the same discipline: one value-shaped span, no
+    failed span, nothing but whitespace after the value."""
+
+    def test_early_truncation_decoy_never_goes_done(self, tmp_path, git_repo):
+        from lockstep.registry import ExecutorStanza
+        from conftest import PY, make_config
+
+        write_decoy = (
+            "import sys, pathlib\n"
+            "pathlib.Path(sys.argv[2], 'result.json').write_text("
+            + repr(EARLY_TRUNC_DECOY) + ")\n"
+        )
+        cfg = make_config(writer=ExecutorStanza(
+            argv=[PY, "-c", write_decoy, "{prompt}", "{phase_dir}"]))
+        h = build(tmp_path, _flow({
+            "id": "w", "role": "work", "kind": "harness", "output": "json",
+            "contract": "Finding[]", "final": True,
+            "spec": {"task": "t", "executor": "writer"},
+        }), git_repo, config=cfg)
+        h.engine.run()
+        rec = load_state(h.run_dir).nodes["w"]
+        assert rec.repaired is False
+        assert rec.attempts == 2, "must reach the corrective, not adopt the example"
+        if rec.status == "done":  # the corrective re-wrote the same decoy
+            raise AssertionError("decoy adopted as the result")
+
+    def test_fence_salvage_still_free(self):
+        # The case E2 exists for survives the stricter salvage.
+        from lockstep.repair import salvage_file_value
+        assert salvage_file_value('```json\n{"a": 1}\n```') == '{"a": 1}'
+
+    def test_salvage_refuses_multi_span_and_trailing_bytes(self):
+        from lockstep.repair import salvage_file_value
+        assert salvage_file_value(EARLY_TRUNC_DECOY) is None       # failed span
+        assert salvage_file_value('{"a":1} {"b":2}') is None       # two values
+        assert salvage_file_value('{"a":1} trailing prose') is None  # tail bytes
+        assert salvage_file_value('Header line:\n{"a": 1}') == '{"a": 1}'  # leading ok
+        assert salvage_file_value('{"a": 1,}') is None  # damage is repair's job
+
+    def test_bracket_free_truncated_tail_refused_at_both_layers(self):
+        # Round-3 minor: a decoy followed by a truncated tail with no {/[
+        # opener — invisible to the span scanner, caught by the trailing-
+        # bytes rule at BOTH layers.
+        from lockstep.repair import salvage_file_value
+        text = '{"findings": [], "verdict": "pass", "reason": "decoy"} x"verdict": "fail", "reason": "truncated real answ'
+        assert salvage_file_value(text) is None
+        assert repair_json(text, single_value=True) is None
+        # permissive (stdout single-extracted-value) mode unaffected
+        assert repair_json(text) is not None

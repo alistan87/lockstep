@@ -74,14 +74,18 @@ def repair_json(text: str, *, single_value: bool = False) -> tuple[str, list[str
     (wrong shape is not repair's problem) and when the only fix would be to
     synthesize a closing token.
 
-    `single_value=True` is the FILE-channel posture (adversarial round 2,
-    finding 1): the §7 footer says the result file contains ONLY the JSON,
-    so repair there may fix byte damage to that one value — and must refuse
-    any file holding more than one value-shaped span. Without this, a
+    `single_value=True` is the FILE-channel posture (adversarial rounds
+    2–3): the §7 footer says the result file contains ONLY the JSON, so
+    repair there may fix byte damage to that one value — and must refuse a
+    file holding a second value-shaped span, any failed span, or ANY
+    non-whitespace bytes after the value (a truncated real answer whose
+    opener was corrupted leaves no span the scanner can see; trailing
+    bytes are the only trace). Leading prose stays legal. Without this, a
     narrated schema example (which validates by construction, being the
     contract's own shape) or a superseded draft sitting BEFORE a truncated
-    real answer would be adopted as the result; the corrective, whose C3
-    fence carries the truncated REAL answer, owns those files."""
+    real answer would be adopted as the result; those files go to the
+    corrective, whose C3 fence carries the truncated real answer whenever
+    it is the raw channel's longest near-object."""
     deletions: list[str] = []
     work = text
     if _FENCE_RE.search(work):
@@ -102,8 +106,18 @@ def repair_json(text: str, *, single_value: bool = False) -> tuple[str, list[str
             travelled = _decode_travel(work, i)
             failed.append((i, travelled))
         i += 1
-    if single_value and (failed or len(candidates) != 1):
-        return None
+    if single_value:
+        # File-channel posture, round 3: one value-shaped span, no failed
+        # span, and NOTHING but whitespace after the value. The trailing
+        # rule is what catches a truncated tail with no {/[ opener — a
+        # corrupted or string/number-rooted real answer the span scanner
+        # cannot see. Leading prose stays legal (models prepend headers);
+        # a decoy AFTER the real answer is a second span and refuses above.
+        if failed or len(candidates) != 1:
+            return None
+        _, _, c_end, c_s, _ = candidates[0]
+        if c_s[c_end:].strip():
+            return None
     # The F-E2 rule with teeth: a complete value enclosed by a broken outer
     # container is not "a value surrounded by garbage" — it is a fragment of
     # a truncated result, and accepting it silently drops the rest. Refuse;
@@ -129,6 +143,41 @@ def repair_json(text: str, *, single_value: bool = False) -> tuple[str, list[str
         # so validation failed on shape and would fail again identically.
         return None
     return candidate, deletions
+
+
+def salvage_file_value(text: str) -> str | None:
+    """The FILE channel's salvage (E2, refined by round 3): pure extraction,
+    no byte edits beyond fence-line stripping. Returns the file's one
+    complete JSON value when the file holds exactly one value-shaped span,
+    no failed span, and nothing but whitespace after the value — else None,
+    and the raw text goes to validation/repair/corrective. This replaced
+    `extract_last_json` here because last-complete-value is the WRONG rule
+    for a result file: when truncation lands before the first real value
+    completes, the last complete value IS the narrated example, and it
+    validates by construction. Leading prose is allowed; a dangling comma
+    is damage, which is repair's job (and gets repair's journaled
+    disclosure), not extraction's."""
+    stripped = _FENCE_RE.sub("", text)
+    candidate: tuple[int, int] | None = None
+    i = 0
+    while i < len(stripped):
+        if stripped[i] in "{[":
+            try:
+                _, end = _decoder.raw_decode(stripped, i)
+            except json.JSONDecodeError:
+                return None  # a failed span: truncated or damaged content
+            if candidate is not None:
+                return None  # a second value-shaped span
+            candidate = (i, end)
+            i = end
+            continue
+        i += 1
+    if candidate is None:
+        return None
+    start, end = candidate
+    if stripped[end:].strip():
+        return None  # trailing bytes: possibly a truncated real answer
+    return stripped[start:end]
 
 
 def longest_near_object(text: str) -> str | None:

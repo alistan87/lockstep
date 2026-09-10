@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from ..contracts import ContractError, describe_contract, resolve_contract
 from ..interpolate import fence_context_file, render_scope, render_template
 from ..pistream import pi_stream_result
+from ..repair import salvage_file_value
 from ..reads import apply_reads, reads_manifest_text
 from ..protocols import PlannedWork, RawResult, RenderCtx
 from ..registry import SCHEDULING_FIELDS, V1_DIGEST_FIELDS, ExecutorStanza, LockstepConfig
@@ -536,12 +537,16 @@ class HarnessExecutor:
             if p.exists():
                 text = p.read_text(encoding="utf-8")
                 if work.meta["output"] == "json" and not _is_json(text):
-                    # E2: the same fence salvage the stdout fallback gets. A
-                    # model that wrote its (valid) JSON wrapped in a markdown
-                    # fence into result.json otherwise burns the corrective
-                    # re-spawn on a purely cosmetic unwrap. The raw file stays
-                    # on disk untouched; only the result channel is salvaged.
-                    embedded = extract_last_json(text)
+                    # E2, refined by adversarial round 3: the fence salvage,
+                    # under the file channel's single-value discipline. The
+                    # old extract_last_json (LAST complete value) adopted a
+                    # narrated example as the result whenever truncation cut
+                    # the file before the first real value completed — the
+                    # example was the last complete value and validated by
+                    # construction. The raw file stays on disk untouched;
+                    # only the result channel is salvaged, and only when the
+                    # file holds exactly one value.
+                    embedded = salvage_file_value(text)
                     if embedded is not None:
                         text = embedded
                 return RawResult(

@@ -818,8 +818,22 @@ file records implementation-level departures below that bar.
   than one value-shaped span (a narrated example, which validates by
   construction; a superseded draft before a truncated real answer) is
   refused wholesale and goes to the corrective, whose C3 fence carries
-  the truncated REAL answer. The stdout channel gets no raw-bytes
-  fallback at all. (b) `repaired` describes the RECORDED result: it
+  the truncated real answer whenever it is the raw channel's longest
+  near-object (C3 compares lengths; a short truncated span behind a long
+  salvage does not displace it). The stdout channel gets no raw-bytes
+  fallback at all. Round 3 (same day) moved the SAME discipline up into
+  the E2 file-channel salvage itself, which ran first and undid the rule:
+  `extract_last_json`'s last-complete-value pick adopted a narrated
+  example directly — validated by construction, node done, repair never
+  consulted — whenever truncation cut the file before the first real
+  value completed. The file channel now salvages via
+  `salvage_file_value`: pure extraction (fence-line stripping only),
+  granted only when the file holds exactly one value-shaped span, no
+  failed span, and nothing but whitespace after the value; trailing
+  bytes also refuse repair's single-value mode, closing the
+  bracket-free-truncated-tail gap at both layers. The §8.3 stdout
+  fallback keeps last-complete-value unchanged — narration is expected
+  there, and the spec states that rule. (b) `repaired` describes the RECORDED result: it
   resets at every new execution and persists across revalidation-kept
   and per-item-cached results. (c) The marker travels with served bytes
   — `--seed` and `--replay` recordings carry `repaired`, and the serving
