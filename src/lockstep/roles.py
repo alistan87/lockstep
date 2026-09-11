@@ -462,6 +462,19 @@ class Engine:
         resume-skipped; done nodes get hash revalidation; lineage-head
         fingerprint comparison detects EXTERNAL edits."""
         st = self.store.state
+        # S3: a heal signal is consumed by the attempt it describes - but a
+        # node the cascade re-pended can end the drive without ever attempting
+        # (skipped by `when`, edited out of the flow). Its entry would then
+        # outlive the heal cycle and mislabel some later, unrelated attempt as
+        # rework.
+        #
+        # BEFORE the loop below, deliberately: that loop normalises
+        # failed/running/blocked/SKIPPED to `pending`, so reading afterwards
+        # sees a skipped node as pending and the one genuinely reachable case
+        # slips past. Settled here means settled as the previous drive left it.
+        for nid in [n for n, _ in (st.heal_pending or {}).items()
+                    if n not in st.nodes or st.nodes[n].status in SETTLED]:
+            st.heal_pending.pop(nid, None)
         for node in self.tg.nodes:
             rec = st.nodes[node.id]
             if rec.status in ("running", "failed", "blocked"):
@@ -490,23 +503,6 @@ class Engine:
                 if irec.status in ("running", "failed"):
                     irec.status = "pending"
                     irec.error = None
-        # S3: a heal signal is consumed by the attempt it describes - but a
-        # node the cascade re-pended can end the drive without ever attempting
-        # (skipped by `when`, upstream failed, edited out of the flow). Its
-        # entry would then outlive the heal cycle and mislabel some later,
-        # unrelated attempt as rework. A node this resume did not re-pend will
-        # not re-run for that heal, so drop it; a pending one keeps its signal
-        # across the resume, which is what the durable store exists for.
-        #
-        # Read AFTER the loop above, deliberately: that loop has already moved
-        # failed/running/blocked/skipped to `pending`, so what survives here is
-        # exactly the settled set.
-        for nid in [n for n, _ in (st.heal_pending or {}).items()
-                    if n in st.nodes and st.nodes[n].status in SETTLED]:
-            st.heal_pending.pop(nid, None)
-        # A node the flow no longer has cannot consume anything.
-        for nid in [n for n in (st.heal_pending or {}) if n not in st.nodes]:
-            st.heal_pending.pop(nid, None)
         # Lineage-head comparison (SPEC §9.2, M6/M7). Only the most recently
         # completed node's fingerprint is compared — every completed node
         # legitimately left a different tree than its predecessors recorded.
@@ -1505,8 +1501,11 @@ class Engine:
             # attempt left two byte-identical events. Exit 4 then resume is a
             # documented normal outcome, not an edge case.
             self._spend_spawn(work)
-            if heal_round is not None:
-                self._take_heal_round(node.id)   # paid for: now consume it
+            # Consumed unconditionally once the spawn is paid for. Guarding on
+            # `heal_round is not None` skipped the `served` branch (which
+            # forces it to None), so a seeded run finished still holding the
+            # signal - a leak into whatever ran next.
+            self._take_heal_round(node.id)
             self._journal_attempt(node, work, cause, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             rec.attempts += 1
@@ -1608,7 +1607,11 @@ class Engine:
         # stamped with a round it was not part of - and the journal pane renders
         # it as "(rework round N)", a rework claim about an attempt that is not
         # one. The cause lost this fallback in the last round; the field kept it.
-        if heal_round:
+        # Only on a rework attempt. A retry INSIDE a heal round kept the bound
+        # round and rendered as "(rework round 1)", so the field stopped
+        # identifying rework - which was the whole point of taking the
+        # never-reset fallback off it.
+        if heal_round and cause == "heal":
             event["heal_round"] = heal_round
         # No `parts` list. It named the hash parts, which `state.json` already
         # records as `hash_parts` - and it was UNBOUNDED: one key per matched
@@ -2372,6 +2375,13 @@ class Engine:
         path = self.store.write_result(node.id, result_text, json_output=True)
         rec.result_path = str(path)
         self._record_fingerprint(rec)
+        # The map's heal signal is consumed HERE - when the whole fan-out has
+        # finished - not by the first item. Consuming at item 0 meant a budget
+        # trip at item 51 of 200 left nothing, and the resume brought items
+        # 51..200 back labelled `initial`: the same rework round, half of it
+        # reported as a first attempt. The signal has to outlive every item
+        # that still has to run.
+        self._take_heal_round(node.id)
         self._set_status(node.id, "done")
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path,
@@ -2394,11 +2404,6 @@ class Engine:
             cause = "resume" if irec.attempts else "initial"
         while True:
             self._spend_spawn(work)     # see _execute_with_retries: spend first
-            if heal_round is not None:
-                # Consumed by the FIRST item that actually gets paid for: a
-                # trip at item 3 of 200 must leave the signal for the resume,
-                # or items 4..200 come back relabelled.
-                self._take_heal_round(node.id)
             self._journal_attempt(node, work, cause, item_index=item_index,
                                   ordinal=irec.attempts + 1, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)

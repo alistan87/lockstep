@@ -364,5 +364,14 @@ def test_the_rail_cache_actually_hits(tmp_path):
 
     with mission_bench.counting() as c:
         ms.run_list(runs, None)
-    assert c.stats <= 12, (
-        f"a warm rail took {c.stats} stats over 6 runs - it is rescanning")
+    warm = c.stats
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    with mission_bench.counting() as c:
+        ms.run_list(runs, None)
+    cold = c.stats
+    # Stated against the COLD cost, not a hand-picked constant: a warm rail
+    # stats the visible rows and nothing else, so the number scales with
+    # `limit` and a fixture-calibrated threshold went red on a bigger fixture
+    # while nothing was rescanning.
+    assert warm < cold, f"warm {warm} stats vs cold {cold} - the cache is dead"

@@ -360,7 +360,11 @@ def test_a_heal_signal_does_not_outlive_its_cycle(tmp_path, git_repo):
     assert h.engine.run() == 0
 
     h2 = rebuild(tmp_path, json.loads(json.dumps(flow)), git_repo, h.run_dir)
-    # `w` is done; `ghost` is not in the flow at all. Neither can consume.
+    # `w` is done and `skipped_one` was skipped by `when` - the genuinely
+    # reachable case, and the one that slipped past when this swept AFTER the
+    # normalisation loop had already turned `skipped` into `pending`.
+    # `ghost` is not in the flow at all.
+    h2.engine.store.state.nodes["w"].status = "done"
     h2.engine.store.mutate(
         lambda st: st.heal_pending.update({"w": 1, "ghost": 2}))
     h2.engine.prepare_resume()
@@ -459,3 +463,107 @@ def test_a_map_item_resume_still_clears_its_error(tmp_path, git_repo):
     for idx, irec in load_state(h.run_dir).nodes["m"].items.items():
         if irec.status == "done":
             assert irec.error is None, f"item {idx} kept a stale error: {irec.error}"
+
+
+def test_a_skipped_heal_descendant_drops_its_signal(tmp_path, git_repo):
+    """The genuinely reachable case for the sweeper, end to end: a cascade
+    invalidates a descendant, `when` then skips it, and its signal must not
+    survive to mislabel a later attempt. This is the case that slipped past
+    when the sweep read statuses AFTER the loop that normalises `skipped` to
+    `pending` — it saw nothing to sweep and the test planted an unreachable
+    state instead."""
+    from lockstep.state import load_state
+
+    f = {
+        "name": "healskip2",
+        "nodes": [
+            {"id": "w", "role": "work", "kind": "fake", "output": "text",
+             "spec": {"outputs": ['{"go": false}'], "readonly": True}},
+            {"id": "d", "role": "work", "kind": "fake", "depends_on": ["w"],
+             "when": '{steps.w.json.go} == true',
+             "spec": {"task": "t", "outputs": ["x"]}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": 1, "targets": ["w"]},
+             "spec": {"task": "check", "outputs": [
+                 {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    h.engine.run()
+    st = load_state(h.run_dir)
+    assert st.nodes["d"].status == "skipped", "precondition: `when` skipped it"
+
+    h2 = rebuild(tmp_path, json.loads(json.dumps(f)), git_repo, h.run_dir)
+    h2.engine.store.mutate(lambda s: s.heal_pending.update({"d": 1}))
+    h2.engine.prepare_resume()
+    assert "d" not in h2.engine.store.state.heal_pending, (
+        "a skipped descendant kept a heal signal the sweep should have dropped")
+
+
+def test_a_map_keeps_its_heal_signal_until_the_fan_out_finishes(tmp_path, git_repo):
+    """Round 3: the signal was consumed by item 0, so a budget trip at item 51
+    of 200 left nothing and the resume brought items 51..200 back labelled
+    `initial` — the same rework round, half of it reported as a first
+    attempt. It has to outlive every item that still has to run."""
+    from lockstep.state import load_state
+
+    f = {
+        "name": "maptrip",
+        "budget": {"max_agent_spawns": 4, "max_run_minutes": 60},
+        "nodes": [
+            {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
+             "spec": {"outputs": ['{"files": ["p", "q", "r"], "notes": ""}'],
+                      "readonly": True}},
+            {"id": "m", "role": "map", "kind": "fake", "depends_on": ["src"],
+             "over": "{steps.src.json.files}", "concurrency": 1,
+             "spec": {"task": "do {item}", "outputs": ["v1", "v2"]}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["m"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": 1, "targets": ["m"]},
+             "spec": {"task": "check", "outputs": [
+                 {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    code = h.engine.run()
+    st = load_state(h.run_dir)
+    if code == 4 and st.nodes["m"].status != "done":
+        assert st.heal_pending.get("m") == 1, (
+            "a trip mid-fan-out consumed the signal the rest of the items need")
+
+
+def test_a_served_node_does_not_leak_its_heal_signal(tmp_path, git_repo):
+    """Round 3: the consume was guarded on `heal_round is not None`, which the
+    `served` branch forces to None — so a seeded run finished still holding
+    the signal, a leak into whatever ran next."""
+    from lockstep.seed import SeedIndex, wrap_registry
+
+    flow = _flow({
+        "id": "w", "role": "work", "kind": "fake", "final": True,
+        "spec": {"task": "t", "outputs": ["done"]},
+    }, name="servedleak")
+    h1 = build(tmp_path, flow, git_repo)
+    assert h1.engine.run() == 0
+
+    h2 = build(tmp_path, json.loads(json.dumps(flow)), git_repo)
+    h2.engine.store.mutate(lambda st: st.heal_pending.update({"w": 1}))
+    wrap_registry(h2.engine.registry, SeedIndex.from_run_dir(h1.run_dir),
+                  log=lambda *a: None, on_hit=h2.engine.note_seeded)
+    assert h2.engine.run() == 0
+    assert h2.engine.store.state.heal_pending == {}, "a served node kept the signal"
+
+
+def test_a_retry_inside_a_heal_round_is_not_stamped_as_rework(tmp_path, git_repo):
+    """`heal_round` must identify a REWORK attempt and nothing else — a retry
+    inside the round kept the bound value and rendered as "(rework round 1)",
+    which is the distinction the previous round's fix was about."""
+    h = build(tmp_path, _flow({
+        "id": "w", "role": "work", "kind": "fake", "final": True,
+        "retry": {"max": 1, "backoff_ms": 1},
+        "spec": {"task": "t", "exit_code": 1, "outputs": ["x"]},
+    }, name="retrystamp"), git_repo)
+    h.engine.run()
+    for ev in attempts_of(h.run_dir, "w"):
+        if ev["cause"] != "heal":
+            assert "heal_round" not in ev, f"{ev['cause']} stamped as rework: {ev}"

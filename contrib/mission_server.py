@@ -578,9 +578,9 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
 # S3 cause enum -> the reader's words. Local to this surface on purpose: the
 # GLOSSARY is pinned across cockpit.ps1 and the DE guide by test, and these
 # terms are new to the journal pane rather than to that shared vocabulary.
-# Causes that are ordinary and would drown the feed if narrated: every node
-# and every map ITEM produces one.
-_QUIET_CAUSES = frozenset({"initial", "served"})
+# Causes so ordinary that narrating them is noise: `initial` is always
+# followed by the `running` transition that says the same thing.
+_QUIET_CAUSES = frozenset({"initial"})
 _ATTEMPT_WORDS = {
     "initial": "started",
     "resume": "picked up again after a stop",
@@ -592,6 +592,15 @@ _ATTEMPT_WORDS = {
     "baseline": "measured the starting point",
     "served": "served from a recording (nothing ran)",
 }
+
+
+def _narratable(ev: dict) -> bool:
+    """Will this event produce a feed line? Mirrors `event_text`'s guards
+    without needing labels — used to decide whether to read the label sidecar
+    at all."""
+    if ev.get("kind") == "attempt":
+        return ev.get("item") is None and ev.get("cause") not in _QUIET_CAUSES
+    return bool(ev.get("status"))
 
 
 def event_text(ev: dict, labels: dict[str, str]) -> str:
@@ -607,12 +616,19 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
         # the events were journalled and rendered NOWHERE, which made "already
         # read by every cockpit surface" the justification for a design choice
         # that no surface honoured.
+        if ev.get("item") is not None:
+            # Map ITEMS never narrate, whatever the cause. Quieting only the
+            # ordinary causes fixed round 0 and left the rework round, which
+            # re-runs EVERY item: a 40-item map emitted 40 identical "sent back
+            # for rework" lines into a 12-line pane. The map node's own
+            # transitions and the gate's heal-round event carry that story once.
+            return ""
         if ev.get("cause") in _QUIET_CAUSES:
-            # A map fans out one attempt event per item. Rendering the ordinary
-            # ones filled the 12-line "what just happened" pane with `started`
-            # lines and pushed every real transition out of it - the feed is
-            # the DE's only narrative surface. The NOTEWORTHY causes (rework,
-            # a correction, a retry) still speak; `initial` and `served` do not.
+            # `initial` duplicates the `running` transition that follows it.
+            # `served` deliberately does NOT: it is the only place the page
+            # says nothing ran, and quieting it made a --replay read exactly
+            # like a real run (COCKPIT-THEORY "never let a missing part read
+            # as an empty run").
             return ""
         cause = _ATTEMPT_WORDS.get(ev.get("cause"), ev.get("cause") or "an attempt")
         label = mv.label_for(labels, node) if node else ""
@@ -1448,6 +1464,10 @@ def _rail_members(runs_root: Path) -> list[tuple]:
     with _RAIL_LOCK:
         hit = _RAIL_MEMBERS.get(key)
         if hit is not None and hit[0] == mtime:
+            # Refresh insertion order: re-assigning an existing key does NOT
+            # move it, so without this the live root - inserted first - would
+            # be the first evicted if the cap ever bound.
+            _RAIL_MEMBERS[key] = _RAIL_MEMBERS.pop(key)
             return hit[1]
     members: list[list] = []
     try:
@@ -1540,7 +1560,8 @@ def _rail_row(d: Path) -> dict | None:
     return row
 
 
-def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dict]:
+def run_list(runs_root: Path, current: Path | None,
+             limit: int = 12) -> tuple[list[dict], int]:
     """Recent runs, newest first, for the switcher.
 
     Capped and SAID to be capped for the same reason the step list collapses:
@@ -1852,7 +1873,11 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
         running = any(r.get("status") == "running"
                       for r in (state.get("nodes") or {}).values())
         fresh, nxt = _events_after(run_dir, cursor)
-        labels = mv.load_labels(run_dir, repo_root) if fresh else {}
+        # Keyed off what will RENDER, not off what was read: a map fan-out
+        # appends dozens of events that all narrate to "", and loading the
+        # sidecar for them read a file every tick to print nothing.
+        labels = (mv.load_labels(run_dir, repo_root)
+                  if any(_narratable(ev) for ev in fresh) else {})
         return _json({
             "token": token,
             # An opaque cursor into the FILE, not into the feed: it advances
