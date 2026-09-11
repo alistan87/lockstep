@@ -1015,7 +1015,12 @@ def cmd_status(ns) -> int:
     for gate, verdict in state.verdicts.items():
         print(f"verdict {gate}: {verdict}")
     if events:
-        print(f"events: {len(events)} (last: {events[-1].get('node')} -> {events[-1].get('status')})")
+        # The last event WITH a status: advisory kinds (`timing`, `attempt`)
+        # carry none, and reporting one printed `-> None` on exactly the runs
+        # an operator reaches for `status` on.
+        last = next((e for e in reversed(events) if e.get("status")), None)
+        tail = f" (last: {last.get('node')} -> {last.get('status')})" if last else ""
+        print(f"events: {len(events)}{tail}")
     return EXIT_OK
 
 

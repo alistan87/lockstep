@@ -259,14 +259,16 @@ class Engine:
         self._snapshot_guard = resources.snapshot_guard
         self.needs_check: set[str] = set()
         self._gate_outcomes: list[_GateOutcome] = []
-        # S3: node id -> heal round, for targets and descendants the cascade
-        # just re-pended. `heal_round` lives on the GATE's record, not on the
-        # nodes it sends back, so without this a healed writer's next attempt
-        # is indistinguishable from an ordinary resume - which is exactly the
-        # inference these events exist to replace. Written by the cascade at
-        # quiescence, read by the dispatch that follows it, and CONSUMED on
-        # read so a later resume is not mislabelled.
-        self._heal_pending: dict[str, int] = {}
+        # S3: nodes this DRIVE has already journalled an attempt for. A
+        # `resume` means "a previous drive left attempts behind", not "a spawn
+        # already happened" - and a baseline gate spends a real spawn and bumps
+        # `attempts` before its first ordinary attempt, which made a FRESH run
+        # report a resume that never occurred.
+        self._attempted: set[str] = set()
+        # S3's heal signal lives in RunState (`heal_pending`), not here: see
+        # `_take_heal_round`. `heal_round` is recorded on the GATE, not on the
+        # nodes a cascade re-pends, so without a carrier a healed writer's next
+        # attempt is indistinguishable from an ordinary resume.
         self._outcomes_guard = threading.Lock()
         self.flags = {"budget": False, "gate_block": False, "approval_rejected": False}
         self._start_monotonic = 0.0
@@ -831,6 +833,11 @@ class Engine:
                 ctx = self._render_ctx(node, base_dir)
                 work = executor.plan(node, ctx)
                 self._spend_spawn(work)
+                # A real, billed attempt - and the only one the journal used
+                # to miss. Its silent `attempts += 1` then made the gate's
+                # FIRST ordinary attempt read `resume` in a fresh run (E4
+                # baseline gates ship in the factory flows).
+                self._journal_attempt(node, work, "baseline")
                 raw = executor.execute(work, base_dir, node.timeout_s)
                 # The baseline spawn is a real attempt: keep attempts and
                 # token_spawns telling one story in `status`.
@@ -1460,16 +1467,23 @@ class Engine:
         # failed-then-retried spawn; acceptable.)
         (phase_dir / "CANCELLED").unlink(missing_ok=True)
         mark_mailbox_consumed(self.store.run_dir, node.id)  # r6 C2 bookkeeping
-        healed = self._heal_pending.pop(node.id, None)
-        if healed is not None or rec.heal_round:
-            cause, heal_round = "heal", (healed or rec.heal_round)
-        elif rec.attempts:
+        healed = self._take_heal_round(node.id)
+        if self._served(work):
+            cause, heal_round = "served", None
+        elif healed is not None:
+            cause, heal_round = "heal", healed
+        elif rec.attempts and node.id not in self._attempted:
             cause, heal_round = "resume", None
         else:
             cause, heal_round = "initial", None
         while True:
-            self._journal_attempt(node, work, cause, heal_round=heal_round)
+            # Spend FIRST: a budget trip raises out of `_spend_spawn`, and
+            # journalling before it recorded an attempt that never happened -
+            # then the resume journalled the same ordinal again, so one real
+            # attempt left two byte-identical events. Exit 4 then resume is a
+            # documented normal outcome, not an edge case.
             self._spend_spawn(work)
+            self._journal_attempt(node, work, cause, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             rec.attempts += 1
             self.store.record(rec)
@@ -1502,9 +1516,34 @@ class Engine:
                 continue
             return raw
 
+    def _take_heal_round(self, node_id: str) -> int | None:
+        """The heal round a cascade queued for this node, consumed.
+
+        Popped rather than read: `rec.heal_round` is never reset (it is the
+        gate's running total), so using it as a fallback made EVERY later
+        attempt of a gate that once healed report `heal`, forever, across
+        processes. Consuming a durable one-shot signal is the only version of
+        this that stays true on the second drive.
+        """
+        st = self.store.state
+        if node_id not in (st.heal_pending or {}):
+            return None
+        round_n = st.heal_pending[node_id]
+        self.store.mutate(lambda s, _n=node_id: s.heal_pending.pop(_n, None))
+        return round_n
+
+    @staticmethod
+    def _served(work: PlannedWork) -> bool:
+        """Was this "attempt" served from a recording rather than spawned?
+        `--replay` and `--seed` wrap the executor at the `execute` seam, so a
+        served node still walks the attempt loop; journalling it as `initial`
+        would have the journal of a replay assert that every node ran."""
+        meta = work.meta or {}
+        return "_seed" in meta or "_replay" in meta
+
     def _journal_attempt(self, node: Node, work: PlannedWork, cause: str, *,
                          item_index: int | None = None, ordinal: int | None = None,
-                         heal_round: int | None = None) -> None:
+                         heal_round: int | None = None) -> None:  # noqa: D401
         """S3: record WHY an attempt happened, in the chained journal.
 
         Rotated artifact names record THAT an attempt happened; nothing
@@ -1539,11 +1578,11 @@ class Engine:
         round_n = heal_round if heal_round is not None else rec.heal_round
         if round_n:
             event["heal_round"] = round_n
-        detail = (work.meta or {}).get("hash_detail") or {}
-        if detail:
-            # References, not contents: `hash_parts` already holds the labelled
-            # digests, and the journal must not become a second copy of prompts.
-            event["parts"] = sorted(detail)
+        # No `parts` list. It named the hash parts, which `state.json` already
+        # records as `hash_parts` - and it was UNBOUNDED: one key per matched
+        # file under `spec.reads` produced a 7 KB event line per attempt, per
+        # map item, in a file every cockpit surface reads whole.
+        self._attempted.add(node.id)
         append_event(self.store.run_dir, event)
 
     def _corrective_prompt(self, node: Node, work: PlannedWork, previous_text: str | None, error: str) -> str:
@@ -2093,11 +2132,14 @@ class Engine:
                 # and wrongly skip. (Caught by the audit-spec arbiter gate.)
                 if self.tg.node(nid).role == "map":
                     nrec.items = {}
-                self._heal_pending[nid] = round_n
+                self.store.mutate(
+                    lambda st, _nid=nid, _r=round_n: st.heal_pending.__setitem__(_nid, _r))
                 self.store.record(nrec)
                 self.needs_check.discard(nid)
         rec.heal_round = round_n
         rec.status = "pending"
+        self.store.mutate(
+            lambda st, _g=gate.id, _r=round_n: st.heal_pending.__setitem__(_g, _r))
         self.store.record(rec)
         append_event(self.store.run_dir, {"node": gate.id, "status": "heal-round", "round": round_n})
 
@@ -2159,6 +2201,12 @@ class Engine:
                     irec.error = f"{type(e).__name__}: {e}"
                     errors[i] = irec.error
 
+        # A map target re-pended by a cascade: consume the signal once here,
+        # for the whole fan-out. Items go through `_item_execute`, which never
+        # saw `heal_pending` - so healed items journalled `initial`, identical
+        # to round 0's, and the map's entry was popped by nobody.
+        map_heal_round = self._take_heal_round(node.id)
+
         def _run_item_inner(i: int, item) -> None:
             with items_guard:
                 irec = rec.items.get(str(i)) or ItemRecord()
@@ -2194,7 +2242,8 @@ class Engine:
             locks = self._acquire(tokens)  # items inherit the node's tokens:
             try:  # a tree-mutating map is inherently serial (SPEC §9.3)
                 self._maybe_snapshot(node)
-                raw = self._item_execute(node, executor, work, phase_dir, irec, i)
+                raw = self._item_execute(node, executor, work, phase_dir, irec, i,
+                                         heal_round=map_heal_round)
             finally:
                 self._release(locks)
             ok = raw is not None and not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None
@@ -2294,7 +2343,8 @@ class Engine:
         self._set_status(node.id, "done")
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path,
-                      irec: ItemRecord, item_index: int | None = None) -> RawResult | None:
+                      irec: ItemRecord, item_index: int | None = None,
+                      heal_round: int | None = None) -> RawResult | None:
         irec.repaired = False  # C2: same reset rule as _execute_with_retries;
         # the per-item reuse path returns before reaching here, so a kept
         # item's flag persists with its kept bytes.
@@ -2304,11 +2354,16 @@ class Engine:
         auto_used = False
         (phase_dir / "CANCELLED").unlink(missing_ok=True)  # r6 C3 stale marker
         mark_mailbox_consumed(self.store.run_dir, node.id)  # r6 C2 bookkeeping
-        cause = "resume" if irec.attempts else "initial"
+        if self._served(work):
+            cause = "served"
+        elif heal_round is not None:
+            cause = "heal"
+        else:
+            cause = "resume" if irec.attempts else "initial"
         while True:
+            self._spend_spawn(work)     # see _execute_with_retries: spend first
             self._journal_attempt(node, work, cause, item_index=item_index,
-                                  ordinal=irec.attempts + 1)
-            self._spend_spawn(work)
+                                  ordinal=irec.attempts + 1, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             irec.attempts += 1
             if (phase_dir / "CANCELLED").exists():

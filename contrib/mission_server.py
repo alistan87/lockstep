@@ -575,6 +575,22 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
             "note": note if note.get("scope") == "all" else {}}
 
 
+# S3 cause enum -> the reader's words. Local to this surface on purpose: the
+# GLOSSARY is pinned across cockpit.ps1 and the DE guide by test, and these
+# terms are new to the journal pane rather than to that shared vocabulary.
+_ATTEMPT_WORDS = {
+    "initial": "started",
+    "resume": "picked up again after a stop",
+    "retry": "tried again after a failure",
+    "auto-retry": "tried again (it produced nothing the first time)",
+    "corrective": "asked to fix the shape of its answer",
+    "scope-corrective": "asked to redo its work inside the allowed files",
+    "heal": "sent back to rework",
+    "baseline": "measured the starting point",
+    "served": "served from a recording (nothing ran)",
+}
+
+
 def event_text(ev: dict, labels: dict[str, str]) -> str:
     """One journal line, in the DE's words and with the clock already applied.
 
@@ -583,6 +599,18 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
     """
     when = mv.format_clock(ev.get("ts")) or "--:--"
     node = ev.get("node") or ""
+    if ev.get("kind") == "attempt":
+        # S3: why this attempt happened, in the reader's words. Without this
+        # the events were journalled and rendered NOWHERE, which made "already
+        # read by every cockpit surface" the justification for a design choice
+        # that no surface honoured.
+        cause = _ATTEMPT_WORDS.get(ev.get("cause"), ev.get("cause") or "an attempt")
+        label = mv.label_for(labels, node) if node else ""
+        item = ev.get("item")
+        where = f"{label} step {item + 1}" if item is not None else label
+        round_n = ev.get("heal_round")
+        return (f"{when}  {where}: {cause}"
+                + (f" (rework round {round_n})" if round_n else ""))
     status = ev.get("status") or ""
     if not status:
         # An advisory journal line (kind: "timing") carries no status: it is
@@ -1000,7 +1028,13 @@ JS = """
           if (refresh()) { dirty = false; quiet = 0; }
         }
       })
-      .catch(function () { if (++fails >= 3) { offline(true); } });
+      .catch(function (status) {
+        // A 404 means the CURSOR was rejected - e.g. a page open across a
+        // server upgrade still holding a pre-S1.1 integer. Reset it, or the
+        // page sits OFFLINE over live data until someone reloads.
+        if (status === 404) { cursor = '0'; }
+        if (++fails >= 3) { offline(true); }
+      });
   }
   setInterval(tick, POLL_MS);
 })();
@@ -1402,26 +1436,35 @@ def _rail_members(runs_root: Path) -> list[tuple]:
         hit = _RAIL_MEMBERS.get(key)
         if hit is not None and hit[0] == mtime:
             return hit[1]
-    members: list[tuple] = []
+    members: list[list] = []
     try:
         for d in runs_root.iterdir():
-            if not d.is_dir() or not (d / "state.json").is_file():
+            if not d.is_dir():
                 continue
+            # NOT filtered on state.json here. `new_run_dir` mkdirs FIRST and
+            # the store writes state.json after; the mkdir bumps the runs-root
+            # mtime, the later write does not. Filtering at scan time cached a
+            # members list that excluded the new run, keyed on an mtime that
+            # would never change again - so a run started while the page was
+            # open stayed missing from the rail for the life of the process.
+            # The dir is remembered now and re-checked cheaply below.
+            ready = (d / "state.json").is_file()
             m = _STAMP_RE.search(d.name)
             if m:
-                members.append(((m.group(1), int(m.group(2) or 0)), d.name))
+                key = (m.group(1), int(m.group(2) or 0), 0.0)
             else:
-                # A hand-made or legacy-named dir: fall back to its mtime, and
-                # sort it below every stamped dir rather than guessing.
+                # A hand-made or legacy-named dir sorts BELOW every stamped one
+                # (an empty stamp loses under reverse), ordered among its own
+                # kind by mtime - which is what the comment here used to
+                # promise while the code interleaved them.
                 try:
-                    stamp = datetime.fromtimestamp(
-                        d.stat().st_mtime, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                    key = ("", 0, d.stat().st_mtime)
                 except OSError:
-                    stamp = ""
-                members.append(((stamp, 0), d.name))
+                    key = ("", 0, 0.0)
+            members.append([key, d.name, ready])
     except OSError:
         return []
-    members.sort(reverse=True)
+    members.sort(key=lambda m: m[0], reverse=True)
     with _RAIL_LOCK:
         _RAIL_MEMBERS[key] = (mtime, members)
     return members
@@ -1487,25 +1530,53 @@ def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dic
     if not runs_root.is_dir():
         return []
     members = _rail_members(runs_root)
+    # Late arrivals: a dir remembered before its state.json existed is
+    # re-checked (one stat) until it lands, then promoted in place so the
+    # check stops. Usually zero dirs; never a rescan.
+    ready: list[str] = []
+    for member in members:
+        if not member[2]:
+            if not (runs_root / member[1] / "state.json").is_file():
+                continue
+            member[2] = True
+        ready.append(member[1])
     out = []
-    for _, name in members[:limit]:
+    for name in ready[:limit]:
         d = runs_root / name
         row = _rail_row(d)
         if row is None:
             continue
         row["current"] = bool(current and d.resolve() == current.resolve())
         out.append(row)
-    return out, len(members)
+    return out, len(ready)
 
 
 def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
-    """The pre-cache implementation, kept as the cache's oracle: a test
-    asserts the two agree, which is what "evicting an entry changes timing
-    only, never output" has to mean to be worth anything."""
+    """The cache's oracle: a test asserts the two agree, which is what
+    "evicting an entry changes timing only, never output" has to mean to be
+    worth anything.
+
+    It has to ORDER the same way to be an oracle at all. Sorting by raw name
+    (the first cut) disagrees with the cache on any realistic runs dir:
+    `alpha-20260910T...` sorts under `zeta-20260101T...` because the slug
+    wins, and `-9` beats `-10` lexically. Same key derivation, no cache.
+    """
     if not runs_root.is_dir():
         return []
-    dirs = [d for d in runs_root.iterdir() if d.is_dir() and (d / "state.json").is_file()]
-    dirs.sort(key=lambda d: d.name, reverse=True)
+    keyed = []
+    for d in runs_root.iterdir():
+        if not d.is_dir() or not (d / "state.json").is_file():
+            continue
+        m = _STAMP_RE.search(d.name)
+        if m:
+            keyed.append(((m.group(1), int(m.group(2) or 0), 0.0), d))
+        else:
+            try:
+                keyed.append((("", 0, d.stat().st_mtime), d))
+            except OSError:
+                keyed.append((("", 0, 0.0), d))
+    keyed.sort(key=lambda kd: kd[0], reverse=True)
+    dirs = [d for _, d in keyed]
     out = []
     for d in dirs[:limit]:
         state = mv.read_json(d / "state.json") or {}

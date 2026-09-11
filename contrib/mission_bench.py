@@ -186,19 +186,28 @@ def clear_caches() -> None:
     That is the placebo-measurement failure this whole tool exists to
     prevent, so cold and warm are now stated separately and explicitly.
     """
+    missed = []
     try:
         import cost_report
 
         with cost_report._LOG_MEMO_LOCK:
             cost_report._LOG_MEMO.clear()
-    except Exception:  # noqa: BLE001 - a benchmark never breaks the page
-        pass
+    except Exception as e:  # noqa: BLE001
+        missed.append(f"cost_report log memo ({e})")
     try:
         with ms._RAIL_LOCK:
             ms._RAIL_MEMBERS.clear()
             ms._RAIL_ROWS.clear()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        missed.append(f"mission_server rail cache ({e})")
+    if missed:
+        # LOUD, not swallowed. A silent no-op here prints warm numbers under
+        # cold names - the exact placebo measurement this pairing exists to
+        # prevent, and invisible to the maintainer reading the output.
+        raise RuntimeError(
+            "mission_bench cannot clear: " + "; ".join(missed)
+            + " - a cache was renamed or removed, so cold/warm numbers would "
+              "be a lie. Update clear_caches().")
 
 
 def profile(runs_root: Path, repo_root: Path) -> dict:
@@ -378,10 +387,15 @@ def synthesize(dest: Path, *, runs: int, nodes: int, events: int, attempts: int,
     run is the one the page opens.
     """
     dest.mkdir(parents=True, exist_ok=True)
-    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)  # + r hours per run
     node_ids = [f"n{i}" for i in range(nodes)]
     for r in range(runs):
-        run = dest / f"bench-flow-{r:04d}"
+        # Stamped like `state.new_run_dir` writes them. The first cut named
+        # these `bench-flow-0000`, which matches no stamp - so every rail test
+        # fell into the legacy branch and would have passed with the
+        # stamp-parsing path deleted.
+        stamp = (t0 + timedelta(hours=r)).strftime("%Y%m%dT%H%M%SZ")
+        run = dest / f"bench-flow-{stamp}"
         (run / "phases").mkdir(parents=True, exist_ok=True)
         start = t0 + timedelta(hours=r)
         state = {

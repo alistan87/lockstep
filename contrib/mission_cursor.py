@@ -47,6 +47,14 @@ from pathlib import Path
 # A first event line is far under this. Read in one go so `gen` costs one
 # small read rather than a scan, and so a quiet tick's cost is CONSTANT.
 _HEAD_BYTES = 4096
+# How far back to look for the last newline when positioning a fresh cursor.
+# A journal line is far under this; the fallback below covers the rest.
+_TAIL_BYTES = 65536
+# A first line CAN exceed the head read: `record_terminal` journals a refusal
+# whose text lists every dirty path in every declared write scope, and that is
+# the journal's first line. Read on to find it - bounded, because an
+# unbounded read is the cost this module exists to remove.
+_GEN_SCAN_MAX = 1 << 20
 
 _CURSOR_RE = re.compile(r"^([0-9a-f]{8})\.(\d+)\.(\d+)$")
 
@@ -73,18 +81,40 @@ def format_cursor(gen: str, offset: int, ordinal: int) -> str:
     return f"{gen}.{offset}.{ordinal}"
 
 
-def _generation(head: bytes) -> str:
+def _generation(head: bytes, fh=None) -> str:
     """A digest of the first LINE, or "" while no complete line exists yet.
 
     Deliberately not "the first N bytes": a journal shorter than N bytes
     would digest a different slice once it grew past N, and every tick after
     that would see a generation change and reset — a cache that invalidates
     itself exactly while the run is starting.
+
+    When the first line is longer than the head read, keep reading for it
+    (bounded by `_GEN_SCAN_MAX`) rather than giving up. Giving up used to
+    mean returning "" forever, which silently froze the whole events feed:
+    a refusal record listing every dirty path under a broad write scope
+    lands as line 1 and can easily clear 4 KB, and `cli` re-drives append to
+    the SAME journal, so that line stays line 1 for the lineage's life.
     """
     nl = head.find(b"\n")
-    if nl < 0:
+    if nl >= 0:
+        return hashlib.sha256(head[:nl]).hexdigest()[:8]
+    if fh is None:
         return ""
-    return hashlib.sha256(head[:nl]).hexdigest()[:8]
+    buf = bytearray(head)
+    while len(buf) < _GEN_SCAN_MAX:
+        chunk = fh.read(_HEAD_BYTES * 16)
+        if not chunk:
+            return ""          # no complete first line yet: self-heals
+        buf += chunk
+        nl = buf.find(b"\n")
+        if nl >= 0:
+            return hashlib.sha256(bytes(buf[:nl])).hexdigest()[:8]
+    # Pathologically long first line. Refuse rather than digest a slice whose
+    # boundary would move as the file grows - and say so to the caller by
+    # returning "", which serves from the start each tick (correct, just not
+    # cheap). Bounded staleness beats a silent permanent freeze.
+    return ""
 
 
 def read(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dict], str]:
@@ -98,7 +128,7 @@ def read(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dict], str]:
     try:
         with open(path, "rb") as fh:
             head = fh.read(_HEAD_BYTES)
-            gen = _generation(head)
+            gen = _generation(head, fh)
             if not gen:
                 # No complete first line yet: there is nothing a cursor could
                 # point into. Read what is there (it is tiny by definition)
@@ -141,6 +171,39 @@ def read(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dict], str]:
 def initial(run_dir: Path) -> str:
     """The cursor a freshly rendered page starts at: everything currently in
     the journal is already reflected in the body it was rendered with, so the
-    client must not be handed those events again."""
-    _, cursor = read(run_dir, START)
-    return cursor
+    client must not be handed those events again.
+
+    Positioned WITHOUT parsing. The first cut called `read(run_dir, START)`,
+    which read and `json.loads`-ed the entire journal and then threw the
+    events away to keep the offset — so S1.1 removed a whole-journal read
+    from the quiet tick and added one to `render_wrap`, which is every page
+    load and every refresh. Same cost class, moved rather than removed. All
+    that is needed is the offset of the byte after the last complete line.
+
+    `ordinal` starts at 0 here: it is display-only and counting it would
+    mean reading the file this function exists not to read.
+    """
+    path = Path(run_dir) / "events.jsonl"
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_HEAD_BYTES)
+            gen = _generation(head, fh)
+            if not gen:
+                return "0"
+            size = fh.seek(0, os.SEEK_END)
+            window = min(size, _TAIL_BYTES)
+            fh.seek(size - window)
+            tail = fh.read(window)
+            nl = tail.rfind(b"\n")
+            if nl >= 0:
+                return format_cursor(gen, size - window + nl + 1, 0)
+            if window >= size:
+                return format_cursor(gen, 0, 0)   # no complete line at all
+            # A final line longer than the window: fall back to the honest
+            # scan rather than guessing a boundary.
+            fh.seek(0)
+            data = fh.read()
+            last = data.rfind(b"\n")
+            return format_cursor(gen, last + 1 if last >= 0 else 0, 0)
+    except OSError:
+        return "0"

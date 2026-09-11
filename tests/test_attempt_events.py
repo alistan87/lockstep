@@ -148,12 +148,14 @@ class TestPrivacyAndHashing:
             "spec": {"task": secret, "outputs": ["done"]},
         }), git_repo)
         assert h.engine.run() == 0
+        evs = attempts_of(h.run_dir, "w")
+        # Precondition, without which this passes with the feature REVERTED -
+        # a reviewer proved exactly that by reverse-applying the hunk.
+        assert evs, "precondition: attempt events were written"
         blob = (h.run_dir / "events.jsonl").read_text(encoding="utf-8")
         assert secret not in blob
-        for ev in attempts_of(h.run_dir, "w"):
-            # `parts` names the hash parts; it never carries their contents.
-            for name in ev.get("parts", []):
-                assert secret not in name
+        for ev in evs:
+            assert secret not in json.dumps(ev)
 
     def test_attempt_events_do_not_move_the_input_hash(self, tmp_path, git_repo):
         """M3: the journal is not a hash input, and this must stay true or
@@ -182,5 +184,158 @@ class TestPrivacyAndHashing:
             "spec": {"task": "t", "outputs": ["done"]},
         }), git_repo)
         assert h.engine.run() == 0
+        assert attempts_of(h.run_dir, "w"), "precondition: events in the chain"
         status = trace_status(h.run_dir)
         assert status["ok"] is True, status
+
+
+# ------------------------------------------- adversarial round: the fixes
+
+
+class TestReviewFindings:
+    """Each of these reproduces a defect a reviewer found and ran."""
+
+    def test_a_budget_trip_journals_no_phantom_attempt(self, tmp_path, git_repo):
+        """BLOCKER: the event was written BEFORE _spend_spawn, so a trip
+        recorded an attempt that never happened — and the resume then wrote
+        the same ordinal again, leaving two byte-identical events for one
+        real attempt. Exit 4 then resume is a documented normal outcome."""
+        f = {
+            "name": "budget",
+            "budget": {"max_agent_spawns": 1, "max_run_minutes": 60},
+            "nodes": [
+                {"id": "a", "role": "work", "kind": "fake",
+                 "spec": {"task": "t", "outputs": ["x"]}},
+                {"id": "b", "role": "work", "kind": "fake", "depends_on": ["a"],
+                 "final": True, "spec": {"task": "t", "outputs": ["y"]}},
+            ],
+        }
+        h = build(tmp_path, f, git_repo)
+        assert h.engine.run() == 4
+        assert attempts_of(h.run_dir, "b") == [], "a spawn that never happened"
+
+        h2 = rebuild(tmp_path, json.loads(json.dumps(f)), git_repo, h.run_dir)
+        h2.engine.store.mutate(lambda st: setattr(st, "token_spawns", 0))
+        h2.engine.prepare_resume()
+        h2.engine.run()
+        ordinals = [e["ordinal"] for e in attempts_of(h.run_dir, "b")]
+        assert len(ordinals) == len(set(ordinals)), f"duplicate ordinals: {ordinals}"
+
+    def test_a_served_node_is_not_called_initial(self, tmp_path, git_repo):
+        """A replay/seed serves results at the execute seam, so a served node
+        still walks the attempt loop. Journalling it `initial` made a replay's
+        journal assert that every node ran."""
+        from lockstep.seed import SeedIndex, wrap_registry
+
+        flow = _flow({
+            "id": "w", "role": "work", "kind": "fake", "final": True,
+            "spec": {"task": "t", "outputs": ["done"]},
+        }, name="served")
+        h1 = build(tmp_path, flow, git_repo)
+        assert h1.engine.run() == 0
+
+        h2 = build(tmp_path, json.loads(json.dumps(flow)), git_repo)
+        wrap_registry(h2.engine.registry, SeedIndex.from_run_dir(h1.run_dir),
+                      log=lambda *a: None, on_hit=h2.engine.note_seeded)
+        assert h2.engine.run() == 0
+        assert [e["cause"] for e in attempts_of(h2.run_dir, "w")] == ["served"]
+
+    def test_a_baseline_gate_spawn_is_journalled(self, tmp_path, git_repo):
+        """E4 baseline gates spend a real spawn and bumped `attempts`
+        silently, so the gate's first ordinary attempt in a FRESH run read
+        `resume` — the one billed spawn with no event created the lie."""
+        f = {
+            "name": "baseline",
+            "nodes": [
+                {"id": "w", "role": "work", "kind": "fake",
+                 "spec": {"task": "t", "outputs": ["x"]}},
+                {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+                 "output": "json", "contract": "Verdict", "final": True,
+                 "spec": {"task": "check", "baseline": True, "outputs": [VALID, VALID]}},
+            ],
+        }
+        h = build(tmp_path, f, git_repo)
+        h.engine.run()
+        causes = [e["cause"] for e in attempts_of(h.run_dir, "g")]
+        assert causes and causes[0] == "baseline", causes
+        assert "resume" not in causes, f"a fresh run claimed a resume: {causes}"
+
+    def test_heal_round_does_not_persist_as_a_cause(self, tmp_path, git_repo):
+        """`rec.heal_round` is the gate's running total and is never reset, so
+        using it as a fallback made EVERY later attempt of a gate that once
+        healed report `heal`, forever, across processes."""
+        f = {
+            "name": "healer2",
+            "nodes": [
+                {"id": "w", "role": "work", "kind": "fake",
+                 "spec": {"task": "t", "outputs": ["v1", "v2"]}},
+                {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+                 "output": "json", "contract": "Verdict", "final": True,
+                 "heal": {"max_rounds": 1, "targets": ["w"]},
+                 "spec": {"task": "check", "outputs": [
+                     {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+            ],
+        }
+        h = build(tmp_path, f, git_repo)
+        h.engine.run()
+        # A later drive whose gate re-runs on a hash miss, with NO cascade.
+        f2 = json.loads(json.dumps(f))
+        f2["nodes"][1]["spec"]["task"] = "check v2"
+        f2["nodes"][1]["spec"]["outputs"] = [VALID]
+        h2 = rebuild(tmp_path, f2, git_repo, h.run_dir)
+        h2.engine.prepare_resume()
+        h2.engine.run()
+        last = attempts_of(h.run_dir, "g")[-1]
+        assert last["cause"] != "heal", "a hash-miss re-run claimed a heal round"
+
+    def test_a_healed_map_item_says_heal(self, tmp_path, git_repo):
+        """The cascade marks the MAP node; items went through a path that
+        never consulted the signal, so round 1's items were byte-identical to
+        round 0's and the map's entry was popped by nobody."""
+        f = {
+            "name": "healmap",
+            "nodes": [
+                {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
+                 "spec": {"outputs": ['{"files": ["p"], "notes": ""}'], "readonly": True}},
+                {"id": "m", "role": "map", "kind": "fake", "depends_on": ["src"],
+                 "over": "{steps.src.json.files}", "concurrency": 1,
+                 "spec": {"task": "do {item}", "outputs": ["r1", "r2"]}},
+                {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["m"],
+                 "output": "json", "contract": "Verdict", "final": True,
+                 "heal": {"max_rounds": 1, "targets": ["m"]},
+                 "spec": {"task": "check", "outputs": [
+                     {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+            ],
+        }
+        h = build(tmp_path, f, git_repo)
+        h.engine.run()
+        causes = [e["cause"] for e in attempts_of(h.run_dir, "m")]
+        assert "heal" in causes, f"healed items still claim a first attempt: {causes}"
+        assert h.engine.store.state.heal_pending == {}, "the signal was never consumed"
+
+    def test_events_carry_no_unbounded_parts_list(self, tmp_path, git_repo):
+        """`parts` duplicated `hash_parts` (already in state.json) and grew
+        with the matched file count — a 7 KB event line per attempt, per map
+        item, in a file every cockpit surface reads whole."""
+        h = build(tmp_path, _flow({
+            "id": "w", "role": "work", "kind": "fake", "final": True,
+            "spec": {"task": "t", "outputs": ["done"]},
+        }), git_repo)
+        assert h.engine.run() == 0
+        for ev in attempts_of(h.run_dir, "w"):
+            assert "parts" not in ev
+            assert len(json.dumps(ev)) < 300
+
+
+def test_a_scope_corrective_is_named(tmp_path, git_repo):
+    """The cause the reviewer found had no test at all: `scope-corrective`
+    appeared nowhere under tests/."""
+    h = build(tmp_path, {"name": "scope", "nodes": [{
+        "id": "w", "role": "work", "kind": "fake", "final": True,
+        "spec": {"task": "t", "writes": ["allowed/**"],
+                 "write_files_by_attempt": [{"forbidden.txt": "x"},
+                                            {"allowed/ok.txt": "y"}],
+                 "outputs": ["done"]},
+    }]}, git_repo)
+    h.engine.run()
+    assert "scope-corrective" in [e["cause"] for e in attempts_of(h.run_dir, "w")]

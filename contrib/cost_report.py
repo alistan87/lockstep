@@ -677,7 +677,7 @@ def _log_usage(
 # timing only, never output, which is why the value is deep-copied out.
 _LOG_MEMO: dict[tuple, tuple] = {}
 _LOG_MEMO_LOCK = threading.Lock()
-_LOG_MEMO_MAX = 512
+_LOG_MEMO_MAX = 2048
 
 
 def _log_usage_memo(log: Path, fmap: dict[str, str] | None, stream_mode: bool):
@@ -691,14 +691,21 @@ def _log_usage_memo(log: Path, fmap: dict[str, str] | None, stream_mode: bool):
            tuple(sorted(fmap.items())) if fmap else None, stream_mode)
     with _LOG_MEMO_LOCK:
         hit = _LOG_MEMO.get(key)
+        if hit is not None:
+            # Move to the end: eviction is oldest-first, and WITHOUT this a
+            # working set larger than the cap degrades to a 0% hit rate -
+            # every insert evicts precisely the entry the next lookup needs,
+            # turning the memo into a net loss with nothing reporting it.
+            # (A single 200-item map at 3 attempts is 600 logs.)
+            _LOG_MEMO[key] = _LOG_MEMO.pop(key)
     if hit is not None:
         return copy.deepcopy(hit)
     value = _log_usage(log.read_text(encoding="utf-8", errors="replace"),
                        fmap, stream_mode)
     with _LOG_MEMO_LOCK:
         _LOG_MEMO[key] = copy.deepcopy(value)
-        # Oldest-first eviction. A perfect LRU would need access bookkeeping
-        # for a cache whose whole job is to be cheap.
+        # Oldest-first eviction over insertion order, which the hit path
+        # refreshes - so this is an LRU without separate bookkeeping.
         if len(_LOG_MEMO) > _LOG_MEMO_MAX:
             for stale in list(_LOG_MEMO)[:len(_LOG_MEMO) - _LOG_MEMO_MAX]:
                 _LOG_MEMO.pop(stale, None)

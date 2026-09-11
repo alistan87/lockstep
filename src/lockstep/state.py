@@ -229,6 +229,14 @@ class RunState(BaseModel):
     # the gate passes: clearing it would change the hash of a result it helped
     # produce. Latest round wins.
     heal_texts: dict[str, str] = {}
+    # S3: node id -> heal round, for nodes a cascade re-pended whose next
+    # attempt has not happened yet. Persisted for the same reason
+    # `heal_texts` is: a budget trip or a crash between the cascade and the
+    # re-run is the NORMAL way a heal round ends, and an in-memory signal
+    # turns that into a phantom heal event plus a mislabelled resume.
+    # Consumed (popped) by the attempt that it describes. Additive and
+    # view-only; no hash covers RunState.
+    heal_pending: dict[str, int] = {}
     # E4 (LESSONS-TO-MECHANISMS): pre-run findings per baseline gate id. A gate
     # with `baseline: true` runs its body once before any node executes; at
     # evaluation the engine subtracts these (matched on (file, claim)) so the

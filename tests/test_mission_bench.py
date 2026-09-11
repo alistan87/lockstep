@@ -275,3 +275,73 @@ def test_the_depth_axis_is_absorbed_by_the_log_memo(tmp_path):
             <= shallow["centres"]["usage_warm"]["bytes"] * 1.5), (
         f"warm usage grew {shallow['centres']['usage_warm']['bytes']} -> "
         f"{deep['centres']['usage_warm']['bytes']} with run depth")
+
+
+def test_clear_caches_is_loud_when_a_cache_is_renamed(monkeypatch):
+    """A silent no-op here prints WARM numbers under COLD names, which is the
+    placebo measurement the cold/warm pairing exists to prevent — and it would
+    be invisible in the standalone tool a maintainer actually reads."""
+    import mission_server as ms
+
+    monkeypatch.delattr(ms, "_RAIL_MEMBERS", raising=True)
+    with pytest.raises(RuntimeError, match="renamed or removed"):
+        mission_bench.clear_caches()
+
+
+def test_a_new_run_appears_in_the_rail_immediately(tmp_path):
+    """BLOCKER, reproduced: `new_run_dir` mkdirs FIRST and writes state.json
+    after. The mkdir bumps the runs-root mtime, the write does not — so a
+    membership scan landing in that window cached a list excluding the new run,
+    keyed on an mtime that would never change again. The run stayed missing
+    from the rail for the life of the server process."""
+    import json
+
+    import mission_server as ms
+
+    runs = mission_bench.synthesize(tmp_path / "runs", runs=1, nodes=1,
+                                    events=10, attempts=1, log_kb=1)
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    before = {r["name"] for r in ms.run_list(runs, None)[0]}
+
+    fresh = runs / "later-20991231T235959Z"
+    (fresh / "phases").mkdir(parents=True)          # the window opens here
+    assert {r["name"] for r in ms.run_list(runs, None)[0]} == before
+
+    (fresh / "state.json").write_text(json.dumps({      # ... and closes here
+        "schema_version": "1.0", "flow_name": "later", "flow_hash": "z",
+        "format_version": "1.0", "args": {}, "token_spawns": 0,
+        "started_at": "2099-12-31T23:59:59+00:00", "nodes": {},
+    }), encoding="utf-8")
+    after = {r["name"] for r in ms.run_list(runs, None)[0]}
+    assert fresh.name in after, "a run started while the page was open stayed invisible"
+
+
+def test_the_rail_orders_by_creation_stamp_not_slug(tmp_path):
+    """The oracle disagreed with the cache on every realistic runs dir — the
+    flow slug won over the timestamp, and `-9` beat `-10` lexically. Both
+    sides now derive the same key, and this asserts the ORDER itself."""
+    import json
+
+    import mission_server as ms
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    for name in ("zeta-20260101T120000Z", "alpha-20260910T120000Z",
+                 "beta-20260501T120000Z-9", "beta-20260501T120000Z-10"):
+        d = runs / name
+        d.mkdir()
+        (d / "state.json").write_text(json.dumps({
+            "schema_version": "1.0", "flow_name": name.rsplit("-", 1)[0],
+            "flow_hash": "z", "format_version": "1.0", "args": {},
+            "token_spawns": 0, "started_at": "2026-01-01T00:00:00+00:00",
+            "nodes": {},
+        }), encoding="utf-8")
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    cached = [r["name"] for r in ms.run_list(runs, None)[0]]
+    oracle = [r["name"] for r in ms._run_list_uncached(runs, None)[0]]
+    assert cached == oracle, "the oracle must order the way the cache does"
+    assert cached[0] == "alpha-20260910T120000Z", "newest first, slug irrelevant"
+    assert cached.index("beta-20260501T120000Z-10") < cached.index(
+        "beta-20260501T120000Z-9"), "-10 is newer than -9"
