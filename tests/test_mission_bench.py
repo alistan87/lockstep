@@ -364,14 +364,21 @@ def test_the_rail_cache_actually_hits(tmp_path):
 
     with mission_bench.counting() as c:
         ms.run_list(runs, None)
-    warm = c.stats
+    warm_stats, warm_files = c.stats, c.files
     ms._RAIL_MEMBERS.clear()
     ms._RAIL_ROWS.clear()
     with mission_bench.counting() as c:
         ms.run_list(runs, None)
-    cold = c.stats
-    # Stated against the COLD cost, not a hand-picked constant: a warm rail
-    # stats the visible rows and nothing else, so the number scales with
-    # `limit` and a fixture-calibrated threshold went red on a bigger fixture
-    # while nothing was rescanning.
-    assert warm < cold, f"warm {warm} stats vs cold {cold} - the cache is dead"
+    cold_stats, cold_files = c.stats, c.files
+    # BOTH layers, because they pay in different currencies and a single
+    # metric is blind to one of them: _RAIL_MEMBERS saves directory STATS,
+    # _RAIL_ROWS saves state.json READS (it stats unconditionally to build its
+    # fingerprint, so it contributes no stat saving at all). Asserting stats
+    # alone let the entire rows layer die green - the layer that exists
+    # because the parent mtime cannot see a running->done transition.
+    assert warm_stats < cold_stats, (
+        f"warm {warm_stats} stats vs cold {cold_stats} - membership is rescanning")
+    assert warm_files == 0 < cold_files, (
+        f"warm rail read {warm_files} files - the row cache is dead")
+    # Stated against the COLD cost rather than a constant: a fixture-calibrated
+    # threshold went red at 12 runs while nothing was rescanning.

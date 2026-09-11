@@ -578,6 +578,25 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
 # S3 cause enum -> the reader's words. Local to this surface on purpose: the
 # GLOSSARY is pinned across cockpit.ps1 and the DE guide by test, and these
 # terms are new to the journal pane rather than to that shared vocabulary.
+# Journal statuses the shared GLOSSARY does not cover. GLOSSARY is a 6-entry
+# NODE-STATUS map pinned across cockpit.ps1 and the DE guide by test; the
+# journal's status enum is about twice that, and everything outside the six
+# fell through to the raw engine token - a domain expert reading
+# "heal-exhausted-pass" or "scope-corrective-respawn" in the one pane that is
+# supposed to be in their words. Page-local on purpose: extending GLOSSARY
+# would break the cross-surface pin it exists to enforce.
+_STATUS_WORDS = {
+    "heal-round": "sent back for rework",
+    "heal-exhausted-pass": "accepted after rework ran out of rounds",
+    "scope-corrective-respawn": "asked to redo its work inside the allowed files",
+    "quarantined": "changes outside its allowed files were undone",
+    "restored-undeclared": "files it was not allowed to change were restored",
+    "rolled-back": "its changes were undone",
+    "snapshot": "saved a restore point",
+    "baseline": "measured the starting point",
+    "cancelled": "stopped on request",
+}
+
 # Causes so ordinary that narrating them is noise: `initial` is always
 # followed by the `running` transition that says the same thing.
 _QUIET_CAUSES = frozenset({"initial"})
@@ -637,7 +656,8 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
         # item is not one (mission_view.GLOSSARY).
         where = f"{label} item {item + 1}" if item is not None else label
         round_n = ev.get("heal_round")
-        return (f"{when}  {where}: {cause}"
+        # Two spaces, like every status line: one pane, one shape.
+        return (f"{when}  {where}  {cause}"
                 + (f" (rework round {round_n})" if round_n else ""))
     status = ev.get("status") or ""
     if not status:
@@ -645,7 +665,7 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
         # engine diagnostics, not something that happened to the work. Rendered
         # it would read as a nameless event beside a step's real ones.
         return ""
-    word = mv.GLOSSARY.get(status, status)
+    word = mv.GLOSSARY.get(status) or _STATUS_WORDS.get(status, status)
     if node:
         return f"{when}  {mv.label_for(labels, node)}  {word}".rstrip()
     return f"{when}  {word}".rstrip()
@@ -1522,6 +1542,10 @@ def _rail_row(d: Path) -> dict | None:
     with _RAIL_LOCK:
         hit = _RAIL_ROWS.get(key)
         if hit is not None and hit[0] == fingerprint:
+            # Refresh insertion order, as the members layer does: eviction is
+            # oldest-first and this dict is filled newest-run-first, so without
+            # it a bound cap would evict the most-viewed rows first.
+            _RAIL_ROWS[key] = _RAIL_ROWS.pop(key)
             return dict(hit[1])
 
     state = mv.read_json(d / "state.json") or {}
@@ -1874,8 +1898,10 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
                       for r in (state.get("nodes") or {}).values())
         fresh, nxt = _events_after(run_dir, cursor)
         # Keyed off what will RENDER, not off what was read: a map fan-out
-        # appends dozens of events that all narrate to "", and loading the
-        # sidecar for them read a file every tick to print nothing.
+        # appends dozens of events that all narrate to "". Modest - the
+        # /api/state refresh this tick triggers loads the sidecar anyway - but
+        # it is the difference between a glob per tick and none on the cheap
+        # route, which is the route's whole point.
         labels = (mv.load_labels(run_dir, repo_root)
                   if any(_narratable(ev) for ev in fresh) else {})
         return _json({

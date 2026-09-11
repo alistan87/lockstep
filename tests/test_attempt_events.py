@@ -559,15 +559,38 @@ def test_a_served_node_does_not_leak_its_heal_signal(tmp_path, git_repo):
 
 
 def test_a_retry_inside_a_heal_round_is_not_stamped_as_rework(tmp_path, git_repo):
-    """`heal_round` must identify a REWORK attempt and nothing else — a retry
-    inside the round kept the bound value and rendered as "(rework round 1)",
-    which is the distinction the previous round's fix was about."""
-    h = build(tmp_path, _flow({
-        "id": "w", "role": "work", "kind": "fake", "final": True,
-        "retry": {"max": 1, "backoff_ms": 1},
-        "spec": {"task": "t", "exit_code": 1, "outputs": ["x"]},
-    }, name="retrystamp"), git_repo)
+    """`heal_round` must identify a REWORK attempt and nothing else.
+
+    The first version of this test had NO GATE, so no heal round ever
+    occurred and no event could carry the field — it passed with the fix
+    reverted. This one drives a real heal round whose re-run then fails and
+    retries, which is the only shape where the bound round could leak onto a
+    non-heal attempt.
+    """
+    f = {
+        "name": "healretry",
+        "nodes": [
+            {"id": "w", "role": "work", "kind": "fake",
+             "retry": {"max": 1, "backoff_ms": 1},
+             # round 0 succeeds; the heal re-run fails once, retries, and
+             # that retry is the attempt under test.
+             "spec": {"task": "t", "outputs": ["v1"], "exit_codes": [0, 1, 0]}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": 1, "targets": ["w"]},
+             "spec": {"task": "check", "outputs": [
+                 {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
     h.engine.run()
-    for ev in attempts_of(h.run_dir, "w"):
+    evs = attempts_of(h.run_dir, "w")
+    causes = [e["cause"] for e in evs]
+    assert "heal" in causes, f"precondition: a heal round ran ({causes})"
+    assert any(c in ("retry", "auto-retry") for c in causes), (
+        f"precondition: the heal re-run retried ({causes})")
+    for ev in evs:
         if ev["cause"] != "heal":
             assert "heal_round" not in ev, f"{ev['cause']} stamped as rework: {ev}"
+    healed = [e for e in evs if e["cause"] == "heal"]
+    assert healed and healed[0].get("heal_round") == 1

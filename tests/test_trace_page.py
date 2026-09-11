@@ -1438,12 +1438,51 @@ def test_ordinary_attempts_do_not_drown_the_feed():
     assert "nothing ran" in render(node="w", cause="served", ordinal=1)
 
 
-def test_only_narratable_events_cost_a_label_read():
+def test_only_narratable_events_cost_a_label_read(tmp_path, monkeypatch):
     """The label sidecar is read per tick; keying that off raw events meant a
-    map fan-out read a file every second to render nothing."""
-    quiet = [{"kind": "attempt", "node": "m", "cause": "initial", "item": i}
-             for i in range(40)]
-    assert not any(mission_server._narratable(ev) for ev in quiet)
-    assert mission_server._narratable(
-        {"kind": "attempt", "node": "w", "cause": "heal"})
-    assert mission_server._narratable({"node": "w", "status": "done"})
+    map fan-out read a file every tick to render nothing.
+
+    Exercised through the ROUTE, not just the helper: the first version
+    called `_narratable` directly, so reverting the call site left it green
+    (the helper is new, and nothing else referenced it)."""
+    run = page_run(tmp_path)
+    reads = []
+    real = mission_server.mv.load_labels
+    monkeypatch.setattr(mission_server.mv, "load_labels",
+                        lambda *a, **k: (reads.append(1), real(*a, **k))[1])
+
+    start = json.loads(get(run, "/api/events?after=0", tmp_path)[2])["next"]
+    with open(run / "events.jsonl", "a", encoding="utf-8") as fh:
+        for i in range(20):
+            fh.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00",
+                                 "kind": "attempt", "node": "m",
+                                 "cause": "initial", "item": i,
+                                 "ordinal": 1}) + chr(10))
+    reads.clear()
+    doc = json.loads(get(run, f"/api/events?after={start}", tmp_path)[2])
+    assert doc["next"] != start, "precondition: the cursor moved"
+    assert doc["events"] == [], "precondition: none of them narrate"
+    assert reads == [], "the sidecar was read to render nothing"
+
+    with open(run / "events.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00", "kind": "attempt",
+                             "node": "w", "cause": "heal", "ordinal": 2,
+                             "heal_round": 1}) + chr(10))
+    reads.clear()
+    doc2 = json.loads(get(run, f"/api/events?after={doc['next']}", tmp_path)[2])
+    assert doc2["events"], "precondition: this one narrates"
+    assert reads, "a narratable event must get its labels"
+
+
+def test_engine_status_tokens_are_translated_for_the_reader():
+    """The journal's status enum is about twice the size of the shared
+    GLOSSARY (a 6-entry NODE-STATUS map pinned across surfaces), and
+    everything outside it fell through to the raw engine token — a domain
+    expert reading `heal-exhausted-pass` in the one pane meant to be in
+    their words."""
+    for status in ("heal-round", "heal-exhausted-pass", "scope-corrective-respawn",
+                   "quarantined", "restored-undeclared", "rolled-back"):
+        text = mission_server.event_text(
+            {"ts": "2026-01-01T00:00:00+00:00", "node": "w", "status": status}, {})
+        assert status not in text, f"raw engine token reached the feed: {text}"
+        assert text.strip(), status

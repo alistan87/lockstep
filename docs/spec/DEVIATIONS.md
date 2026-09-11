@@ -921,7 +921,13 @@ file records implementation-level departures below that bar.
   `--seed`/`--replay` result, which reaches the attempt loop at the execute
   seam without anything spawning). Because `heal_round` lives on the GATE's
   record and not on the nodes the cascade re-pends, the cascade hands the
-  round forward through an in-engine map consumed on read — without it a
+  round forward through `RunState.heal_pending` - PERSISTED, not in-engine:
+  an in-memory carrier was the first cut and it lost the signal whenever a
+  budget trip or a crash landed between the cascade and the re-run, which is
+  a normal way a heal round ends. Consumed once the spawn is paid for (a map
+  consumes when its whole fan-out finishes, so a trip mid-fan-out leaves the
+  signal for the items still to run), and swept at resume for nodes that
+  settled without ever attempting — without it a
   healed writer's next attempt was indistinguishable from an ordinary
   resume, which is the inference these events exist to replace. Additive to
   the journal, which no hash covers: `input_hash` composition does not move

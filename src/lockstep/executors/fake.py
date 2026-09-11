@@ -40,6 +40,12 @@ class FakeSpec(BaseModel):
     # re-spawn stayed inside it" (G1b), which a fixed write map cannot.
     write_files_by_attempt: list[dict[str, str]] = []
     exit_code: int = 0
+    # Successive exit codes, one per spawn (same semantics as `outputs` and
+    # `write_files_by_attempt`: the last entry repeats). Exists so a test can
+    # model "the heal re-run failed once and then succeeded" - a shape no
+    # fixed exit code can express, and the only one where a bound heal round
+    # could leak onto a retry event.
+    exit_codes: list[int] = []
     costs_tokens: bool = True
     sleep_s: float = 0.0
     empty_result: bool = False  # emit no result at all (tests the auto-retry)
@@ -188,4 +194,6 @@ class FakeExecutor:
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
         fname = "result.json" if work.meta["output"] == "json" else "result.txt"
         (phase_dir / fname).write_text(text, encoding="utf-8")
-        return RawResult(exit_code=spec.exit_code, result_text=text, source="file")
+        code = (spec.exit_codes[min(attempt, len(spec.exit_codes) - 1)]
+                if spec.exit_codes else spec.exit_code)
+        return RawResult(exit_code=code, result_text=text, source="file")
