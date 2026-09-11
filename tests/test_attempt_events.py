@@ -508,9 +508,13 @@ def test_a_map_keeps_its_heal_signal_until_the_fan_out_finishes(tmp_path, git_re
     attempt. It has to outlive every item that still has to run."""
     from lockstep.state import load_state
 
+    # 6 spawns: src(1) + three items(2-4) + gate(5) + ONE item of the rework
+    # round(6), so the trip lands with items still to run. At 4 the map never
+    # reached its heal round at all and the assertion below never executed -
+    # the first version of this test was vacuous, which a reviewer proved.
     f = {
         "name": "maptrip",
-        "budget": {"max_agent_spawns": 4, "max_run_minutes": 60},
+        "budget": {"max_agent_spawns": 6, "max_run_minutes": 60},
         "nodes": [
             {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
              "spec": {"outputs": ['{"files": ["p", "q", "r"], "notes": ""}'],
@@ -526,11 +530,11 @@ def test_a_map_keeps_its_heal_signal_until_the_fan_out_finishes(tmp_path, git_re
         ],
     }
     h = build(tmp_path, f, git_repo)
-    code = h.engine.run()
+    assert h.engine.run() == 4, "precondition: the budget trips"
     st = load_state(h.run_dir)
-    if code == 4 and st.nodes["m"].status != "done":
-        assert st.heal_pending.get("m") == 1, (
-            "a trip mid-fan-out consumed the signal the rest of the items need")
+    assert st.nodes["m"].status != "done", "precondition: mid-fan-out, not after it"
+    assert st.heal_pending.get("m") == 1, (
+        "a trip mid-fan-out consumed the signal the rest of the items need")
 
 
 def test_a_served_node_does_not_leak_its_heal_signal(tmp_path, git_repo):

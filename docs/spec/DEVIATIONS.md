@@ -907,13 +907,19 @@ file records implementation-level departures below that bar.
   read by every cockpit surface — and an attempt record is engine-recorded
   FACT, so placing it outside trace integrity would be the wrong side of
   the line a derived cache sits on. Each attempt appends `{kind:"attempt",
-  node, cause, ordinal}` plus `item` for a map item, `heal_round` when one
-  applies, and `parts` (the NAMES of the hash parts, resolvable against
-  `hash_parts` — never their contents, so the journal does not become a
-  second copy of prompts). The cause enum is the ENGINE's and is never
+  node, cause, ordinal}` plus `item` for a map item and `heal_round` on a
+  `heal` attempt ONLY — the field identifies rework and nothing else, so a
+  retry inside a heal round does not carry it. It deliberately carries NO
+  prompt, context, or hash-part text: an earlier cut listed the hash-part
+  NAMES, which duplicated `hash_parts` in state.json and grew with the
+  matched file count (7 KB per event on a wide `spec.reads`), in a file
+  every cockpit surface reads whole. The cause enum is the ENGINE's and is never
   inferred: `initial`, `resume`, `retry`, `auto-retry` (M4's free one, kept
   distinct because the budgets and meanings differ), `corrective`,
-  `scope-corrective`, `heal`. Because `heal_round` lives on the GATE's
+  `scope-corrective`, `heal`, `baseline` (an E4 gate's baseline spawn, which
+  is billed and was previously journalled nowhere), and `served` (a
+  `--seed`/`--replay` result, which reaches the attempt loop at the execute
+  seam without anything spawning). Because `heal_round` lives on the GATE's
   record and not on the nodes the cascade re-pends, the cascade hands the
   round forward through an in-engine map consumed on read — without it a
   healed writer's next attempt was indistinguishable from an ordinary
