@@ -110,11 +110,14 @@ def _generation(head: bytes, fh=None) -> str:
         nl = buf.find(b"\n")
         if nl >= 0:
             return hashlib.sha256(bytes(buf[:nl])).hexdigest()[:8]
-    # Pathologically long first line. Refuse rather than digest a slice whose
-    # boundary would move as the file grows - and say so to the caller by
-    # returning "", which serves from the start each tick (correct, just not
-    # cheap). Bounded staleness beats a silent permanent freeze.
-    return ""
+    # Pathologically long first line (past _GEN_SCAN_MAX). Digest the SCANNED
+    # PREFIX rather than giving up: the prefix is a fixed length, so it does
+    # not move as the file grows, and the cursor stays usable. Returning ""
+    # here meant `read()` handed back zero events forever - the client then
+    # sees an unchanged cursor every tick and never refreshes, which is a
+    # silent permanent freeze of the whole feed, not the "serves from the
+    # start each tick" this comment used to claim.
+    return hashlib.sha256(bytes(buf[:_GEN_SCAN_MAX])).hexdigest()[:8]
 
 
 def read(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dict], str]:

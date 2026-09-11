@@ -490,6 +490,23 @@ class Engine:
                 if irec.status in ("running", "failed"):
                     irec.status = "pending"
                     irec.error = None
+        # S3: a heal signal is consumed by the attempt it describes - but a
+        # node the cascade re-pended can end the drive without ever attempting
+        # (skipped by `when`, upstream failed, edited out of the flow). Its
+        # entry would then outlive the heal cycle and mislabel some later,
+        # unrelated attempt as rework. A node this resume did not re-pend will
+        # not re-run for that heal, so drop it; a pending one keeps its signal
+        # across the resume, which is what the durable store exists for.
+        #
+        # Read AFTER the loop above, deliberately: that loop has already moved
+        # failed/running/blocked/skipped to `pending`, so what survives here is
+        # exactly the settled set.
+        for nid in [n for n, _ in (st.heal_pending or {}).items()
+                    if n in st.nodes and st.nodes[n].status in SETTLED]:
+            st.heal_pending.pop(nid, None)
+        # A node the flow no longer has cannot consume anything.
+        for nid in [n for n in (st.heal_pending or {}) if n not in st.nodes]:
+            st.heal_pending.pop(nid, None)
         # Lineage-head comparison (SPEC §9.2, M6/M7). Only the most recently
         # completed node's fingerprint is compared — every completed node
         # legitimately left a different tree than its predecessors recorded.
@@ -1467,7 +1484,12 @@ class Engine:
         # failed-then-retried spawn; acceptable.)
         (phase_dir / "CANCELLED").unlink(missing_ok=True)
         mark_mailbox_consumed(self.store.run_dir, node.id)  # r6 C2 bookkeeping
-        healed = self._take_heal_round(node.id)
+        # PEEKED, not consumed: `_spend_spawn` below can raise BudgetTripped,
+        # and a consumed signal would be gone on the resume that actually runs
+        # the attempt - turning the heal into a mislabelled `resume`. The
+        # durable store removed the phantom event; consuming early would have
+        # made the mislabel permanent instead.
+        healed = self._peek_heal_round(node.id)
         if self._served(work):
             cause, heal_round = "served", None
         elif healed is not None:
@@ -1483,6 +1505,8 @@ class Engine:
             # attempt left two byte-identical events. Exit 4 then resume is a
             # documented normal outcome, not an edge case.
             self._spend_spawn(work)
+            if heal_round is not None:
+                self._take_heal_round(node.id)   # paid for: now consume it
             self._journal_attempt(node, work, cause, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
             rec.attempts += 1
@@ -1515,6 +1539,10 @@ class Engine:
                 backoff_s *= retry.factor
                 continue
             return raw
+
+    def _peek_heal_round(self, node_id: str) -> int | None:
+        """The queued heal round WITHOUT consuming it (see the call site)."""
+        return (self.store.state.heal_pending or {}).get(node_id)
 
     def _take_heal_round(self, node_id: str) -> int | None:
         """The heal round a cascade queued for this node, consumed.
@@ -1575,9 +1603,13 @@ class Engine:
         }
         if item_index is not None:
             event["item"] = item_index
-        round_n = heal_round if heal_round is not None else rec.heal_round
-        if round_n:
-            event["heal_round"] = round_n
+        # NO fallback to `rec.heal_round`: that is the gate's running total and
+        # is never reset, so every later attempt of a gate that once healed got
+        # stamped with a round it was not part of - and the journal pane renders
+        # it as "(rework round N)", a rework claim about an attempt that is not
+        # one. The cause lost this fallback in the last round; the field kept it.
+        if heal_round:
+            event["heal_round"] = heal_round
         # No `parts` list. It named the hash parts, which `state.json` already
         # records as `hash_parts` - and it was UNBOUNDED: one key per matched
         # file under `spec.reads` produced a 7 KB event line per attempt, per
@@ -2205,7 +2237,7 @@ class Engine:
         # for the whole fan-out. Items go through `_item_execute`, which never
         # saw `heal_pending` - so healed items journalled `initial`, identical
         # to round 0's, and the map's entry was popped by nobody.
-        map_heal_round = self._take_heal_round(node.id)
+        map_heal_round = self._peek_heal_round(node.id)
 
         def _run_item_inner(i: int, item) -> None:
             with items_guard:
@@ -2362,6 +2394,11 @@ class Engine:
             cause = "resume" if irec.attempts else "initial"
         while True:
             self._spend_spawn(work)     # see _execute_with_retries: spend first
+            if heal_round is not None:
+                # Consumed by the FIRST item that actually gets paid for: a
+                # trip at item 3 of 200 must leave the signal for the resume,
+                # or items 4..200 come back relabelled.
+                self._take_heal_round(node.id)
             self._journal_attempt(node, work, cause, item_index=item_index,
                                   ordinal=irec.attempts + 1, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)

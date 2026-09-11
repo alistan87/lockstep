@@ -345,3 +345,24 @@ def test_the_rail_orders_by_creation_stamp_not_slug(tmp_path):
     assert cached[0] == "alpha-20260910T120000Z", "newest first, slug irrelevant"
     assert cached.index("beta-20260501T120000Z-10") < cached.index(
         "beta-20260501T120000Z-9"), "-10 is newer than -9"
+
+
+def test_the_rail_cache_actually_hits(tmp_path):
+    """Round 2 BLOCKER: the cache key was shadowed by the per-dir sort tuple,
+    so every members list was stored under the last directory's stamp and the
+    cache could never hit - the rail rescanned all of runs/ on every call,
+    10x measured. Every test in this file compared OUTPUT, which was correct
+    the whole time; nothing asserted the cache did anything. This does."""
+    import mission_server as ms
+
+    runs = mission_bench.synthesize(tmp_path / "runs", runs=6, nodes=1,
+                                    events=20, attempts=1, log_kb=1)
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    ms.run_list(runs, None)
+    assert str(runs) in ms._RAIL_MEMBERS, "the members list is under the wrong key"
+
+    with mission_bench.counting() as c:
+        ms.run_list(runs, None)
+    assert c.stats <= 12, (
+        f"a warm rail took {c.stats} stats over 6 runs - it is rescanning")

@@ -578,6 +578,9 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
 # S3 cause enum -> the reader's words. Local to this surface on purpose: the
 # GLOSSARY is pinned across cockpit.ps1 and the DE guide by test, and these
 # terms are new to the journal pane rather than to that shared vocabulary.
+# Causes that are ordinary and would drown the feed if narrated: every node
+# and every map ITEM produces one.
+_QUIET_CAUSES = frozenset({"initial", "served"})
 _ATTEMPT_WORDS = {
     "initial": "started",
     "resume": "picked up again after a stop",
@@ -585,7 +588,7 @@ _ATTEMPT_WORDS = {
     "auto-retry": "tried again (it produced nothing the first time)",
     "corrective": "asked to fix the shape of its answer",
     "scope-corrective": "asked to redo its work inside the allowed files",
-    "heal": "sent back to rework",
+    "heal": "sent back for rework",   # matches cockpit.ps1 and the DE guide
     "baseline": "measured the starting point",
     "served": "served from a recording (nothing ran)",
 }
@@ -604,10 +607,19 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
         # the events were journalled and rendered NOWHERE, which made "already
         # read by every cockpit surface" the justification for a design choice
         # that no surface honoured.
+        if ev.get("cause") in _QUIET_CAUSES:
+            # A map fans out one attempt event per item. Rendering the ordinary
+            # ones filled the 12-line "what just happened" pane with `started`
+            # lines and pushed every real transition out of it - the feed is
+            # the DE's only narrative surface. The NOTEWORTHY causes (rework,
+            # a correction, a retry) still speak; `initial` and `served` do not.
+            return ""
         cause = _ATTEMPT_WORDS.get(ev.get("cause"), ev.get("cause") or "an attempt")
         label = mv.label_for(labels, node) if node else ""
         item = ev.get("item")
-        where = f"{label} step {item + 1}" if item is not None else label
+        # "item", not "step": `step` is this page's word for a NODE, and a map
+        # item is not one (mission_view.GLOSSARY).
+        where = f"{label} item {item + 1}" if item is not None else label
         round_n = ev.get("heal_round")
         return (f"{when}  {where}: {cause}"
                 + (f" (rework round {round_n})" if round_n else ""))
@@ -1422,6 +1434,7 @@ _RAIL_LOCK = threading.Lock()
 _RAIL_MEMBERS: dict[str, tuple] = {}
 _RAIL_ROWS: dict[str, tuple] = {}
 _RAIL_ROWS_MAX = 256
+_RAIL_MEMBERS_MAX = 16
 _STAMP_RE = re.compile(r"-(\d{8}T\d{6}Z)(?:-(\d+))?$")
 
 
@@ -1451,22 +1464,30 @@ def _rail_members(runs_root: Path) -> list[tuple]:
             ready = (d / "state.json").is_file()
             m = _STAMP_RE.search(d.name)
             if m:
-                key = (m.group(1), int(m.group(2) or 0), 0.0)
+                sort_key = (m.group(1), int(m.group(2) or 0), 0.0)
             else:
                 # A hand-made or legacy-named dir sorts BELOW every stamped one
                 # (an empty stamp loses under reverse), ordered among its own
                 # kind by mtime - which is what the comment here used to
                 # promise while the code interleaved them.
                 try:
-                    key = ("", 0, d.stat().st_mtime)
+                    sort_key = ("", 0, d.stat().st_mtime)
                 except OSError:
-                    key = ("", 0, 0.0)
-            members.append([key, d.name, ready])
+                    sort_key = ("", 0, 0.0)
+            # NOT `key`: that name holds the CACHE key (the runs root). Binding
+            # the sort tuple to it stored every members list under the last
+            # directory's stamp, so the cache could never hit and the rail
+            # rescanned the whole of runs/ on every call - 10x measured, and
+            # invisible to a test that compares output rather than cost.
+            members.append([sort_key, d.name, ready])
     except OSError:
         return []
     members.sort(key=lambda m: m[0], reverse=True)
     with _RAIL_LOCK:
         _RAIL_MEMBERS[key] = (mtime, members)
+        if len(_RAIL_MEMBERS) > _RAIL_MEMBERS_MAX:
+            for stale in list(_RAIL_MEMBERS)[:len(_RAIL_MEMBERS) - _RAIL_MEMBERS_MAX]:
+                _RAIL_MEMBERS.pop(stale, None)
     return members
 
 
@@ -1528,7 +1549,7 @@ def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dic
     everything else on the page.
     """
     if not runs_root.is_dir():
-        return []
+        return [], 0          # same shape as every other path: render_nav unpacks two
     members = _rail_members(runs_root)
     # Late arrivals: a dir remembered before its state.json existed is
     # re-checked (one stat) until it lands, then promoted in place so the
@@ -1562,7 +1583,7 @@ def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
     wins, and `-9` beats `-10` lexically. Same key derivation, no cache.
     """
     if not runs_root.is_dir():
-        return []
+        return [], 0
     keyed = []
     for d in runs_root.iterdir():
         if not d.is_dir() or not (d / "state.json").is_file():

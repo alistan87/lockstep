@@ -1409,3 +1409,24 @@ def test_the_poll_carries_the_selected_run(tmp_path):
     page = mission_server.render_page(
         mission_server.resolve_run(runs, "r1", None), tmp_path, runs)
     assert 'data-run="r1"' in page
+
+
+def test_ordinary_attempts_do_not_drown_the_feed():
+    """Round 2: rendering every attempt event filled the 12-line "what just
+    happened" pane with `started` lines - one per map ITEM - and pushed every
+    real transition out of it. Noteworthy causes still speak; ordinary ones
+    stay quiet, which is what the pane's own size warning is about."""
+    labels = {}
+    quiet = mission_server.event_text(
+        {"kind": "attempt", "node": "m", "cause": "initial", "ordinal": 1,
+         "item": 3, "ts": "2026-01-01T00:00:00+00:00"}, labels)
+    assert quiet == "", "an ordinary attempt must not take a feed line"
+    loud = mission_server.event_text(
+        {"kind": "attempt", "node": "w", "cause": "heal", "ordinal": 2,
+         "heal_round": 1, "ts": "2026-01-01T00:00:00+00:00"}, labels)
+    assert "rework" in loud, loud
+    item = mission_server.event_text(
+        {"kind": "attempt", "node": "m", "cause": "corrective", "ordinal": 2,
+         "item": 3, "ts": "2026-01-01T00:00:00+00:00"}, labels)
+    # `step` is this page's word for a NODE; a map item is not one.
+    assert "item 4" in item and "step" not in item, item

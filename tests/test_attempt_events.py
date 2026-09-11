@@ -219,6 +219,7 @@ class TestReviewFindings:
         h2.engine.prepare_resume()
         h2.engine.run()
         ordinals = [e["ordinal"] for e in attempts_of(h.run_dir, "b")]
+        assert ordinals, "precondition: the resume actually ran `b`"
         assert len(ordinals) == len(set(ordinals)), f"duplicate ordinals: {ordinals}"
 
     def test_a_served_node_is_not_called_initial(self, tmp_path, git_repo):
@@ -339,3 +340,122 @@ def test_a_scope_corrective_is_named(tmp_path, git_repo):
     }]}, git_repo)
     h.engine.run()
     assert "scope-corrective" in [e["cause"] for e in attempts_of(h.run_dir, "w")]
+
+
+def test_a_heal_signal_does_not_outlive_its_cycle(tmp_path, git_repo):
+    """A node the cascade re-pends can end the drive without ever attempting.
+    Its signal would then mislabel some later, unrelated attempt as rework.
+
+    The first version of this test was VACUOUS - `heal_pending` was empty at
+    every point it looked, so its assertion loop never ran, and it read from
+    disk while `prepare_resume` mutates only the in-memory state. This one
+    plants the stale entry directly, which is the state a `when`-skip or an
+    edited-out node leaves behind.
+    """
+    flow = _flow({
+        "id": "w", "role": "work", "kind": "fake", "final": True,
+        "spec": {"task": "t", "outputs": ["done"]},
+    }, name="healleak")
+    h = build(tmp_path, flow, git_repo)
+    assert h.engine.run() == 0
+
+    h2 = rebuild(tmp_path, json.loads(json.dumps(flow)), git_repo, h.run_dir)
+    # `w` is done; `ghost` is not in the flow at all. Neither can consume.
+    h2.engine.store.mutate(
+        lambda st: st.heal_pending.update({"w": 1, "ghost": 2}))
+    h2.engine.prepare_resume()
+    left = h2.engine.store.state.heal_pending
+    assert "w" not in left, "a settled node kept a heal signal"
+    assert "ghost" not in left, "a node the flow no longer has kept a heal signal"
+
+
+def test_a_budget_trip_leaves_the_heal_signal_for_the_resume(tmp_path, git_repo):
+    """Round 2: "spend first" was applied to the journal write but not to the
+    durable consume, so a trip between the cascade and the re-run ate the
+    signal - the resume then reported `resume` for an attempt that was rework.
+    The durable store removed the phantom event; consuming early would have
+    made the mislabel permanent instead."""
+    f = {
+        "name": "healtrip",
+        "budget": {"max_agent_spawns": 2, "max_run_minutes": 60},
+        "nodes": [
+            {"id": "w", "role": "work", "kind": "fake",
+             "spec": {"task": "t", "outputs": ["v1", "v2"]}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": 1, "targets": ["w"]},
+             "spec": {"task": "check", "outputs": [
+                 {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    assert h.engine.run() == 4, "precondition: the budget trips mid-heal"
+    from lockstep.state import load_state
+
+    assert load_state(h.run_dir).heal_pending.get("w") == 1, (
+        "the trip consumed the heal signal the resume needs")
+
+
+def test_a_stale_heal_round_is_not_stamped_on_a_later_attempt(tmp_path, git_repo):
+    """Round 2: the CAUSE stopped falling back to the gate's never-reset
+    `heal_round`, but the FIELD did not - so a later attempt was stamped with
+    a round it was not part of, and the journal pane renders that as
+    "(rework round N)"."""
+    f = {
+        "name": "healstamp",
+        "nodes": [
+            {"id": "w", "role": "work", "kind": "fake",
+             "spec": {"task": "t", "outputs": ["v1", "v2"]}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": 1, "targets": ["w"]},
+             "spec": {"task": "check", "outputs": [
+                 {"findings": [], "verdict": "block", "reason": "no"}, VALID]}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    h.engine.run()
+    f2 = json.loads(json.dumps(f))
+    f2["nodes"][1]["spec"]["task"] = "check v2"
+    f2["nodes"][1]["spec"]["outputs"] = [VALID]
+    h2 = rebuild(tmp_path, f2, git_repo, h.run_dir)
+    h2.engine.prepare_resume()
+    h2.engine.run()
+    last = attempts_of(h.run_dir, "g")[-1]
+    assert last["cause"] != "heal"
+    assert "heal_round" not in last, (
+        f"a non-rework attempt was stamped with a round: {last}")
+
+
+def test_a_map_item_resume_still_clears_its_error(tmp_path, git_repo):
+    """SPEC 9.2 behaviour a round-1 fix accidentally swallowed: the heal
+    sweeper was indented under its own loop, taking the map-item reset with
+    it, so an item that failed in drive 1 and SUCCEEDED on resume kept its
+    stale error string forever."""
+    from lockstep.state import load_state
+
+    f = {
+        "name": "mapresume",
+        "nodes": [
+            {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
+             "spec": {"outputs": ['{"files": ["p", "q"], "notes": ""}'],
+                      "readonly": True}},
+            {"id": "m", "role": "map", "kind": "fake", "depends_on": ["src"],
+             "over": "{steps.src.json.files}", "concurrency": 1, "final": True,
+             "retry": {"max": 0},
+             "spec": {"task": "do {item}", "spawn_error": "harness exploded"}},
+        ],
+    }
+    h = build(tmp_path, f, git_repo)
+    h.engine.run()
+    assert any(i.error for i in load_state(h.run_dir).nodes["m"].items.values()), (
+        "precondition: an item failed")
+
+    f2 = json.loads(json.dumps(f))
+    f2["nodes"][1]["spec"] = {"task": "do {item}", "outputs": ["ok"]}
+    h2 = rebuild(tmp_path, f2, git_repo, h.run_dir)
+    h2.engine.prepare_resume()
+    h2.engine.run()
+    for idx, irec in load_state(h.run_dir).nodes["m"].items.items():
+        if irec.status == "done":
+            assert irec.error is None, f"item {idx} kept a stale error: {irec.error}"
