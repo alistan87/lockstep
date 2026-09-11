@@ -249,3 +249,29 @@ def test_the_counter_counts_reads_not_file_sizes(tmp_path):
         with open(p, "rb") as fh:
             fh.read(500)
     assert c.bytes == 500, f"counted {c.bytes} for a 500-byte read"
+
+
+def test_the_depth_axis_is_absorbed_by_the_log_memo(tmp_path):
+    """The axis the first sweep could not see, and the question upstream said
+    would need the reporter's real-world numbers: does a much-RESUMED run (a
+    deep one - many attempts, big harness logs) cost a warm render more?
+
+    Measured: no. The attempt-log memo absorbs it, so a run carrying orders
+    of magnitude more log bytes renders warm for the same cost. Without the
+    memo this column tracks log size directly.
+    """
+    shallow = mission_bench.profile(
+        mission_bench.synthesize(tmp_path / "a", runs=2, nodes=2, events=100,
+                                 attempts=1, log_kb=8), tmp_path)
+    deep = mission_bench.profile(
+        mission_bench.synthesize(tmp_path / "b", runs=2, nodes=2, events=100,
+                                 attempts=6, log_kb=48), tmp_path)
+    assert (deep["shape"]["stdout_log_bytes"]
+            > shallow["shape"]["stdout_log_bytes"] * 10), "precondition: deeper"
+    # Cold still pays for what it reads - that is honest and happens once.
+    assert deep["centres"]["usage_cold"]["bytes"] > shallow["centres"]["usage_cold"]["bytes"]
+    # Warm must not, whatever the run has accumulated.
+    assert (deep["centres"]["usage_warm"]["bytes"]
+            <= shallow["centres"]["usage_warm"]["bytes"] * 1.5), (
+        f"warm usage grew {shallow['centres']['usage_warm']['bytes']} -> "
+        f"{deep['centres']['usage_warm']['bytes']} with run depth")

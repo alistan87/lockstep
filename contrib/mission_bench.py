@@ -457,22 +457,45 @@ def human(report: dict) -> str:
 
 
 def sweep(sizes: list[tuple[int, int]], *, nodes: int, attempts: int,
-          log_kb: int) -> dict:
+          log_kb: int, axis: str = "breadth") -> dict:
     """Measure the same centres across GROWING fixtures.
 
     One profile says what a render costs; a sweep says what it costs NEXT
     month, which is the actual claim under review ("slows down as history
     accumulates"). Each row is a fresh fixture, built and destroyed.
+
+    TWO axes, because a run grows in two directions and they cost different
+    things:
+
+    - `breadth` - more runs retained, longer journals. This is what the run
+      rail and the event cursor scale against.
+    - `depth` - one run RESUMED and RETRIED for weeks: more attempts per
+      node, bigger harness logs. This is what the usage walk scales against,
+      and the first cut of this sweep did not vary it at all - so the usage
+      curve was reported as x1.4 when the fixture simply held the thing
+      usage depends on constant. A benchmark that measures the wrong axis
+      reports a fixture's shape as a finding.
     """
     rows = []
     for runs, events in sizes:
         tmp = Path(tempfile.mkdtemp(prefix="lockstep-sweep-"))
         try:
-            root = synthesize(tmp / "runs", runs=runs, nodes=nodes, events=events,
-                              attempts=attempts, log_kb=log_kb)
+            if axis == "depth":
+                # `runs` and `events` carry the depth pair: attempts per node
+                # and KB per log. History stays small so the growth that shows
+                # up is the RUN's, not the archive's.
+                n_att, kb = runs, events
+                root = synthesize(tmp / "runs", runs=2, nodes=nodes, events=200,
+                                  attempts=n_att, log_kb=kb)
+            else:
+                n_att, kb = attempts, log_kb
+                root = synthesize(tmp / "runs", runs=runs, nodes=nodes, events=events,
+                                  attempts=attempts, log_kb=log_kb)
             rep = profile(root, Path("."))
             rows.append({
                 "runs": runs, "events": events,
+                "attempts": n_att, "log_kb": kb,
+                "log_bytes": rep["shape"]["stdout_log_bytes"],
                 "journal_bytes": rep["shape"]["journal_bytes"],
                 "quiet_bytes": rep["centres"]["quiet_heartbeat"]["bytes"],
                 "rail_stats": rep["centres"]["rail_warm"]["stats"],
@@ -485,12 +508,19 @@ def sweep(sizes: list[tuple[int, int]], *, nodes: int, attempts: int,
 
 
 def human_sweep(report: dict) -> str:
-    out = ["MISSION cost vs history - does it grow?", "",
-           f"  {'runs':>6}{'events':>9}{'journal B':>12}{'quiet B':>12}"
-           f"{'rail stats':>12}{'render B':>12}{'usage B':>12}"]
+    depth = report.get("axis") == "depth"
+    head = ("MISSION cost vs RUN DEPTH - attempts and log size" if depth
+            else "MISSION cost vs RETAINED HISTORY - runs and journal length")
+    first_cols = (f"  {'attempts':>9}{'log KB':>8}{'log B':>12}" if depth
+                  else f"  {'runs':>6}{'events':>9}{'journal B':>12}")
+    out = [head, "",
+           first_cols + f"{'quiet B':>12}{'rail stats':>12}"
+           f"{'render B':>12}{'usage B':>12}"]
     for r in report["sweep"]:
-        out.append(f"  {r['runs']:>6,}{r['events']:>9,}{r['journal_bytes']:>12,}"
-                   f"{r['quiet_bytes']:>12,}{r['rail_stats']:>12,}"
+        lead = (f"  {r['attempts']:>9,}{r['log_kb']:>8,}{r['log_bytes']:>12,}"
+                if depth else
+                f"  {r['runs']:>6,}{r['events']:>9,}{r['journal_bytes']:>12,}")
+        out.append(lead + f"{r['quiet_bytes']:>12,}{r['rail_stats']:>12,}"
                    f"{r['render_bytes']:>12,}{r['usage_bytes']:>12,}")
     first, last = report["sweep"][0], report["sweep"][-1]
     out += ["", "  growth across the sweep"]
@@ -522,14 +552,23 @@ def main(argv: list[str] | None = None) -> int:
                     help="--synthetic: attempts per node (rotated logs)")
     ap.add_argument("--log-kb", type=int, default=64,
                     help="--synthetic: KB per stdout log")
+    ap.add_argument("--axis", choices=("breadth", "depth"), default="breadth",
+                    help="--sweep axis: `breadth` grows retained history, "
+                         "`depth` grows one run's attempts and log size")
     ap.add_argument("--sweep", action="store_true",
                     help="measure across growing synthetic fixtures and report "
                          "the growth factor per cost centre")
     ns = ap.parse_args(argv)
 
     if ns.sweep:
-        report = sweep([(10, 500), (40, 2000), (160, 8000)], nodes=ns.nodes,
-                       attempts=ns.attempts, log_kb=ns.log_kb)
+        if ns.axis == "depth":
+            # (attempts, log_kb) pairs: one run resumed and retried for weeks.
+            report = sweep([(1, 16), (4, 64), (16, 256)], nodes=ns.nodes,
+                           attempts=ns.attempts, log_kb=ns.log_kb, axis="depth")
+        else:
+            report = sweep([(10, 500), (40, 2000), (160, 8000)], nodes=ns.nodes,
+                           attempts=ns.attempts, log_kb=ns.log_kb)
+        report["axis"] = ns.axis
         print(json.dumps(report, indent=2) if ns.json else human_sweep(report))
         return 0
 
