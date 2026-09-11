@@ -42,12 +42,14 @@ quota/limits, so dollars are labeled NOTIONAL.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 from datetime import datetime, timezone
@@ -667,6 +669,42 @@ def _log_usage(
     return sums, envelope_models(env, fmap), True, envelope_turns(env)
 
 
+# S1.3 - the attempt-log memo. `node_tokens` re-read and re-parsed EVERY
+# `stdout*.log` of every phase dir on every full render (1.85 MB of a 3.26 MB
+# render, measured). Logs are append-then-rotate, so (path, size, mtime_ns) is
+# a sound identity: a rotated attempt never changes again, and a live log that
+# grew changes size. Bounded and process-local; evicting an entry changes
+# timing only, never output, which is why the value is deep-copied out.
+_LOG_MEMO: dict[tuple, tuple] = {}
+_LOG_MEMO_LOCK = threading.Lock()
+_LOG_MEMO_MAX = 512
+
+
+def _log_usage_memo(log: Path, fmap: dict[str, str] | None, stream_mode: bool):
+    """`_log_usage` over a file, memoized on the file's identity."""
+    try:
+        st = log.stat()
+    except OSError:
+        return _log_usage(log.read_text(encoding="utf-8", errors="replace"),
+                          fmap, stream_mode)
+    key = (str(log), st.st_size, st.st_mtime_ns,
+           tuple(sorted(fmap.items())) if fmap else None, stream_mode)
+    with _LOG_MEMO_LOCK:
+        hit = _LOG_MEMO.get(key)
+    if hit is not None:
+        return copy.deepcopy(hit)
+    value = _log_usage(log.read_text(encoding="utf-8", errors="replace"),
+                       fmap, stream_mode)
+    with _LOG_MEMO_LOCK:
+        _LOG_MEMO[key] = copy.deepcopy(value)
+        # Oldest-first eviction. A perfect LRU would need access bookkeeping
+        # for a cache whose whole job is to be cheap.
+        if len(_LOG_MEMO) > _LOG_MEMO_MAX:
+            for stale in list(_LOG_MEMO)[:len(_LOG_MEMO) - _LOG_MEMO_MAX]:
+                _LOG_MEMO.pop(stale, None)
+    return value
+
+
 def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
     """Usage over every attempt's stdout (map items included). Two formats: a
     single JSON envelope with dotted field paths (claude-code style), or
@@ -716,8 +754,7 @@ def node_tokens(phase_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
         logs = sorted(d.glob("stdout*.log"), key=_attempt_order)
         logs_seen += len(logs)
         for log in logs:
-            text = log.read_text(encoding="utf-8", errors="replace")
-            got, models, seen, activity = _log_usage(text, fmap, stream_mode)
+            got, models, seen, activity = _log_usage_memo(log, fmap, stream_mode)
             if seen:
                 envelopes += 1
             final = log is logs[-1]

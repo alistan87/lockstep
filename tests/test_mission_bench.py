@@ -104,6 +104,69 @@ def test_quiet_heartbeat_does_not_read_the_journal_prefix(report):
     assert report["verdict"]["quiet_is_prefix_proportional"] is False
 
 
+def test_the_caches_eliminate_the_repeated_reads(report):
+    """S1.3/S1.4, in bytes: the rail stops reading entirely on a warm tick,
+    and the attempt-log memo removes the bulk of the usage walk. Stated as
+    ratios against each centre's own COLD cost, so the assertion survives a
+    change of fixture size."""
+    c = report["centres"]
+    assert c["rail_warm"]["bytes"] == 0, "a warm rail must read nothing"
+    assert c["rail_cold"]["bytes"] > 0, "the contrast is the evidence"
+    # What the memo removes is exactly the LOG bytes - so assert that, not a
+    # ratio. A ratio passes or fails on how much non-log overhead the fixture
+    # happens to carry (argv.json and friends dominate a tiny fixture), which
+    # would make this test a statement about the fixture rather than the code.
+    saved = c["usage_cold"]["bytes"] - c["usage_warm"]["bytes"]
+    logs = report["shape"]["stdout_log_bytes"]
+    assert logs > 0, "precondition: the fixture has attempt logs to re-read"
+    assert saved >= logs * 0.9, (
+        f"usage saved {saved} B warm against {logs} B of logs - the attempt-log "
+        "memo is not being honoured")
+    assert c["full_render_warm"]["bytes"] < c["full_render_cold"]["bytes"]
+
+
+def test_a_cached_rail_equals_an_uncached_one(tmp_path, fixture_runs):
+    """The rule that makes a derived cache legitimate: evicting an entry may
+    change timing and NOTHING else. The pre-cache implementation is kept in
+    the module as the oracle precisely so this can be asserted rather than
+    promised."""
+    import mission_server as ms
+
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    cached, total = ms.run_list(fixture_runs, None)
+    warm, total_warm = ms.run_list(fixture_runs, None)
+    oracle = ms._run_list_uncached(fixture_runs, None)
+    assert cached == warm, "a warm read must equal the cold one it replaced"
+    assert total == total_warm
+    assert [r["name"] for r in cached] == [r["name"] for r in oracle[0]]
+    for a, b in zip(cached, oracle[0]):
+        assert a["word"] == b["word"] and a["cls"] == b["cls"]
+
+
+def test_the_rail_notices_a_run_finishing(tmp_path, fixture_runs):
+    """The trap the downstream review caught: writing INSIDE a run dir does
+    not reliably bump the RUNS-ROOT mtime, so a status cached against the
+    parent would never see running -> done - the one transition the reader is
+    watching for. The status layer keys off the run's own state.json."""
+    import json
+
+    import mission_server as ms
+
+    ms._RAIL_MEMBERS.clear()
+    ms._RAIL_ROWS.clear()
+    target = sorted(p for p in fixture_runs.iterdir() if p.is_dir())[-1]
+    state = json.loads((target / "state.json").read_text(encoding="utf-8"))
+    first = {r["name"]: r["word"] for r in ms.run_list(fixture_runs, None)[0]}
+
+    for rec in state["nodes"].values():
+        rec["status"] = "running"
+    (target / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    after = {r["name"]: r["word"] for r in ms.run_list(fixture_runs, None)[0]}
+    assert after[target.name] != first[target.name], (
+        "the rail cached a status against the wrong fingerprint")
+
+
 def test_shared_projection_keeps_drawers_free(report):
     """The optimization that ALREADY exists, guarded: the page computes
     state/labels/usage once and hands them down, so rendering every drawer
@@ -122,8 +185,8 @@ def test_full_render_is_dominated_by_usage_not_drawers(report):
     caches first INSIDE the render (the immutable attempt-log memo), as
     distinct from the heartbeat fix."""
     centres = report["centres"]
-    assert centres["usage_only"]["bytes"] > centres["rail_only"]["bytes"]
-    assert centres["usage_only"]["bytes"] > centres["drawers_shared"]["bytes"]
+    assert centres["usage_cold"]["bytes"] > centres["rail_cold"]["bytes"]
+    assert centres["usage_cold"]["bytes"] > centres["drawers_shared"]["bytes"]
 
 
 # ------------------------------------------------------- the growth claim
@@ -134,9 +197,9 @@ def test_the_quiet_heartbeat_is_flat_across_journal_size(tmp_path):
     a 4x longer journal must NOT cost a quiet tick more. This is the test
     that catches a future reader reintroducing a whole-file read.
 
-    The RAIL's growth with retained history is not fixed yet (S1.4) and is
-    asserted here as still-growing, so that slice has a pin waiting to flip
-    in its turn - the same discipline this file was built on.
+    The rail's growth with retained history was pinned here as still-growing
+    until S1.4 landed; that assertion has since been flipped in place, which
+    is the same discipline the heartbeat pin followed.
     """
     small = mission_bench.profile(
         mission_bench.synthesize(tmp_path / "a", runs=2, nodes=2, events=200,
@@ -148,8 +211,10 @@ def test_the_quiet_heartbeat_is_flat_across_journal_size(tmp_path):
     big_quiet = big["centres"]["quiet_heartbeat"]["bytes"]
     assert big_quiet <= small_quiet * 1.5, (
         f"quiet tick grew {small_quiet} -> {big_quiet} with journal size")
-    assert (big["centres"]["rail_only"]["stats"]
-            > small["centres"]["rail_only"]["stats"]), "S1.4 has not landed yet"
+    # S1.4 has since landed, so the rail pin left here flips too: a warm rail
+    # reads nothing whatever the history weighs.
+    assert big["centres"]["rail_warm"]["bytes"] == 0
+    assert small["centres"]["rail_warm"]["bytes"] == 0
 
 
 # ------------------------------------------------------- the report is sendable

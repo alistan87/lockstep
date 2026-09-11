@@ -59,7 +59,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1365,6 +1367,115 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
     return "\n".join(out)
 
 
+# S1.4 - the rail cache, in two layers, because the two facts change on
+# different schedules and one of them is a trap.
+#
+#   MEMBERSHIP (which run dirs exist, and their order) keys off the runs-root
+#   directory's own mtime: adding or removing a child entry bumps it.
+#
+#   STATUS (the word beside each visible run) keys off that run's own
+#   `state.json` fingerprint. It must NOT key off the parent directory,
+#   because writing INSIDE a child does not reliably bump the parent's mtime -
+#   so a running->done transition would never be noticed, which is the one
+#   transition the reader is watching for. (Downstream review caught this;
+#   the obvious single-layer design is silently wrong.)
+#
+# Ordering comes from the run dir's NAME, which carries the creation stamp
+# (`<slug>-YYYYMMDDTHHMMSSZ[-n]`, `state.new_run_dir`). That is both free - no
+# stat per dir - and STABLE, where the directory mtime it replaced moved every
+# time the run was written to.
+_RAIL_LOCK = threading.Lock()
+_RAIL_MEMBERS: dict[str, tuple] = {}
+_RAIL_ROWS: dict[str, tuple] = {}
+_RAIL_ROWS_MAX = 256
+_STAMP_RE = re.compile(r"-(\d{8}T\d{6}Z)(?:-(\d+))?$")
+
+
+def _rail_members(runs_root: Path) -> list[tuple]:
+    """[(sort_key, name)], newest first. Cached on the runs-root mtime."""
+    try:
+        mtime = runs_root.stat().st_mtime_ns
+    except OSError:
+        return []
+    key = str(runs_root)
+    with _RAIL_LOCK:
+        hit = _RAIL_MEMBERS.get(key)
+        if hit is not None and hit[0] == mtime:
+            return hit[1]
+    members: list[tuple] = []
+    try:
+        for d in runs_root.iterdir():
+            if not d.is_dir() or not (d / "state.json").is_file():
+                continue
+            m = _STAMP_RE.search(d.name)
+            if m:
+                members.append(((m.group(1), int(m.group(2) or 0)), d.name))
+            else:
+                # A hand-made or legacy-named dir: fall back to its mtime, and
+                # sort it below every stamped dir rather than guessing.
+                try:
+                    stamp = datetime.fromtimestamp(
+                        d.stat().st_mtime, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                except OSError:
+                    stamp = ""
+                members.append(((stamp, 0), d.name))
+    except OSError:
+        return []
+    members.sort(reverse=True)
+    with _RAIL_LOCK:
+        _RAIL_MEMBERS[key] = (mtime, members)
+    return members
+
+
+def _rail_row(d: Path) -> dict | None:
+    """One rail row, cached on that run's own `state.json` fingerprint."""
+    try:
+        st = (d / "state.json").stat()
+        fingerprint = (st.st_size, st.st_mtime_ns)
+    except OSError:
+        return None
+    key = str(d)
+    with _RAIL_LOCK:
+        hit = _RAIL_ROWS.get(key)
+        if hit is not None and hit[0] == fingerprint:
+            return dict(hit[1])
+
+    state = mv.read_json(d / "state.json") or {}
+    nodes = (state.get("nodes") or {}).values()
+    # `failed` outranks `needs you`. A run with a failed node DID stop with a
+    # problem, and calling that "needs you" sends the reader to a terminal to
+    # answer a question nobody asked. Checked in this order because a
+    # blocked-on-approval run also has non-done nodes.
+    if state.get("terminal"):
+        # S6: a refused run outranks everything - its nodes all read
+        # `pending`, which the branches below would render as "done"-ward
+        # calm. The next drive clears the record.
+        word, cls = "refused", "bad"
+    elif any(r.get("status") == "running" for r in nodes):
+        word, cls = mv.GLOSSARY.get("running", "running"), "run"
+    elif any(r.get("status") == "failed" for r in nodes):
+        word, cls = mv.GLOSSARY.get("failed", "stopped with a problem"), "bad"
+    elif mv.needs_you(state):
+        word, cls = mv.GLOSSARY.get("blocked", "needs you"), "warn"
+    else:
+        word, cls = mv.GLOSSARY.get("done", "done"), "ok"
+    row = {
+        "name": d.name,
+        "flow": (state.get("flow_name") or d.name.rsplit("-", 1)[0]),
+        # WITHOUT this the rail was nine rows all reading "webapp-local" and
+        # nothing to choose between them.
+        "when": mv.format_clock(state.get("started_at")) or "",
+        "day": (state.get("started_at") or "")[:10],
+        "word": word, "cls": cls,
+    }
+    with _RAIL_LOCK:
+        _RAIL_ROWS[key] = (fingerprint, dict(row))
+        if len(_RAIL_ROWS) > _RAIL_ROWS_MAX:
+            for stale in list(_RAIL_ROWS)[:len(_RAIL_ROWS) - _RAIL_ROWS_MAX]:
+                _RAIL_ROWS.pop(stale, None)
+    return row
+
+
 def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dict]:
     """Recent runs, newest first, for the switcher.
 
@@ -1375,8 +1486,26 @@ def run_list(runs_root: Path, current: Path | None, limit: int = 12) -> list[dic
     """
     if not runs_root.is_dir():
         return []
+    members = _rail_members(runs_root)
+    out = []
+    for _, name in members[:limit]:
+        d = runs_root / name
+        row = _rail_row(d)
+        if row is None:
+            continue
+        row["current"] = bool(current and d.resolve() == current.resolve())
+        out.append(row)
+    return out, len(members)
+
+
+def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
+    """The pre-cache implementation, kept as the cache's oracle: a test
+    asserts the two agree, which is what "evicting an entry changes timing
+    only, never output" has to mean to be worth anything."""
+    if not runs_root.is_dir():
+        return []
     dirs = [d for d in runs_root.iterdir() if d.is_dir() and (d / "state.json").is_file()]
-    dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    dirs.sort(key=lambda d: d.name, reverse=True)
     out = []
     for d in dirs[:limit]:
         state = mv.read_json(d / "state.json") or {}

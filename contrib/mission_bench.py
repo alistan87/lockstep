@@ -177,17 +177,43 @@ def measure(fn) -> tuple[dict, object]:
 
 # --------------------------------------------------------------- the cost centres
 
+def clear_caches() -> None:
+    """Drop every process-local cache MISSION keeps.
+
+    Measurement hygiene, and load-bearing: once S1.3/S1.4 landed, the cost
+    centres stopped being independent - measuring `usage` after a render had
+    already warmed the log memo reported a WARM number under a cold name.
+    That is the placebo-measurement failure this whole tool exists to
+    prevent, so cold and warm are now stated separately and explicitly.
+    """
+    try:
+        import cost_report
+
+        with cost_report._LOG_MEMO_LOCK:
+            cost_report._LOG_MEMO.clear()
+    except Exception:  # noqa: BLE001 - a benchmark never breaks the page
+        pass
+    try:
+        with ms._RAIL_LOCK:
+            ms._RAIL_MEMBERS.clear()
+            ms._RAIL_ROWS.clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def profile(runs_root: Path, repo_root: Path) -> dict:
-    """Every cost centre a MISSION tick can pay, measured once each.
+    """Every cost centre a MISSION tick can pay, COLD and WARM.
 
     The headline is `quiet_heartbeat`: what `/api/events` costs when NOTHING
-    has changed. That is the number that fires once a second forever, and if
-    it scales with journal size then the byte-offset cursor is the first fix
-    and the rest waits.
+    has changed. That is the number that fires once a second forever.
+
+    Everything else is reported as a cold/warm pair, because after S1.3/S1.4
+    the page pays a cold price once and a warm price on every tick after -
+    and "sluggish after weeks of use" is a claim about the warm number.
     """
     run_dir = ms.resolve_run(runs_root, None, None)
     if run_dir is None:
-        raise SystemExit(f"no run directories under {runs_root} — nothing to measure")
+        raise SystemExit(f"no run directories under {runs_root} - nothing to measure")
 
     events_path = run_dir / "events.jsonl"
     journal_lines = 0
@@ -196,43 +222,39 @@ def profile(runs_root: Path, repo_root: Path) -> dict:
             encoding="utf-8", errors="replace").splitlines())
 
     out: dict = {"shape": run_shape(runs_root, run_dir, journal_lines), "centres": {}}
+    centres = out["centres"]
 
-    # 1. THE HEADLINE. A cursor at the end = nothing new to report. This is
-    #    the number that fires once a second forever.
+    def cold(name: str, fn) -> None:
+        clear_caches()
+        centres[name], _ = measure(fn)
+
+    def cold_then_warm(name: str, fn) -> None:
+        clear_caches()
+        centres[name + "_cold"], _ = measure(fn)
+        centres[name + "_warm"], _ = measure(fn)
+
     import mission_cursor
 
+    # The heartbeat holds no cache: its cost is the cursor's, cold or warm.
     at_end = mission_cursor.parse_cursor(mission_cursor.initial(run_dir))
-    out["centres"]["quiet_heartbeat"], _ = measure(
-        lambda: ms._events_after(run_dir, at_end))
-
-    # 2. The same route on a busy tick (one new line to parse). The delta
-    #    between this and the quiet tick is the cost of the WORK; the quiet
-    #    number is the cost of the HABIT.
+    centres["quiet_heartbeat"], _ = measure(lambda: ms._events_after(run_dir, at_end))
     # Computed OUTSIDE the measured block: the helper reads the file to find
     # the line boundary, and counting that would report the harness's cost as
-    # the route's - the same confusion the counter fix above exists to avoid.
+    # the route's.
     one_back = _cursor_one_line_back(run_dir, at_end)
-    out["centres"]["heartbeat_one_new"], _ = measure(
-        lambda: ms._events_after(run_dir, one_back))
-
-    # 2b. A COLD cursor: everything to read. What a page load pays once, and
-    #     the ceiling the quiet tick used to pay every single second.
-    out["centres"]["heartbeat_cold"], _ = measure(
+    centres["heartbeat_one_new"], _ = measure(lambda: ms._events_after(run_dir, one_back))
+    centres["heartbeat_cold"], _ = measure(
         lambda: ms._events_after(run_dir, mission_cursor.START))
 
-    # 3. The full body rebuild, fired whenever the journal moved or anything
-    #    is running.
-    out["centres"]["full_render"], _ = measure(
-        lambda: ms.render_wrap(run_dir, repo_root, runs_root))
+    cold_then_warm("full_render",
+                   lambda: ms.render_wrap(run_dir, repo_root, runs_root))
+    cold_then_warm("first_paint",
+                   lambda: ms.render_page(run_dir, repo_root, runs_root))
+    cold_then_warm("rail", lambda: ms.run_list(runs_root, run_dir))
+    cold_then_warm("usage", lambda: ms._collect(run_dir))
+    cold("intervals", lambda: ms._intervals(run_dir))
 
-    # 4. First paint, which additionally builds the rail.
-    out["centres"]["first_paint"], _ = measure(
-        lambda: ms.render_page(run_dir, repo_root, runs_root))
-
-    # 5–8. The suspects inside the full render, measured alone.
-    out["centres"]["rail_only"], _ = measure(lambda: ms.run_list(runs_root, run_dir))
-    out["centres"]["usage_only"], _ = measure(lambda: ms._collect(run_dir))
-    out["centres"]["intervals_only"], _ = measure(lambda: ms._intervals(run_dir))
+    clear_caches()
     state = ms.mv.read_json(run_dir / "state.json") or {}
     labels = ms.mv.load_labels(run_dir, repo_root)
     usage = ms._collect(run_dir)
@@ -240,16 +262,17 @@ def profile(runs_root: Path, repo_root: Path) -> dict:
     # As the PAGE calls it: state, labels and usage are computed once per
     # render and handed down. Measuring the standalone call instead would
     # report a cost production does not pay.
-    out["centres"]["drawers_shared"], _ = measure(
+    centres["drawers_shared"], _ = measure(
         lambda: ms._drawers(run_dir, node_ids, repo_root,
                             state=state, labels=labels, usage=usage))
-    # And the same call WITHOUT the shared projection - not a cost the page
-    # pays today, but the one S1 would reintroduce per drawer if lazy detail
-    # is built without passing a projection through. Kept as the guard rail.
-    out["centres"]["drawers_unshared"], _ = measure(
+    # The same call WITHOUT the shared projection - not a cost the page pays
+    # today, but the one S1.5's lazy detail would reintroduce per drawer if
+    # built without passing a projection through. Kept as the guard rail.
+    clear_caches()
+    centres["drawers_unshared"], _ = measure(
         lambda: ms._drawers(run_dir, node_ids, repo_root))
 
-    out["verdict"] = verdict(out["centres"], out["shape"])
+    out["verdict"] = verdict(centres, out["shape"])
     return out
 
 
@@ -307,11 +330,12 @@ def verdict(centres: dict, shape: dict) -> dict:
     questions the S1 design hangs on. It does not rank anything it cannot
     measure.
     """
-    # `drawers_unshared` is a guard rail, not a cost the page pays; ranking it
-    # would send the first fix at a problem nobody has.
+    # Rank WARM costs only: the cold pass happens once per process, the warm
+    # one happens forever. `drawers_unshared` is a guard rail, not a cost the
+    # page pays, and ranking it would aim the next fix at a problem nobody has.
     heavy = max(
-        (k for k in centres if k not in ("quiet_heartbeat", "heartbeat_one_new",
-                                         "drawers_unshared")),
+        (k for k in centres
+         if k.endswith("_warm") and not k.startswith("drawers")),
         key=lambda k: centres[k]["bytes"], default="")
     quiet = centres["quiet_heartbeat"]["bytes"]
     journal = shape["journal_bytes"]
@@ -331,9 +355,14 @@ def verdict(centres: dict, shape: dict) -> dict:
             f"journal ({(100.0 * quiet / journal) if journal else 0:.1f}%): the "
             "byte cursor is holding.")
     if heavy:
-        notes.append(f"heaviest single centre: {heavy} at "
+        notes.append(f"heaviest WARM centre: {heavy} at "
                      f"{centres[heavy]['bytes']:,} bytes / "
                      f"{centres[heavy]['files']:,} files.")
+    for base in ("full_render", "rail", "usage"):
+        c, w = centres.get(base + "_cold"), centres.get(base + "_warm")
+        if c and w and c["bytes"]:
+            notes.append(f"{base}: {c['bytes']:,} B cold -> {w['bytes']:,} B warm "
+                         f"({100.0 * w['bytes'] / c['bytes']:.1f}%).")
     return {"first_fix": "events_cursor" if proportional else heavy,
             "quiet_is_prefix_proportional": proportional, "notes": notes}
 
@@ -446,9 +475,9 @@ def sweep(sizes: list[tuple[int, int]], *, nodes: int, attempts: int,
                 "runs": runs, "events": events,
                 "journal_bytes": rep["shape"]["journal_bytes"],
                 "quiet_bytes": rep["centres"]["quiet_heartbeat"]["bytes"],
-                "rail_stats": rep["centres"]["rail_only"]["stats"],
-                "render_bytes": rep["centres"]["full_render"]["bytes"],
-                "usage_bytes": rep["centres"]["usage_only"]["bytes"],
+                "rail_stats": rep["centres"]["rail_warm"]["stats"],
+                "render_bytes": rep["centres"]["full_render_warm"]["bytes"],
+                "usage_bytes": rep["centres"]["usage_warm"]["bytes"],
             })
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
