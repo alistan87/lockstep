@@ -93,6 +93,7 @@ python contrib\plan_card.py <flow>            # consent card: shape, ceiling, pr
 python contrib\question_card.py <run_dir>     # clarify findings, verbatim, for ACTIVITY
 python contrib\quiescent.py <run_dir>         # exit 0 = only the approval is runnable
 python contrib\session_spend.py               # this session: orchestrator transcript spend + runs it started
+python contrib\mission_bench.py [--sweep]     # what a MISSION render costs per cost centre, in BYTES (Phase 0 of the scale work; --json is sanitized and sendable)
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
 pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
 python contrib\mission_server.py                       # the MISSION page: runs rail -> board -> timeline -> step -> raw record; GET only, loopback (?run=<name> picks a past run)
