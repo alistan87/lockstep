@@ -894,3 +894,31 @@ file records implementation-level departures below that bar.
   rides a `prompt_via = "argv"` stanza — schema + prompt + corrective
   share one ~32k Windows command line. Pinned by
   tests/test_schema_argv.py.
+
+- **2026-09-10 — `kind:"attempt"` journal events: why an attempt happened**
+  (S3 engine half, upstream-response-mission-scale.md). Rotated artifact
+  names record THAT an attempt happened and nothing recorded why;
+  recovering "attempt 2 was a contract corrective, attempt 3 was heal round
+  1" meant inferring from filenames and correlating loosely against
+  transitions. A downstream consumer asked for a per-attempt manifest
+  ARTIFACT; upstream countered with journal events, because the journal is
+  already hash-chained (`verify-trace`), already kind-tagged and
+  forward-tolerant (an older reader ignores an unknown kind), and already
+  read by every cockpit surface — and an attempt record is engine-recorded
+  FACT, so placing it outside trace integrity would be the wrong side of
+  the line a derived cache sits on. Each attempt appends `{kind:"attempt",
+  node, cause, ordinal}` plus `item` for a map item, `heal_round` when one
+  applies, and `parts` (the NAMES of the hash parts, resolvable against
+  `hash_parts` — never their contents, so the journal does not become a
+  second copy of prompts). The cause enum is the ENGINE's and is never
+  inferred: `initial`, `resume`, `retry`, `auto-retry` (M4's free one, kept
+  distinct because the budgets and meanings differ), `corrective`,
+  `scope-corrective`, `heal`. Because `heal_round` lives on the GATE's
+  record and not on the nodes the cascade re-pends, the cascade hands the
+  round forward through an in-engine map consumed on read — without it a
+  healed writer's next attempt was indistinguishable from an ordinary
+  resume, which is the inference these events exist to replace. Additive to
+  the journal, which no hash covers: `input_hash` composition does not move
+  (M3), pinned by a test asserting a resumed node neither re-runs nor
+  re-hashes. Legacy runs have no `attempt` events and read as cause
+  unknown, displayed, never inferred. Pinned by tests/test_attempt_events.py.
