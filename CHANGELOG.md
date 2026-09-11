@@ -6,6 +6,68 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.14.0 — 2026-09-11
+
+The measure-first release. MISSION scale (`upstream-response-mission-scale.md`, S1 + S3's engine half),
+built after 0.13.0 was cut. A downstream consumer reported the page slowing
+down after weeks of use; the same seam had been found upstream the same day
+and logged in ROADMAP-NOTES. Every source-level claim in their report was
+verified before anything was classified — all five were accurate.
+
+**Phase 0 first, deliberately.** `contrib/mission_bench.py` measures each
+cost centre in BYTES (wall time on a Windows box with AV is not comparable
+across machines) and reports cold/warm pairs. Five plausible cost centres
+had been named across two reports; optimizing the wrong one is placebo work
+that still costs a review. It immediately corrected one of the maintainer's
+own assumptions — drawers cost zero as the page calls them.
+
+Measured on a 40-run / 3 000-event fixture, cold → warm:
+
+| centre | before | after |
+|---|---|---|
+| quiet heartbeat | 274,500 B, ×16 across a ×16 sweep | **4,096 B, constant** |
+| run rail | 19,584 B / 12 files | **0 B / 0 files** warm |
+| usage walk | 1,853,825 B | **278,273 B** warm |
+| full render | 3,538,276 B | **1,750,760 B** warm |
+
+- **The journal cursor reads what was appended, not the file.** An opaque
+  `<gen>.<offset>.<ordinal>`; `gen` digests the first line so a rotated
+  journal resets explicitly. Byte offsets make SPEC §10.3's torn-trailing-line
+  tolerance structural rather than a special case. The route's own docstring
+  had called the whole-file read unavoidable, which is why nobody questioned
+  the cost.
+- **The attempt-log memo** keyed on `(path, size, mtime_ns)` — logs are
+  append-then-rotate, so that is a sound identity. A `--sweep --axis depth`
+  across **254× more log bytes** (a run resumed and retried for weeks) leaves
+  the warm render **flat at ×1.0**.
+- **The two-layer rail cache.** Membership keys on the runs-root mtime;
+  status keys on each run's OWN `state.json`, because writing inside a child
+  does not reliably bump the parent — the downstream reviewer's catch, and
+  the reason a single-layer design never sees running→done.
+- **`kind:"attempt"` journal events (S3, engine).** The request asked for a
+  per-attempt manifest artifact; upstream counter-proposed journal events,
+  because the journal is already hash-chained, kind-tagged and
+  forward-tolerant, and an attempt record is engine FACT rather than derived
+  data. The cause enum (`initial`/`resume`/`retry`/`auto-retry`/
+  `corrective`/`scope-corrective`/`heal`/`baseline`/`served`) is the
+  engine's and is never inferred; the heal round rides the persisted
+  `RunState.heal_pending` so a budget trip between a cascade and its re-run
+  cannot lose it. Additive: `input_hash` composition does not move.
+- **The feed speaks the reader's words.** Eight engine status tokens
+  (`heal-exhausted-pass`, `scope-corrective-respawn`, …) had been rendering
+  raw in the one pane meant to be in a domain expert's language.
+
+Four adversarial rounds followed. Round 1 found 2 blockers, 7 majors and 9
+minors in the original work; rounds 2 and 3 found defects introduced by the
+previous round's FIXES (2 blockers, then none); round 4 found no blocker and
+no correctness defect in the engine — its findings were in the regression
+net. Five tests written to prove a fix were found to pass for the wrong
+reason, each a guard that silently excused its assertion.
+
+Still deliberately unbuilt: S1.2 (one shared projection per snapshot — the
+remaining ~1.75 MB of a warm render), S1.5 (lazy drawers), and the S2/S4
+views, which the request's own sequencing puts behind S1.
+
 ## 0.13.0 — 2026-09-10
 
 The harness-parity release: PROPOSAL-throughput-and-harness-parity, adopted

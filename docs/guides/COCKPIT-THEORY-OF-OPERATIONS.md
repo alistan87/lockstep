@@ -140,7 +140,12 @@ because a run dir is sensitive and a notification is not a delivery channel.
 Then narrate transitions from **four** sources, because no single one is
 sufficient:
 
-- `events.jsonl` — transitions, `heal-round`, timestamps
+- `events.jsonl` — transitions, `heal-round`, timestamps, and (since
+  2026-09-10) `kind:"attempt"` records saying WHY each attempt happened:
+  `initial` / `resume` / `retry` / `auto-retry` / `corrective` /
+  `scope-corrective` / `heal` / `baseline` / `served`. Rotated artifact
+  names say THAT an attempt happened; these say why, without inferring it
+  from filenames
 - `lockstep status` — the summary
 - `phases/<gate>/result.json` — findings and verdicts
 - the run's `flow.tg.json` copy — denominators (heal budgets, spawn caps)
@@ -510,14 +515,32 @@ Four rules it is built on:
   because a human deciding from a quoted result must be able to see the
   bytes were touched.
 
-**The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick parses only
-the journal lines past the cursor and carries one extra bit (`live` — whether
-anything is running). Not every journal line is something that HAPPENED to the
-work: the engine also writes advisory diagnostics (`kind: "timing"`, how long a
-tree snapshot took) which carry no status and are dropped before the feed
-window rather than inside it — filtered late, they would consume the last-N
-slots and push real events out of a reader's view with lines that render to
-nothing. The cursor still counts every line, because it indexes the file; the expensive render is fetched only when the journal
+**The heartbeat is `/api/events`, not `/api/state`.** The 1 Hz tick reads only
+the journal BYTES past the cursor and carries one extra bit (`live` — whether
+anything is running). The cursor is opaque (`<gen>.<offset>.<ordinal>`,
+`contrib/mission_cursor.py`): `gen` digests the journal's first line so a
+rotated or recreated file resets explicitly instead of reading from a
+meaningless offset, and the offset always sits on a line boundary — which is
+what makes a torn trailing line (SPEC §10.3) stop being a special case rather
+than a rule to remember. Until 2026-09-10 this route read and split the ENTIRE
+journal every second: 274,500 bytes on a 277,500-byte journal, growing forever,
+behind a docstring that called the whole-file read unavoidable. It is now a
+constant 4,096-byte head read.
+
+Not every journal line is something that HAPPENED to the work, and the feed
+drops three classes BEFORE its last-N window rather than inside it — filtered
+late, they would consume the slots and push real events out of view with lines
+that render to nothing:
+
+- advisory diagnostics (`kind: "timing"`) carry no status;
+- `initial` attempts duplicate the `running` transition that follows them;
+- **map ITEM attempts, whatever the cause** — a rework round re-runs every
+  item, so a 40-item map would otherwise put 40 identical "sent back for
+  rework" lines into a 12-line pane. `served` is deliberately NOT quiet: it
+  is the only place the page says nothing ran, and silencing it made a
+  `--replay` read exactly like a real run.
+
+The expensive render is fetched only when the journal
 moved, the token changed, or every fifth tick while something runs. A quiet
 second costs 0.4 ms and 80 bytes instead of 40–128 ms and a whole page. That is
 not only a cost question: a swap destroys the reader's text selection, open

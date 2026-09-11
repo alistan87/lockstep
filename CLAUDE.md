@@ -114,6 +114,9 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
   declared scope (quarantine, dirty preflight, heal text, rollback warning)
 - `repair.py` — deletion-only JSON repair + the file channel's single-value
   salvage (C2/C3; never synthesizes a closer, refuses multi-value files)
+- `roles.py` also journals `kind:"attempt"` events (why each attempt
+  happened — the cause enum is the ENGINE's, never inferred) and carries the
+  heal round forward in the persisted `RunState.heal_pending`
 - `pistream.py` — pi `--mode json` stream parsers: the result channel
   (`envelope = "pi-stream"`) and the cost parsers contrib imports
 - `cli.py`, `render.py`, `doctor.py` — frozen exit codes, Mermaid, executor probes
@@ -156,6 +159,12 @@ a feature over adding a dependency. Full pytest after every change.
   a process for later nodes — closing there would kill it at node exit and
   diverge from POSIX. The guarantee is nothing outlives the RUN, not the node;
   the kernel reaps the rest when the driver exits (DEVIATIONS 2026-08-10).
+- `mission_server._STATUS_WORDS` is a SECOND, page-local glossary beside
+  `mission_view.GLOSSARY`, and deliberately so: GLOSSARY is a 6-entry
+  node-status map pinned across `cockpit.ps1` and the DE guide by test,
+  while the journal's status enum is about twice that. Extending GLOSSARY
+  to cover `heal-exhausted-pass` and friends would break the cross-surface
+  pin it exists to enforce.
 - The file channel refuses to salvage OR repair a result file holding more
   than one JSON value, any broken span, or trailing bytes — it goes to the
   corrective instead (0.13.0, DEVIATIONS 2026-09-09). Looks like a missed
@@ -232,7 +241,8 @@ watches, bubbles evidence up verbatim; FLEET-OPERATIONS "The roles"),
 detached runs, clarification gates, evidence-bearing terminal approvals, live
 spend, and a friction retro. The view layer is `cockpit.ps1` (shipped default,
 zero dependencies) plus `mission_view.py` — render functions shared by
-`mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
+`mission_cursor.py` (the opaque journal cursor: a heartbeat reads only what was
+appended), `mission_tui.py` (one process, keyboard) and `mission_server.py` (the read-only
 MISSION page: a left rail of recent runs (`?run=<name>`, matched against the
 directory listing, unknown = 404) → board → timeline → step drawer → raw
 record, GET routes only, every
@@ -271,6 +281,15 @@ what you may say. Three rules that are enforced by code, not discretion:
   have been. Without it a cockpit copied without that one file drew an empty
   timeline and a column of dashes — indistinguishable from a run that did
   nothing, which is the one thing the page may not say.
+- **Never let the page rescan what it already read.** Three process-local
+  caches, all provably output-neutral (`_run_list_uncached` is kept as the
+  rail's oracle so a test asserts it, not a comment): the journal byte
+  cursor, the attempt-log memo keyed on `(path, size, mtime_ns)`, and the
+  two-layer rail cache. The rail's two layers are NOT interchangeable —
+  membership keys on the runs-root mtime, status on each run's own
+  `state.json`, because writing inside a child does not reliably bump the
+  parent, so a single-layer design never sees running→done. Measure with
+  `contrib/mission_bench.py` (bytes, not milliseconds).
 - **Never quote a cost from memory.** `contrib/plan_card.py` computes it from
   prior runs; that used to be the one number in the protocol with no artifact
   behind it.

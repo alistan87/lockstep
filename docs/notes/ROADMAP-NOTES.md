@@ -234,9 +234,23 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   and (2)). The seam if it needs code: an mtime-keyed memo of per-log
   usage sums in `collect_run` (logs are append-then-rotate, so a
   (path, size, mtime) key is sound), and an events.jsonl byte-offset
-  cursor for the wall/heal pass. Not built — evidence first: time a
-  render (`python -c "...collect_run..."`) on the slow machine and see
-  which of the three dominates before optimizing any of them.
+  cursor for the wall/heal pass. **RESOLVED 2026-09-10/11** — and the
+  evidence-first rule paid: `contrib/mission_bench.py` (Phase 0) measured
+  all three in BYTES before anything was optimized, and immediately
+  corrected one of my own assumptions (drawers cost ZERO as the page calls
+  them; the 14.8 MB figure only appears without the shared projection).
+  Built: (1) the attempt-log memo keyed on `(path, size, mtime_ns)` —
+  usage 1.85 MB -> 278 KB warm, and FLAT across a 254x growth in log
+  bytes; (3) the two-layer rail cache — 19,584 B -> 0 B warm, with
+  membership on the runs-root mtime and status on each run's OWN
+  `state.json`, because writing inside a child does not reliably bump the
+  parent (downstream catch); plus the byte-offset journal cursor, which
+  was NOT in this note's list and turned out to be the largest single win:
+  a quiet heartbeat went from 274,500 B (x16 with journal size) to a
+  constant 4,096 B. Still open: (2) the wall/heal pass still re-parses the
+  whole journal per render, inside the ~1.75 MB that a full render costs
+  warm — that is S1.2 (one shared projection per snapshot) in
+  `upstream-response-mission-scale.md`, deliberately unbuilt.
 
 - **2026-08-15 (whole-implementation review): per-stanza `default_retry`.**
   Retry defaults are per-KIND (`HarnessExecutor.default_retry` = 2 x 60s),

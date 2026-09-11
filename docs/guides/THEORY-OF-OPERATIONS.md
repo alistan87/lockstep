@@ -221,6 +221,15 @@ what it deleted, and marks the record `repaired` (visible in `status` and
 the mission drawer, and carried across `--seed`/`--replay`). Never for a
 gate: a verdict's consumers act without a human re-reading raw bytes.
 
+Every attempt — the first, a retry, a corrective, a heal round, a baseline
+spawn, a seeded result — appends a `kind:"attempt"` record to the journal
+naming its CAUSE. The enum is the engine's and is never inferred: rotated
+artifact names say that an attempt happened, and before this recovering why
+meant reading filenames and correlating loosely against transitions. It
+rides the hash chain rather than a sidecar file because an attempt record is
+engine-recorded fact, not derived data, and it carries no prompt or context
+text (DEVIATIONS 2026-09-10).
+
 When repair does not apply, the driver issues **exactly one corrective
 re-spawn**, carrying the original task and the invalid output back to the
 agent — with the raw channel's longest near-object in the fence when one
