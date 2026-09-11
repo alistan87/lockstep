@@ -216,7 +216,8 @@ a feature over adding a dependency. Full pytest after every change.
   fingerprint, so an un-ignored run dir makes every resume warn about external
   edits to its own `state.json`.
 
-Project skills: `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
+Project skills: `/task-scoping` (decompose a task into right-sized nodes —
+do this BEFORE flow-authoring), `/flow-authoring` (write a taskgraph), `/debug-run` (diagnose
 a run dir), `/getting-started` (first-run setup on a new machine),
 `/fleet-ops` (orchestrate concurrent runs, inline or delegated). Subagents:
 `spec-auditor` (read-only spec-vs-code audit), `run-diagnostician` (run-dir

@@ -217,6 +217,27 @@ that EMIT orders + one serialized, scoped applier. A lint was considered and
 rejected — it would fire on the canonical codemod-apply flow (the W2 rule:
 a warning that is wrong on the flow it teaches is one people learn to skip).
 
+- **2026-09-10 (work-machine report): the mission page's full render does
+  O(everything) work, three ways, and all three grow with weeks of use.**
+  Each full render (`/api/state` — fired whenever the journal moved OR
+  anything is running, so ~1 Hz during a live run) recomputes from scratch:
+  (1) `cost_report.collect_run` reads and parses EVERY `stdout*.log` of
+  every phase dir of the open run — rotated attempts and map items
+  included — so a long-lived, much-resumed run costs more per render every
+  week; (2) `wall_and_heals`/`node_intervals` re-parse the ENTIRE
+  `events.jsonl` (only `/api/events` is cursor-incremental); (3)
+  `run_list` iterdir+stats EVERY dir under `runs/` to sort the rail, so
+  the scan grows with total runs ever kept — and Windows AV multiplies
+  every per-file cost. Mitigations that exist today: `lockstep gc
+  [--apply]` (retention is the real fix for (3)), and keeping work runs
+  in fresh lineages rather than resuming one dir for weeks (bounds (1)
+  and (2)). The seam if it needs code: an mtime-keyed memo of per-log
+  usage sums in `collect_run` (logs are append-then-rotate, so a
+  (path, size, mtime) key is sound), and an events.jsonl byte-offset
+  cursor for the wall/heal pass. Not built — evidence first: time a
+  render (`python -c "...collect_run..."`) on the slow machine and see
+  which of the three dominates before optimizing any of them.
+
 - **2026-08-15 (whole-implementation review): per-stanza `default_retry`.**
   Retry defaults are per-KIND (`HarnessExecutor.default_retry` = 2 x 60s),
   so every copilot node must carry `"retry": {"max": 0}` by hand forever -

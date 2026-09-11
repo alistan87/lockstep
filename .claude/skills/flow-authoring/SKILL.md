@@ -5,6 +5,11 @@ description: Author or modify a lockstep taskgraph (*.tg.json) — node model, r
 
 # Authoring a taskgraph
 
+**If the task is not yet decomposed into nodes, do `/task-scoping` first.**
+This skill covers the grammar; an oversized node verifies clean and bleeds
+at runtime (whole-node retries, 2.5× correctives — billed requests on a
+request-metered harness), and no verifier catches it.
+
 **Start from the closest template in `flows/starter/`, not from a blank file.**
 The adversarially-reviewed flows there cover the shapes that recur — author→
 review→approve, implement→heal→review, map fan-out (reduce = any consumer of
