@@ -3,7 +3,7 @@ type: plan
 title: "Upstream response: MISSION scale, blocker intelligence, and execution provenance"
 description: Point-by-point disposition of the downstream MISSION feature request filed against lockstep 0.13.0 — one accepted P0 (incremental projections, gated behind a measurement phase), two accepted with scope reductions, one counter-proposal (journal attempt events instead of a new per-attempt manifest artifact), and answers to all five upstream questions. Every source-level claim in the report was verified before classification; all five were accurate.
 resource: docs/proposals/upstream-response-mission-scale.md
-status: draft for downstream discussion
+status: S1.1/S1.3/S1.4 + S3 engine half BUILT 2026-09-10; S1.2/S1.5 and the S2/S4 views open
 upstream_baseline: "lockstep 0.13.0 (9bee0c4)"
 ---
 
@@ -250,6 +250,43 @@ response so the S1 design can be chosen from numbers rather than from five
 plausible hypotheses. S2–S4 explicitly must not land on the current repeated
 full-log scan — upstream agrees, and that is the reason S1 is the gate.
 
-**Next action is the reporter's:** run `mission_bench.py` on the slow
-machine and return the JSON. The cost centre it names decides what S1 builds
-first.
+## Built 2026-09-10, and what the numbers said
+
+Phase 0 answered its own question, so four slices landed without waiting.
+Measured on a 40-run / 3 000-event fixture, cold -> warm:
+
+| centre | before | after |
+|---|---|---|
+| quiet heartbeat | 274,500 B, x16 across a x16 sweep | **4,096 B, constant** |
+| run rail | 19,584 B / 12 files | **0 B / 0 files** warm |
+| usage walk | 1,853,825 B | **278,273 B** warm |
+| full render | 3,538,276 B | **1,750,760 B** warm |
+
+**S1.1** (byte cursor), **S1.3** (attempt-log memo), **S1.4** (two-layer
+rail cache) and **S3's engine half** (`kind:"attempt"` events, as
+counter-proposed) are built and pinned. `contrib/mission_bench.py --sweep
+--axis depth` also settled a question this document said would need the
+reporter's real-world numbers: across **254x more log bytes** (134 KB ->
+34 MB of harness logs, i.e. a run resumed and retried for weeks) the warm
+render and usage costs are **flat, x1.0**. The memo absorbs run depth
+entirely, so S1.3 earns its complexity without further evidence.
+
+Four adversarial rounds followed the build. Round 1 found 2 blockers, 7
+majors, 9 minors in the original work; rounds 2 and 3 found defects
+introduced by the previous round's FIXES (2 blockers, then none); round 4
+found no blocker and no correctness defect in the engine. The reporter's
+`parent-directory mtime` catch was adopted verbatim and then violated from
+the other direction by the first fix — membership was filtered on
+`state.json` at scan time, so a run started while the page was open stayed
+invisible for the life of the process. It has a test now.
+
+**Still open, deliberately:** S1.2 (one shared projection per snapshot —
+the remaining ~1.75 MB warm render), S1.5 (lazy drawers, whose guard rail
+`drawers_unshared` is already pinned), and the S2/S4 views, which this
+document's own sequencing puts behind S1.
+
+**Still worth having from the reporter:** `mission_bench.py --runs-root
+<runs> --json` from the slow machine. Not to choose what to build — the
+byte counts settled that — but for the two questions a synthetic fixture
+cannot answer: the COLD cost on a real retained history, and how many run
+dirs have actually accumulated (Q1's cold-start question).
