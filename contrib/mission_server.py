@@ -68,6 +68,7 @@ from urllib.parse import parse_qs, quote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import mission_cursor  # noqa: E402
 import mission_view as mv  # noqa: E402
 
 # ---------------------------------------------------------------- palette
@@ -242,26 +243,16 @@ def _events(run_dir: Path) -> list[dict]:
         return []
 
 
-def _events_after(run_dir: Path, after: int) -> list[dict]:
-    """Only the journal lines past the cursor, JSON-parsed. The whole-file read
-    is unavoidable; parsing every line of a long journal once a second is not.
-    A torn trailing line is tolerated, as everywhere else (SPEC §10.3)."""
-    path = Path(run_dir) / "events.jsonl"
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    out: list[dict] = []
-    for i, line in enumerate(lines):
-        if i < after or not line.strip():
-            continue
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            if i == len(lines) - 1:
-                continue
-            return []  # a mid-file tear: the view says nothing rather than lying
-    return out
+def _events_after(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dict], str]:
+    """Only the journal BYTES past the cursor (S1.1, `mission_cursor`).
+
+    The whole-file read this used to do was not unavoidable, whatever the
+    comment here used to claim: measured at 732 KB per quiet tick on a 740 KB
+    journal, growing with the journal forever. It is now one small head read
+    plus whatever was actually appended. Torn trailing lines and mid-file
+    tears keep their old meanings (SPEC §10.3) — see `mission_cursor` for why
+    byte offsets make the first stop being a special case."""
+    return mission_cursor.read(Path(run_dir), cursor)
 
 
 def _intervals(run_dir: Path) -> dict[str, list[tuple[str, str | None]]]:
@@ -939,7 +930,7 @@ JS = """
   });
 
   var token = document.body.dataset.runToken || '';
-  var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+  var cursor = document.body.dataset.eventCursor || '0';  // opaque: echoed, never parsed
   var quiet = 0, fails = 0, busy = false, dirty = false;
 
   function selecting() {
@@ -993,7 +984,7 @@ JS = """
         // leave the client asking for `after=400` of a twelve-event run, which
         // is the exact failure the run token exists to prevent.
         if (doc.token !== token) {
-          token = doc.token; cursor = 0; quiet = 0; dirty = true;
+          token = doc.token; cursor = '0'; quiet = 0; dirty = true;
           if (refresh()) { dirty = false; }
           return;
         }
@@ -1464,9 +1455,13 @@ def render_nav(runs_root: Path, current: Path | None) -> str:
 
 
 def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
-                now: datetime | None = None) -> tuple[str, int]:
+                now: datetime | None = None) -> tuple[str, str]:
     """The whole `.wrap` fragment, server-rendered, plus the event cursor it
-    was rendered at. `GET /` embeds it; the poll swaps it."""
+    was rendered at. `GET /` embeds it; the poll swaps it.
+
+    The cursor is opaque (S1.1): the body already reflects every event in the
+    journal at render time, so the client must resume AFTER them, and the
+    honest way to say where that is is the cursor the events route speaks."""
     if run_dir is None:
         return (
             '<div class="top"><span class="brand">MISSION</span>'
@@ -1475,7 +1470,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
             '<p class="hero-sub">Tell the assistant what you would like to work on; '
             "this page fills in by itself once something starts.</p>"
             '<p class="foot">This page only reads files. It never changes the run.</p>',
-            0,
+            "0",
         )
 
     state = mv.read_json(run_dir / "state.json") or {}
@@ -1545,7 +1540,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     if mv.needs_you(state):
         parts.insert(3, '<p class="hero-sub" style="color:var(--warning)">'
                         "NEEDS YOU &mdash; read the terminal pane.</p>")
-    return "\n".join(p for p in parts if p), len(events)
+    return "\n".join(p for p in parts if p), mission_cursor.initial(run_dir)
 
 
 def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
@@ -1623,22 +1618,26 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
         # glossary this design forbids, and the test that catches that must
         # stay a substring check with no exceptions in it.
         raw = (parse_qs(parsed.query).get("after") or ["0"])[0]
-        if not raw.isdigit():          # rejects "abc", "-1", "1.5", ""
+        # Malformed is still a 404 - "abc", "-1", "1.5" are not cursors and a
+        # client sending one has a bug worth seeing. A well-formed cursor that
+        # is merely STALE is the file's business, not the client's, and resets
+        # silently inside `mission_cursor.read`.
+        cursor = mission_cursor.parse_cursor(raw)
+        if cursor is None:
             return 404, HTML_CT, b"bad cursor"
-        after = int(raw)
         if run_dir is None:
-            return _json({"token": token, "next": 0, "events": [], "live": False})
+            return _json({"token": token, "next": "0", "events": [], "live": False})
         state = mv.read_json(run_dir / "state.json") or {}
         running = any(r.get("status") == "running"
                       for r in (state.get("nodes") or {}).values())
-        fresh = _events_after(run_dir, after)
+        fresh, nxt = _events_after(run_dir, cursor)
         labels = mv.load_labels(run_dir, repo_root) if fresh else {}
         return _json({
             "token": token,
-            "next": after + len(fresh),
+            # An opaque cursor into the FILE, not into the feed: it advances
+            # past every line consumed, narrated or not.
+            "next": nxt,
             "live": running,
-            # `next` counts every line consumed, narrated or not — it is a
-            # cursor into the file, not into the feed.
             "events": [{"text": text, "node": ev.get("node") or "",
                         "status": ev.get("status") or ""}
                        for ev in fresh if (text := event_text(ev, labels))],

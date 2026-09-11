@@ -189,11 +189,61 @@ def test_a_bad_cursor_and_a_traversal_are_404(tmp_path):
 
 
 def test_the_cursor_advances_and_never_replays(tmp_path):
+    """The cursor is OPAQUE since S1.1 (`<gen>.<offset>.<ordinal>`), so this
+    asserts the property rather than the representation: it advances off the
+    start, a re-request at it yields nothing, and it stays put when nothing
+    was appended."""
     run = page_run(tmp_path)
     first = json.loads(get(run, "/api/events?after=0", tmp_path)[2])
-    assert first["events"] and first["next"] == len(first["events"])
+    assert first["events"]
+    assert first["next"] != "0", "the cursor must move off the start"
     again = json.loads(get(run, f"/api/events?after={first['next']}", tmp_path)[2])
     assert again["events"] == [] and again["next"] == first["next"]
+
+
+def test_the_cursor_carries_its_generation_and_resets_on_a_new_journal(tmp_path):
+    """A cursor from another generation of the file must not be read as an
+    offset into this one. The journal is append-only within a run, so the
+    guard is cheap insurance against a recreated file — and the reset is
+    silent and explicit, not a 404: staleness is the file's business."""
+    run = page_run(tmp_path)
+    first = json.loads(get(run, "/api/events?after=0", tmp_path)[2])
+    gen, offset, ordinal = first["next"].split(".")
+    assert len(gen) == 8 and int(offset) > 0 and int(ordinal) > 0
+
+    forged = f"{'0' * 8}.{offset}.{ordinal}"          # well-formed, wrong generation
+    reset = json.loads(get(run, f"/api/events?after={forged}", tmp_path)[2])
+    assert reset["events"] == first["events"], "a foreign cursor re-serves from the top"
+    assert reset["next"] == first["next"]
+
+
+def test_a_cursor_past_the_end_of_the_file_resets(tmp_path):
+    run = page_run(tmp_path)
+    first = json.loads(get(run, "/api/events?after=0", tmp_path)[2])
+    gen, offset, ordinal = first["next"].split(".")
+    beyond = f"{gen}.{int(offset) + 10_000_000}.{ordinal}"
+    doc = json.loads(get(run, f"/api/events?after={beyond}", tmp_path)[2])
+    assert doc["events"] == first["events"] and doc["next"] == first["next"]
+
+
+def test_a_torn_trailing_line_is_not_consumed(tmp_path):
+    """The driver appends while the page reads (SPEC §10.3). A half-written
+    final line must be left for the next tick, whole — with byte offsets this
+    stops being a special case, and this test is what keeps it that way."""
+    run = page_run(tmp_path)
+    first = json.loads(get(run, "/api/events?after=0", tmp_path)[2])
+    journal = run / "events.jsonl"
+    with open(journal, "a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-01-01T00:00:00+00:00", "node": "a", "sta')
+    torn = json.loads(get(run, f"/api/events?after={first['next']}", tmp_path)[2])
+    assert torn["events"] == [] and torn["next"] == first["next"], (
+        "a torn line must not advance the cursor")
+    # ... and once it lands whole, it is delivered exactly once.
+    with open(journal, "a", encoding="utf-8") as fh:
+        fh.write('tus": "done"}\n')
+    healed = json.loads(get(run, f"/api/events?after={first['next']}", tmp_path)[2])
+    assert len(healed["events"]) == 1
+    assert healed["next"] != first["next"]
 
 
 def test_the_run_token_changes_across_a_segment_boundary(tmp_path):
@@ -626,7 +676,7 @@ def test_no_step_word_and_no_time_string_is_rendered_by_client_code():
 def test_the_client_only_swaps_server_rendered_html():
     js = mission_server.JS
     assert "doc.html" in js and "innerHTML" in js
-    assert "doc.token !== token" in js and "cursor = 0" in js
+    assert "doc.token !== token" in js and "cursor = '0'" in js
 
 
 def test_the_poll_holds_the_previous_render_rather_than_a_skeleton():
@@ -658,7 +708,38 @@ def test_a_quiet_tick_costs_almost_nothing(tmp_path):
     body = get(run, f"/api/events?after={total}", tmp_path)[2]
     doc = json.loads(body)
     assert doc["events"] == [] and doc["next"] == total
-    assert len(body) < 120, "a quiet second must not ship a page"
+    assert len(body) < 160, "a quiet second must not ship a page"
+
+
+def test_a_quiet_tick_does_not_read_the_journal_prefix(tmp_path):
+    """S1.1's whole point, asserted in BYTES rather than in milliseconds: a
+    heartbeat with nothing to report must not pay for the journal it has
+    already read. Before the byte cursor this read 732 KB against a 740 KB
+    journal, once a second, forever."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "mission_bench", CONTRIB / "mission_bench.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+
+    run = page_run(tmp_path)
+    journal = run / "events.jsonl"
+    with open(journal, "a", encoding="utf-8") as fh:
+        for i in range(3000):
+            fh.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00", "kind": "transition",
+                                 "node": "a", "status": "running", "pad": "x" * 80}) + "\n")
+    size = journal.stat().st_size
+    assert size > 300_000, "precondition: a journal worth not re-reading"
+
+    cursor = mission_server.mission_cursor.initial(run)
+    with bench.counting() as c:
+        events, nxt = mission_server._events_after(
+            run, mission_server.mission_cursor.parse_cursor(cursor))
+    assert events == [] and nxt == cursor
+    assert c.bytes < size / 10, (
+        f"a quiet tick read {c.bytes} bytes of a {size}-byte journal - the "
+        "cursor is not being honoured")
 
 
 def test_the_events_route_says_whether_the_clock_is_ticking(tmp_path):
@@ -711,7 +792,7 @@ def test_a_new_run_discards_the_old_cursor_rather_than_its_next(tmp_path):
     run token exists to prevent."""
     js = mission_server.JS
     branch = js.split("if (doc.token !== token) {")[1].split("return;")[0]
-    assert "cursor = 0" in branch and "refresh()" in branch
+    assert "cursor = '0'" in branch and "refresh()" in branch
     assert "doc.next" not in branch, "the old run's next must not survive the boundary"
 
 

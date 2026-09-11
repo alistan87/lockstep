@@ -79,23 +79,29 @@ def test_counting_restores_after_an_exception(tmp_path):
 # ------------------------------------------------------- today's cost, pinned
 
 
-def test_quiet_heartbeat_reads_the_whole_journal_today(report):
-    """THE defect, pinned: a heartbeat with NOTHING new to report still reads
-    essentially the entire journal, once a second, forever.
+def test_quiet_heartbeat_does_not_read_the_journal_prefix(report):
+    """S1.1, proved by the pin that used to assert the defect.
 
-    *** THIS TEST IS EXPECTED TO FAIL WHEN S1.1 LANDS. ***
-    The byte-offset cursor should drop `quiet` to near zero. When it does,
-    invert this assertion (quiet < journal * 0.1) rather than deleting it —
-    the pin is what proves the fix did something.
+    This test previously asserted the OPPOSITE - that a heartbeat with
+    nothing to report read essentially the whole journal, once a second,
+    forever - and carried instructions to invert rather than delete it when
+    the byte cursor landed. This is that inversion; the contrast between the
+    two revisions is the evidence that the fix did something.
     """
+    import mission_cursor
+
     quiet = report["centres"]["quiet_heartbeat"]["bytes"]
+    cold = report["centres"]["heartbeat_cold"]["bytes"]
     journal = report["shape"]["journal_bytes"]
     assert journal > 0
-    assert quiet >= journal * 0.5, (
-        "if this fails, S1.1 may have landed - invert the assertion, do not "
-        "delete it")
-    assert report["verdict"]["quiet_is_prefix_proportional"] is True
-    assert report["verdict"]["first_fix"] == "events_cursor"
+    # The guarantee is a CONSTANT, not a ratio: one small head read to verify
+    # the journal's generation, and nothing else. Asserting a fraction of the
+    # journal would pass or fail on fixture size rather than on behaviour.
+    assert quiet <= mission_cursor._HEAD_BYTES, (
+        f"a quiet tick read {quiet} bytes - the byte cursor is not being honoured")
+    assert quiet < journal, "a quiet tick must not read the whole journal"
+    assert cold > quiet, "a cold cursor must still read the journal it skipped"
+    assert report["verdict"]["quiet_is_prefix_proportional"] is False
 
 
 def test_shared_projection_keeps_drawers_free(report):
@@ -123,13 +129,14 @@ def test_full_render_is_dominated_by_usage_not_drawers(report):
 # ------------------------------------------------------- the growth claim
 
 
-def test_cost_grows_with_retained_history(tmp_path):
-    """The downstream claim under review — "slows down as history
-    accumulates" — measured rather than believed. A 4x bigger fixture must
-    cost materially more on the two centres that scale.
+def test_the_quiet_heartbeat_is_flat_across_journal_size(tmp_path):
+    """The inversion of the growth claim, and the sharper statement of S1.1:
+    a 4x longer journal must NOT cost a quiet tick more. This is the test
+    that catches a future reader reintroducing a whole-file read.
 
-    *** The quiet-heartbeat assertion here is ALSO expected to flip with
-    S1.1: a cursor-based heartbeat should stay flat as the journal grows. ***
+    The RAIL's growth with retained history is not fixed yet (S1.4) and is
+    asserted here as still-growing, so that slice has a pin waiting to flip
+    in its turn - the same discipline this file was built on.
     """
     small = mission_bench.profile(
         mission_bench.synthesize(tmp_path / "a", runs=2, nodes=2, events=200,
@@ -137,10 +144,12 @@ def test_cost_grows_with_retained_history(tmp_path):
     big = mission_bench.profile(
         mission_bench.synthesize(tmp_path / "b", runs=8, nodes=2, events=800,
                                  attempts=1, log_kb=2), tmp_path)
-    assert (big["centres"]["quiet_heartbeat"]["bytes"]
-            > small["centres"]["quiet_heartbeat"]["bytes"] * 2)
+    small_quiet = small["centres"]["quiet_heartbeat"]["bytes"]
+    big_quiet = big["centres"]["quiet_heartbeat"]["bytes"]
+    assert big_quiet <= small_quiet * 1.5, (
+        f"quiet tick grew {small_quiet} -> {big_quiet} with journal size")
     assert (big["centres"]["rail_only"]["stats"]
-            > small["centres"]["rail_only"]["stats"])
+            > small["centres"]["rail_only"]["stats"]), "S1.4 has not landed yet"
 
 
 # ------------------------------------------------------- the report is sendable
@@ -160,3 +169,18 @@ def test_json_report_carries_no_identifiers(report):
         assert key in report
     for centre in report["centres"].values():
         assert set(centre) == {"bytes", "files", "stats", "ms"}
+
+
+def test_the_counter_counts_reads_not_file_sizes(tmp_path):
+    """The instrument's own defect, pinned. The first cut credited the whole
+    file size at open() time, so a partial read looked like a full read - and
+    the byte-offset cursor would have measured as no improvement at all. A
+    benchmark that cannot see the fix it exists to measure is worse than no
+    benchmark; this is why the counters have tests of their own.
+    """
+    p = tmp_path / "big.txt"
+    p.write_text("y" * 100_000, encoding="utf-8")
+    with mission_bench.counting() as c:
+        with open(p, "rb") as fh:
+            fh.read(500)
+    assert c.bytes == 500, f"counted {c.bytes} for a 500-byte read"

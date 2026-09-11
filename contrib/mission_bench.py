@@ -63,6 +63,49 @@ class Counters:
                 "ms": round(seconds * 1000, 1)}
 
 
+class _CountingFile:
+    """A file proxy that counts what is actually READ.
+
+    The first cut credited `os.fstat(...).st_size` at open time, which made
+    every partial read look like a full-file read - and would have reported a
+    byte-offset cursor as no improvement at all. A benchmark that cannot see
+    the fix it exists to measure is worse than no benchmark; this is why the
+    counters have their own tests.
+    """
+
+    def __init__(self, fh, counters):
+        self._fh = fh
+        self._c = counters
+
+    def read(self, *a, **kw):
+        data = self._fh.read(*a, **kw)
+        self._c.bytes += (len(data) if isinstance(data, (bytes, bytearray))
+                          else len(data.encode("utf-8", "replace")))
+        return data
+
+    def readline(self, *a, **kw):
+        data = self._fh.readline(*a, **kw)
+        self._c.bytes += (len(data) if isinstance(data, (bytes, bytearray))
+                          else len(data.encode("utf-8", "replace")))
+        return data
+
+    def __iter__(self):
+        for line in self._fh:
+            self._c.bytes += (len(line) if isinstance(line, (bytes, bytearray))
+                              else len(line.encode("utf-8", "replace")))
+            yield line
+
+    def __enter__(self):
+        self._fh.__enter__()
+        return self
+
+    def __exit__(self, *a):
+        return self._fh.__exit__(*a)
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
 @contextmanager
 def counting():
     """Count real I/O by wrapping the primitives the cockpit actually uses.
@@ -105,10 +148,7 @@ def counting():
         fh = real_open(file, mode, *a, **kw)
         if "r" in mode and "w" not in mode and "a" not in mode:
             c.files += 1
-            try:
-                c.bytes += os.fstat(fh.fileno()).st_size
-            except OSError:
-                pass
+            return _CountingFile(fh, c)
         return fh
 
     pathlib.Path.read_text = read_text        # type: ignore[method-assign]
@@ -157,15 +197,28 @@ def profile(runs_root: Path, repo_root: Path) -> dict:
 
     out: dict = {"shape": run_shape(runs_root, run_dir, journal_lines), "centres": {}}
 
-    # 1. THE HEADLINE. A cursor at the end = nothing new to report.
+    # 1. THE HEADLINE. A cursor at the end = nothing new to report. This is
+    #    the number that fires once a second forever.
+    import mission_cursor
+
+    at_end = mission_cursor.parse_cursor(mission_cursor.initial(run_dir))
     out["centres"]["quiet_heartbeat"], _ = measure(
-        lambda: ms._events_after(run_dir, journal_lines))
+        lambda: ms._events_after(run_dir, at_end))
 
     # 2. The same route on a busy tick (one new line to parse). The delta
     #    between this and the quiet tick is the cost of the WORK; the quiet
     #    number is the cost of the HABIT.
+    # Computed OUTSIDE the measured block: the helper reads the file to find
+    # the line boundary, and counting that would report the harness's cost as
+    # the route's - the same confusion the counter fix above exists to avoid.
+    one_back = _cursor_one_line_back(run_dir, at_end)
     out["centres"]["heartbeat_one_new"], _ = measure(
-        lambda: ms._events_after(run_dir, max(0, journal_lines - 1)))
+        lambda: ms._events_after(run_dir, one_back))
+
+    # 2b. A COLD cursor: everything to read. What a page load pays once, and
+    #     the ceiling the quiet tick used to pay every single second.
+    out["centres"]["heartbeat_cold"], _ = measure(
+        lambda: ms._events_after(run_dir, mission_cursor.START))
 
     # 3. The full body rebuild, fired whenever the journal moved or anything
     #    is running.
@@ -198,6 +251,19 @@ def profile(runs_root: Path, repo_root: Path) -> dict:
 
     out["verdict"] = verdict(out["centres"], out["shape"])
     return out
+
+
+def _cursor_one_line_back(run_dir: Path, at_end) -> tuple:
+    """A cursor just before the journal's final complete line, so the "one new
+    event" tick reads exactly one line."""
+    import mission_cursor
+
+    gen, offset, ordinal = at_end
+    data = (Path(run_dir) / "events.jsonl").read_bytes()[:offset]
+    nl = data.rstrip(b"\n").rfind(b"\n")
+    if nl < 0:
+        return mission_cursor.START
+    return (gen, nl + 1, max(0, ordinal - 1))
 
 
 def run_shape(runs_root: Path, run_dir: Path, journal_lines: int) -> dict:
@@ -249,20 +315,21 @@ def verdict(centres: dict, shape: dict) -> dict:
         key=lambda k: centres[k]["bytes"], default="")
     quiet = centres["quiet_heartbeat"]["bytes"]
     journal = shape["journal_bytes"]
-    # "Proportional" = the quiet tick reads most of the journal. A cursor that
-    # skipped the prefix would read approximately nothing.
+    # "Proportional" = the quiet tick reads most of the journal, which is what
+    # a line-count cursor did. S1.1 made this false by construction; the check
+    # stays because a regression here would be silent and expensive.
     proportional = journal > 0 and quiet >= journal * 0.5
     notes = []
     if proportional:
         notes.append(
-            f"the quiet heartbeat reads {quiet:,} bytes against a {journal:,}-byte "
-            "journal: it pays for the whole prefix once a second. The byte-offset "
-            "cursor (S1.1) is the first fix.")
+            f"REGRESSION: the quiet heartbeat reads {quiet:,} bytes against a "
+            f"{journal:,}-byte journal - it is paying for the whole prefix once "
+            "a second. The byte cursor (S1.1) is not being honoured.")
     else:
         notes.append(
             f"the quiet heartbeat reads {quiet:,} bytes against a {journal:,}-byte "
-            "journal — not prefix-proportional on this fixture; re-measure on a "
-            "run with a long journal before concluding anything.")
+            f"journal ({(100.0 * quiet / journal) if journal else 0:.1f}%): the "
+            "byte cursor is holding.")
     if heavy:
         notes.append(f"heaviest single centre: {heavy} at "
                      f"{centres[heavy]['bytes']:,} bytes / "
