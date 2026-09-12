@@ -3,7 +3,7 @@ type: plan
 title: "Work order: MISSION UX — the blocker card, one number per fact, and the peek panel"
 description: Build-ready plan for three MISSION page improvements scoped 2026-09-11 — the stopped-run truth batch (blocker card, the failed-run AND dead-driver clocks, the blocker-path half of S2), deduplication (meter into tile, one cost disclosure), and detail-on-demand (peek panel + status-aware drawer threshold, closing S1.5). Three batches, each a commit, contrib-only, no frozen surface touched. Revised same day: an adversarial UX review returned seven findings, all adopted (§1b).
 resource: docs/proposals/mission-ux-work-order.md
-status: accepted 2026-09-12 — building
+status: BUILT 2026-09-12 (three batches + three adversarial review passes; see §9)
 ---
 # Work order: MISSION UX
 
@@ -495,3 +495,23 @@ discipline is the risk.
    page design (the rail has always been load-time-static); fixing it means
    swapping the nav in the poll, which is its own change with its own byte
    cost. Worth doing if a reader is observed confused by the split.
+
+## 9. Build record (2026-09-12)
+
+Executed in order, full pytest green at every commit, an adversarial review
+after each stage with every confirmed finding adopted:
+
+- `5aa038c` Batch 0 · `5ce3ac7` Batch 1 · `f943756` Batch 2 (S1.5 closed;
+  `DRAWER_INLINE_MAX=30` settled drawers, measured 64,160 → 21,180 B of
+  drawer HTML per swap at 120 nodes; sub-threshold byte-identical).
+- `ef7b7f7` Batch 0's review (6 confirmed + 7 concerns; the failed-map card
+  suppression and "never started" were the load-bearing two).
+- `dda539d` the §7 render-and-look pass — which caught a defect no unit test
+  saw (a vanished run's node-time tile growing against the real wall beside
+  a frozen hero; `collect_run` gained an optional `now`) and left
+  `mockups/make-look-samples.py` as the reusable look set.
+- `02c32dc` the combined review of Batches 1–2 + fixes (6 confirmed + 7
+  concerns; the panel generation counter and the pane's rounding hours digit
+  were the load-bearing two). Declined by decision, not omission: the rail's
+  none-arm stays word-gated (mirrors `driver_vanished`), `/api/node` keeps
+  `lines`+`raw` beside `html` (the route's documented contract).
