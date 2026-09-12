@@ -309,10 +309,18 @@ def test_l0_renders_server_side(tmp_path):
 
 
 def test_nothing_the_old_page_showed_is_gone(tmp_path):
+    """Batch 1 (mission-ux work order §5.2) predicted this test would trip,
+    and that is its job. Nothing was REMOVED: the two cost disclosures became
+    one disclosure with a mode switch (both modes still server-rendered,
+    reachable, and stacked with JS off), and every meter fact moved into the
+    agent-tasks tile. The assertions below track the words to their new
+    homes."""
     run = page_run(tmp_path)
     body = get(run, "/", tmp_path)[2].decode("utf-8")
     assert "ACTIVITY" in body
-    assert "every attempt counted" in body and "kept attempts only" in body
+    assert "every attempt" in body and "kept only" in body
+    assert "history: every attempt is counted" in body    # the mode tag lines
+    assert "head: kept attempts only" in body             # (cost_lines, shared with the TUI)
     assert "what happened at each step" in body
     assert "NEEDS YOU" in body
 
@@ -872,14 +880,67 @@ def test_the_spend_card_does_not_repeat_the_meter(tmp_path):
 # ----------------------------------------------------------------- the meter
 
 def test_the_meter_shows_no_denominator_without_a_declared_cap(tmp_path):
+    """Rewritten to target the TILE (Batch 1, F5): the meter card is gone and
+    its promises moved, not vanished. No declared cap -> the count with no
+    denominator, no bar, and the honest sentence instead of the consent one."""
     meter = mission_server.spend_meter([{"token_spawns": 9}], [None])
     assert meter["cap"] is None and meter["pct"] is None
     assert meter["label"] == "agent tasks used 9"
 
     run = page_run(tmp_path, cap=None)
     body = get(run, "/", tmp_path)[2].decode("utf-8")
-    assert "agent tasks used 9" in body
     assert "of 25" not in body
+    tile = body.split('<div class="k">agent tasks used</div>')[1].split("</div></div>")[0]
+    assert '<div class="v">9</div>' in tile
+    assert "track" not in tile, "no bar without a denominator"
+    assert "declares no ceiling" in tile
+
+
+def test_the_meter_lives_in_the_agent_tasks_tile(tmp_path):
+    """F5: `agent tasks — 10` (tile) beside `agent tasks used 10 of 40`
+    (meter card) was one number rendered three times. The tile now IS the
+    meter — value, bar, ceiling mark — and the consent sentence, a
+    guide-level promise, sits in the tile foot adjacent to the denominator
+    it glosses (D5)."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    tile = body.split('<div class="k">agent tasks used</div>')[1].split('<div class="tile">')[0]
+    assert '<div class="v">9 of 25</div>' in tile
+    assert 'class="track"' in tile and 'class="ceil"' in tile
+    assert "you agreed to before anything started" in tile
+    # once on the whole page: one number per fact
+    assert body.count("you agreed to before anything started") == 1
+    assert body.count('class="track"') == 1
+
+
+def test_the_cost_card_is_one_disclosure_with_two_views(tmp_path):
+    """F6: `history` and `head` are one fact with a mode. Both bodies are
+    server-rendered inside ONE <details>; JS hides one; with JS off both
+    render stacked — each opening with its own mode tag line, so the stack
+    is legible. The switch words are the guide's ("every attempt",
+    "kept only"), entered in the same commit."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.count("<details id=\"cost-tree\">") == 1
+    assert "<details id=\"cost-history\">" not in body   # the siblings are gone
+    assert "<details id=\"cost-head\">" not in body
+    tree = body.split('<details id="cost-tree">')[1].split("</details>")[0]
+    assert '>every attempt</button>' in tree and '>kept only</button>' in tree
+    assert '<pre id="cost-history">' in tree and '<pre id="cost-head">' in tree
+    # served without `hidden`: the no-JS reader gets both, stacked
+    assert 'hidden' not in tree.split('<pre id="cost-history">')[0].rsplit("<", 1)[-1]
+    assert "history: every attempt is counted" in tree
+    assert "head: kept attempts only" in tree
+
+
+def test_the_view_switch_is_generic_over_groups():
+    """The l0/l1 machinery generalised rather than being copied: membership
+    comes from the server-rendered buttons, and the client still renders no
+    word."""
+    js = mission_server.JS
+    assert "function show(group, which)" in js
+    assert '.viewswitch[data-group="' in js
+    assert "restoreAll(pressed)" in js, "the reader's chosen views survive a swap"
 
 
 def test_the_meter_degrades_to_of_at_least_across_segments():

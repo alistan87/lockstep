@@ -90,6 +90,12 @@ started. You may see `no envelope` next to some tasks — that just means one of
 the tools cannot report its own token usage. It is not an error and nothing is
 wrong.
 
+On the page, the cost card opens into one per-step list with two views of the
+same money: **every attempt** counts every try, including work that was later
+replaced — what was actually spent — and **kept only** counts just the
+attempts the run kept — what the current result cost. They are one fact with
+a mode, not two facts; switch between them with the two buttons.
+
 On a review campaign — a run that keeps a findings ledger across rounds —
 MISSION shows one more line under the headline, like
 `review findings: 2 new, 1 persisting, 4 resolved (round 3)`. It is a plain

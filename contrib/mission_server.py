@@ -865,9 +865,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
 .card>h2,.card .cardhead h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
  letter-spacing:.02em}
-.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
-.meter-head .lab{color:var(--ink-2);font-size:13px}
-.meter-head .num{font-size:14px;font-variant-numeric:tabular-nums}
+.tile .track{margin-top:8px}
+.tile-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
+.cost-switch{margin:10px 0 6px}
 .track{position:relative;height:6px;border-radius:3px;background:var(--inset);
  border:1px solid var(--line-2)}
 .fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--c1)}
@@ -1034,21 +1034,49 @@ JS = """
     var n = document.body.dataset.run || '';
     return n ? (sep || '?') + 'run=' + encodeURIComponent(n) : '';
   }
-  function show(which) {
-    var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
-    if (!l0 || !l1) return;
-    l0.hidden = which !== 'l0'; l1.hidden = which !== 'l1';
-    document.querySelectorAll('.viewswitch .btn').forEach(function (b) {
-      b.setAttribute('aria-pressed', String(b.dataset.view === which));
-    });
-    try { sessionStorage.setItem('lockstep-view', which); } catch (err) {}
+  // A view switch is N server-rendered fragments plus a row of buttons; the
+  // client only hides all but one. Membership comes from the BUTTONS, which
+  // the server rendered -- so this is generic over switch groups (the
+  // board/timeline pair, the cost card's every-attempt/kept-only pair)
+  // without a client-side list that could drift from the markup.
+  function show(group, which) {
+    document.querySelectorAll('.viewswitch[data-group="' + group + '"] .btn')
+      .forEach(function (b) {
+        var el = document.getElementById(b.dataset.view);
+        if (el) el.hidden = b.dataset.view !== which;
+        b.setAttribute('aria-pressed', String(b.dataset.view === which));
+      });
+    try { sessionStorage.setItem('lockstep-' + group, which); } catch (err) {}
   }
   window.lockstepShow = show;
+  function pressedAll() {
+    var out = {};
+    document.querySelectorAll('.viewswitch[data-group]').forEach(function (sw) {
+      var b = sw.querySelector('.btn[aria-pressed="true"]');
+      if (b) out[sw.dataset.group] = b.dataset.view;
+    });
+    return out;
+  }
+  function restoreAll(pressed) {
+    // Priority: what was pressed before the swap (survives even with
+    // sessionStorage unavailable), then the stored choice, then the server's
+    // own default (the button it rendered pressed).
+    document.querySelectorAll('.viewswitch[data-group]').forEach(function (sw) {
+      var group = sw.dataset.group;
+      var which = (pressed && pressed[group]) || null;
+      if (!which) { try { which = sessionStorage.getItem('lockstep-' + group); } catch (err) {} }
+      if (!which) {
+        var def = sw.querySelector('.btn[aria-pressed="true"]') || sw.querySelector('.btn');
+        which = def && def.dataset.view;
+      }
+      if (which) show(group, which);
+    });
+  }
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest && ev.target.closest('.viewswitch .btn');
-    if (b) show(b.dataset.view);
+    if (b) show(b.closest('.viewswitch').dataset.group, b.dataset.view);
   });
-  try { show(sessionStorage.getItem('lockstep-view') || 'l0'); } catch (err) { show('l0'); }
+  restoreAll(null);
 
   var echoShown = false;
   // `a` and `r` are the keys the domain expert was taught. The sentence they
@@ -1068,10 +1096,6 @@ JS = """
     var s = window.getSelection();
     return !!(s && !s.isCollapsed && s.anchorNode && wrap.contains(s.anchorNode));
   }
-  function currentView() {
-    var b = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
-    return b ? b.dataset.view : 'l0';
-  }
   function openIds() {
     return Array.prototype.map.call(
       document.querySelectorAll('details[open][id]'), function (d) { return d.id; });
@@ -1087,14 +1111,14 @@ JS = """
   function refresh() {
     if (busy || selecting()) return false;  // never take the page out from under a reader
     busy = true;
-    var view = currentView(), open = openIds();
+    var pressed = pressedAll(), open = openIds();
     var focused = document.activeElement && document.activeElement.id;
     wrap.classList.add('stale');       // hold the previous render, never a skeleton
     fetch('api/state' + runq(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (doc) {
         wrap.innerHTML = doc.html;
-        show(view);
+        restoreAll(pressed);
         open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
         if (focused) { var f = document.getElementById(focused); if (f) f.focus(); }
         if (echoShown) { var e = document.getElementById('key-echo'); if (e) e.hidden = false; }
@@ -1302,32 +1326,44 @@ def _stat_tiles(state: dict, flow: dict | None, run: dict | None, meter: dict) -
         # "node time" is the phrase `cost_report.compact_block` already puts in
         # front of the same person.
         ("node time", mv.format_duration(worked) or "—"),
-        ("agent tasks", str(meter["used"])),
+        None,     # the meter tile renders its own markup
         fourth,
     ]
-    return '<div class="stats">' + "".join(
-        f'<div class="tile"><div class="k">{e(k)}</div><div class="v">{e(v)}</div></div>'
-        for k, v in tiles
-    ) + "</div>"
+    rendered = []
+    for tile in tiles:
+        if tile is None:
+            rendered.append(_meter_tile(meter))
+        else:
+            rendered.append(f'<div class="tile"><div class="k">{e(tile[0])}</div>'
+                            f'<div class="v">{e(tile[1])}</div></div>')
+    return '<div class="stats">' + "".join(rendered) + "</div>"
 
 
-def _meter_card(meter: dict) -> str:
+def _meter_tile(meter: dict) -> str:
+    """The spend meter, inside the "agent tasks" tile (Batch 1, F5/D5): one
+    number per fact — the tile and the meter card were two renderings of the
+    same count, adjacent.
+
+    Everything the card promised moves rather than vanishing: no declared cap
+    means a count with no denominator and no bar (as plan_card does), several
+    segments degrade the ceiling to "of at least N", the fill has no severity
+    ramp (the only colour change is AT or OVER the ceiling, which is
+    mechanical), and the consent sentence — a guide-level promise — lives in
+    the tile foot, adjacent to the denominator it glosses (D5).
+    """
     if meter["cap"] is None:
-        # No cap declared: the count, no denominator, no meter — as plan_card does.
-        return (f'<div class="card"><div class="meter-head"><span class="lab">'
-                f'{e(meter["label"])}</span></div><div class="meter-foot">'
-                f'This flow declares no ceiling, so there is no number to be under.'
-                f'</div></div>')
+        return ('<div class="tile"><div class="k">agent tasks used</div>'
+                f'<div class="v">{meter["used"]}</div>'
+                '<div class="tile-foot">This flow declares no ceiling, so there '
+                'is no number to be under.</div></div>')
     over = " over" if meter["over"] else ""
-    return (
-        '<div class="card"><div class="meter-head">'
-        '<span class="lab">agent tasks used</span>'
-        f'<span class="num">{e(meter["label"].replace("agent tasks used ", ""))}</span></div>'
-        f'<div class="track"><div class="fill{over}" style="width:{meter["pct"]:.1f}%"></div>'
-        '<div class="ceil"></div></div>'
-        '<div class="meter-foot">The ceiling is the number this flow declared — the one '
-        'you agreed to before anything started.</div></div>'
-    )
+    num = meter["label"].replace("agent tasks used ", "")
+    return ('<div class="tile"><div class="k">agent tasks used</div>'
+            f'<div class="v">{e(num)}</div>'
+            f'<div class="track"><div class="fill{over}" style="width:{meter["pct"]:.1f}%"></div>'
+            '<div class="ceil"></div></div>'
+            '<div class="tile-foot">The ceiling is the number this flow declared — '
+            'the one you agreed to before anything started.</div></div>')
 
 
 def spend_lines(run_dir: Path, repo_root: Path, runs_root: Path,
@@ -1498,12 +1534,23 @@ def _cost_card(run_dir: Path, stack: list[dict], usage: dict | None = None) -> s
     else:
         sentence, detail = cost_absence(run_dir, usage)
         out.append(f'<p class="meter-foot" title="{e(detail)}">{e(sentence)}</p>')
-    for mode, title in (("history", "per step, every attempt counted"),
-                        ("head", "per step, kept attempts only")):
+    # ONE disclosure, two views (Batch 1, F6): `history` and `head` are one
+    # fact with a mode, not two facts, and two sibling <details> whose bodies
+    # differ by a column read as two facts. Both bodies are server-rendered;
+    # JS hides one; with JS off both render stacked inside the single
+    # disclosure — the established honest fallback (each body opens with its
+    # own mode tag line, so the stack is legible). `mission_view.cost_lines`
+    # is untouched: the TUI's `c` panel shares it.
+    out.append('<details id="cost-tree"><summary>per step</summary>')
+    out.append('<div class="viewswitch cost-switch" data-group="cost">'
+               '<button class="btn" data-view="cost-history" aria-pressed="true">'
+               'every attempt</button>'
+               '<button class="btn" data-view="cost-head" aria-pressed="false">'
+               'kept only</button></div>')
+    for mode, view_id in (("history", "cost-history"), ("head", "cost-head")):
         body = "\n".join(mv.cost_lines(run_dir, mode=mode, usage=usage))
-        out.append(f'<details id="cost-{mode}"><summary>{e(title)}</summary>'
-                   f"<pre>{e(body)}</pre></details>")
-    out.append("</div>")
+        out.append(f'<pre id="{view_id}">{e(body)}</pre>')
+    out.append("</details></div>")
     return "\n".join(out)
 
 
@@ -1926,7 +1973,6 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         'when something needs you, it happens in the terminal.</p>',
 
         _stat_tiles(state, flow, run, meter),
-        _meter_card(meter),
         '<div class="card"><h2>spend</h2><pre>'
         + e("\n".join(spend_lines(run_dir, repo_root, runs_root,
                                   usage=run, drop=meter["label"])))
@@ -1935,7 +1981,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         _blocker_card(run_dir, state, flow, presence, labels),
 
         '<div class="card"><div class="cardhead"><h2>the steps</h2>'
-        '<div class="viewswitch">'
+        '<div class="viewswitch" data-group="view">'
         '<button class="btn" data-view="l0" aria-pressed="true">board</button>'
         '<button class="btn" data-view="l1" aria-pressed="false">show every step</button>'
         "</div></div>",
