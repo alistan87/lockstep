@@ -6,6 +6,58 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.16.0 — 2026-09-12
+
+The MISSION UX work order (`docs/proposals/mission-ux-work-order.md`),
+built end to end: three batches, three adversarial review passes (26
+findings, all confirmed ones adopted), and the §7 render-and-look step —
+which caught a defect no unit test could see. Closes **S1.5** and builds
+the **blocker-path half of S2** from `upstream-response-mission-scale.md`.
+Contrib + tests + guides only; no frozen surface touched.
+
+**The stopped run tells the truth (Batch 0).** A failed run's clock
+freezes at its last `ended_at` (it grew forever — the live release-cut run
+read "stopped with a problem - 87 h 37 m" and counting), and the pane's
+mirrored clock freezes with it. A failed run gets a **blocker card** above
+the fold: the failing step, the engine's error verbatim and named as the
+machine's words, "tried once" (or "1 of 3 items stopped" for a map — a map
+parent's attempt counter is never incremented), the stalled-behind
+dependency count (per entry, never summed), and the guide's own next step
+as the last line. And the page now asks the engine's one liveness decider
+(`lockstep.state.inspect_lock`): a dead lock over an unfinished run renders
+**"stopped unexpectedly"** — hero, card with the lock's words verbatim,
+chip, rail, and every time surface frozen at the journal's last line —
+instead of a healthy "running" over a corpse, which is what a session-limit
+kill used to look like. A copy that cannot import the package names that
+absence rather than rendering healthy.
+
+**One number per fact (Batch 1).** The spend meter merged into the
+"agent tasks used" tile (bar, ceiling mark, and the consent sentence in the
+tile foot); the two cost disclosures became one, with an
+"every attempt / kept only" switch — both bodies still server-rendered and
+stacked with JavaScript off. The l0/l1 switch machinery generalised to N
+groups, membership derived from the server-rendered buttons.
+
+**Detail on demand (Batch 2, closes S1.5).** Clicking a step's name opens a
+**peek panel** — `/api/node/<id>` grows one `html` field, the same
+`node_drawer` renderers plus the glossed raw-record table, injected
+verbatim into an `<aside>` outside the swapped wrap. Open panels follow a
+live run (swap-only-when-changed, scroll and selection preserved, a
+generation counter against races, transient network failures tolerated);
+no-JS keeps the fragment jump. Above `DRAWER_INLINE_MAX` (30) **settled**
+drawers, the settled ones degrade to a named absence — failed, blocked and
+running drawers keep full bodies at any size, the board's loud-first
+collapse rule applied to L2. Measured: 64,160 → 21,180 B of drawer HTML
+per swap at 120 nodes; sub-threshold renders are byte-identical.
+
+**For contrib consumers:** `cost_report.collect_run` gains an optional
+`now` (default keeps live behaviour) — the seam that lets a surface freeze
+node time for a vanished run. `mission_view` gains `driver_presence`,
+`driver_vanished`, `blocker_summary`, `stalled_behind`.
+`mission_bench` gains the `node_fetch` cold/warm centre;
+`docs/proposals/mockups/make-look-samples.py` renders the three stopped
+states plus an over-threshold run for the look check.
+
 ## 0.15.0 — 2026-09-11
 
 S1.2 (one projection per render) and the environment gate — the two

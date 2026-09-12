@@ -3,7 +3,7 @@ type: plan
 title: "Upstream response: MISSION scale, blocker intelligence, and execution provenance"
 description: Point-by-point disposition of the downstream MISSION feature request filed against lockstep 0.13.0 — one accepted P0 (incremental projections, gated behind a measurement phase), two accepted with scope reductions, one counter-proposal (journal attempt events instead of a new per-attempt manifest artifact), and answers to all five upstream questions. Every source-level claim in the report was verified before classification; all five were accurate.
 resource: docs/proposals/upstream-response-mission-scale.md
-status: S1 (1-4) + S3 engine half BUILT through 0.15.0; S1.5 and the S2/S4 views open
+status: S1 (1-5) + S2 blocker-path view + S3 engine half BUILT through 0.16.0; the rest of the S2/S4 views open
 upstream_baseline: "lockstep 0.13.0 (9bee0c4)"
 ---
 
@@ -313,9 +313,20 @@ adversarial about the CODE and never about the ENVIRONMENT.
 `contrib/portability_check.py` now runs the suite from a clean clone under a
 named interpreter, and doing so is a pre-tag rule.
 
-**Still open, in the reporter's stated priority:** S1.5 (lazy drawers, whose
-guard rail `drawers_unshared` is already pinned so it cannot be built
-carelessly), then the S2/S4 views.
+**S1.5 closed and the S2 blocker path built in 0.16.0** (the mission-ux
+work order, `docs/proposals/mission-ux-work-order.md`): lazy detail landed
+as the peek panel plus a status-aware inline threshold — settled drawers
+degrade past `DRAWER_INLINE_MAX`, the loud minority never does, and the
+`drawers_unshared` guard rail held (the per-click fetch is one node). The
+blocker card carries the failing step, the error verbatim, and the
+stalled-behind dependency count worded exactly as this response required —
+a dependency fact, never a schedule estimate, no invented severity. The
+same batch made a vanished driver render as "stopped unexpectedly" instead
+of a healthy "running" over a corpse.
+
+**Still open:** the rest of the S2 view (condition counts beside the
+ledger line) and the S4 view over the S3 attempt events the engine already
+journals.
 
 **Still worth having from the reporter:** `mission_bench.py --runs-root
 <runs> --json` from the slow machine. Not to choose what to build — the

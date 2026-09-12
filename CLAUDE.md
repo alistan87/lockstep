@@ -97,7 +97,8 @@ python contrib\session_spend.py               # this session: orchestrator trans
 python contrib\mission_bench.py [--sweep]     # what a MISSION render costs per cost centre, in BYTES (Phase 0 of the scale work; --json is sanitized and sendable)
 pwsh -File contrib\cockpit.ps1 -Role mission -Follow   # the status board (spend line + session block)
 pwsh -File contrib\cockpit.ps1 -Tui                    # one process, keyboard drill-down; `c` = cost panel (history <-> head)
-python contrib\mission_server.py                       # the MISSION page: runs rail -> board -> timeline -> step -> raw record; GET only, loopback (?run=<name> picks a past run)
+python contrib\mission_server.py                       # the MISSION page: runs rail -> board -> timeline -> step (peek panel) -> raw record; GET only, loopback (?run=<name> picks a past run)
+python docs\proposals\mockups\make-look-samples.py <dir>  # the render-and-look set: failed / dead-driver / refused / over-threshold pages (screenshot recipe in mockups\README.md)
 pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did that step do that
 ```
 
@@ -176,6 +177,16 @@ a feature over adding a dependency. Full pytest after every change.
   while the journal's status enum is about twice that. Extending GLOSSARY
   to cover `heal-exhausted-pass` and friends would break the cross-surface
   pin it exists to enforce.
+- The MISSION rail is **load-time static** (only `.wrap` is swapped by the
+  poll), so on a page left open the board can change words while the rail
+  row holds its load-time word until a reload. Recorded, not a bug:
+  mission-ux work order §8 Q5 — fixing it means polling the nav, its own
+  change with its own byte cost.
+- `/api/node/<id>` returns `lines` + `raw` AND the `html` panel fragment
+  rendered from them — roughly 2x bytes, and deliberately so: the first two
+  are the route's documented data contract for readers and tools, the third
+  is the page's injection payload (D4 grew the route by one field; shrinking
+  it would be a contract change).
 - The file channel refuses to salvage OR repair a result file holding more
   than one JSON value, any broken span, or trailing bytes — it goes to the
   corrective instead (0.13.0, DEVIATIONS 2026-09-09). Looks like a missed
@@ -285,6 +296,15 @@ what you may say. Three rules that are enforced by code, not discretion:
   blast radius (`--impact`) and reversibility (`--reversible`). The rule is
   symmetric: after a rejection, quote `<run_dir>/rejection.txt` — the human's
   own words — rather than characterising why they said no.
+- **Never let a dead driver read as a healthy run.** The page asks the
+  engine's ONE liveness decider (`lockstep.state.inspect_lock`, via
+  `mission_view.driver_presence`); a dead lock over an unfinished run renders
+  "stopped unexpectedly" — hero, blocker card with the lock's line verbatim,
+  chip, rail — and EVERY time surface freezes at the journal's last line
+  (`collect_run` takes the frozen `now`), because "stopped unexpectedly -
+  9 m" beside a node-time tile still counting is the same lie split across
+  two tiles. `foreign`/`unknown` locks claim nothing; a copy that cannot
+  import the package names the absence instead of rendering healthy.
 - **Never let a missing part of the cockpit read as an empty run.**
   `mission_server.reader_note()` / `mission_view.cost_lines` name the case when
   `contrib/cost_report.py` is absent (or Python < 3.11, so no `tomllib`) or
