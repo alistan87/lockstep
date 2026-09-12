@@ -1443,6 +1443,33 @@ def test_a_refused_run_renders_no_restart_card(tmp_path):
     assert "Ask the assistant to restart it" not in body
 
 
+def test_a_vanished_runs_node_time_freezes_with_its_clock(tmp_path):
+    """§7 render-and-look finding: the hero froze at the journal's last line
+    while the node-time tile and the spend block measured the corpse
+    `running` record against the REAL wall clock — "stopped unexpectedly -
+    9 m" over "node time 30h05m", a contradiction on one screen no unit test
+    saw. Every time surface now freezes off the same presence: `frozen`
+    reaches collect_run's `_running_wall` and the waterfall."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["approve"].update({"status": "done", "ended_at": _iso(11)})
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    with open(run / "events.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": _iso(11), "node": "deliver",
+                             "status": "running"}) + "\n")
+        fh.write(json.dumps({"ts": _iso(16), "kind": "timing",
+                             "node": "deliver"}) + "\n")
+    _hold_lock(run, _dead_pid())
+    body = get(run, "/", tmp_path)[2].decode("utf-8")   # rendered at PAGE_NOW (minute 18)
+    assert "16 m" in body                    # the hero, frozen at the journal tail
+    # produce 7m + render-evidence 1m + deliver frozen at 16-11=5m = 13m;
+    # a live-wall regression reads 9m for deliver and totals 17m
+    assert "13m00s" in body
+    assert "17m00s" not in body
+
+
 def test_the_rail_does_not_say_done_over_a_dead_driver(tmp_path):
     """C4: a driver killed before its first spawn leaves every node pending,
     which the rail's word ladder renders "done" — beside a board saying

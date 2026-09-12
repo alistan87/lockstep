@@ -12,6 +12,7 @@ resource: docs/proposals/mockups/README.md
 | `trace-page-shipped.png` | The board, as a browser renders it. |
 | `trace-page-shipped-timeline.png` | The same page with its script stripped, which is how both views render at once — the timeline and its table twin are visible together. Doubles as proof the no-JS fallback is real. |
 | `trace-page.html` + `.png` | The pre-build **design target** for `PROPOSAL-sssf-adoptions.md` §4.6. Superseded, kept on purpose: rendering it is what caught four layout defects that reading the spec did not, and that is part of the record of how the design was arrived at. Not updated as the page moves. |
+| `make-look-samples.py` | Renders the §7 look set into a directory you pass — the three stopped states side by side (failed, dead-driver, refused; F8's whole point is that they must not be confusable) plus an over-threshold run for the degraded drawers. Output is throwaway, not committed. Its first run caught the vanished run's node-time tile growing against the real wall clock beside a frozen hero — invisible to every unit test. |
 
 Where these differ, the shipped ones are right.
 

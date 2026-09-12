@@ -488,3 +488,10 @@ discipline is the risk.
    fleet cockpit grows a page story, the honest rendering ("driven from
    another tree; liveness unknown from here") is its problem to word, with
    FLEET-OPERATIONS.
+5. The rail refreshes per page load only (Batch 0 review, P3): it lives
+   outside `.wrap`, and `/api/state` swaps only `.wrap` — so on a page left
+   open, the board can flip to "stopped unexpectedly" while the rail row for
+   the same run keeps its load-time word until a manual reload. Pre-existing
+   page design (the rail has always been load-time-static); fixing it means
+   swapping the nav in the poll, which is its own change with its own byte
+   cost. Worth doing if a reader is observed confused by the split.

@@ -306,13 +306,14 @@ def _intervals(run_dir: Path,
         return {}
 
 
-def _collect(run_dir: Path, events: list[dict] | None = None) -> dict | None:
+def _collect(run_dir: Path, events: list[dict] | None = None,
+             now=None) -> dict | None:
     reader, _ = _cost_reader()
     if reader is None:
         return None
     try:
         return reader.collect_run(  # type: ignore[attr-defined]
-            Path(run_dir), reader.load_field_maps(None), events)
+            Path(run_dir), reader.load_field_maps(None), events, now=now)
     except Exception:  # noqa: BLE001
         return None
 
@@ -2108,20 +2109,24 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     # `_collect` for the wall/heal pass, and again inside `_intervals` for the
     # timeline - which was 77% of everything a warm render still touched.
     events = _events(run_dir)
-    run = _collect(run_dir, events)
+    # F8: the engine's one liveness decider, per render. A node recorded
+    # `running` under a dead (or missing) lock is a corpse, and the chip's
+    # pulsing "running" dot over it is the same lie as the hero's — so `live`
+    # is running AND driven, `headline` freezes the clock off the same
+    # presence, and EVERY time surface freezes with it: `frozen` reaches
+    # `collect_run` (node-time tile, spend block) and the waterfall, or the
+    # hero says "stopped unexpectedly - 9 m" over a tile reading "30h05m"
+    # and bars growing to now — found by the §7 render-and-look.
+    presence = mv.driver_presence(run_dir)
+    vanished = mv.driver_vanished(state, presence)
+    last_event_at = (events[-1].get("ts") if events else None)
+    frozen = mv._parse_ts(last_event_at) if vanished else None
+    run = _collect(run_dir, events, now=frozen)
     meter = spend_meter([run] if run else [], [_cap(run_dir)] if run else [])
     chain = chain_chip(run_dir)
     node_ids = list((state.get("nodes") or {}).keys())
     running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
-    # F8: the engine's one liveness decider, per render. A node recorded
-    # `running` under a dead (or missing) lock is a corpse, and the chip's
-    # pulsing "running" dot over it is the same lie as the hero's — so `live`
-    # is running AND driven, and `headline` freezes the clock off the same
-    # presence.
-    presence = mv.driver_presence(run_dir)
-    vanished = mv.driver_vanished(state, presence)
     live = running and not vanished
-    last_event_at = (events[-1].get("ts") if events else None)
     ledger = mv.ledger_summary(run_dir, repo_root=repo_root, state=state)
 
     parts = [
@@ -2167,7 +2172,10 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         # timeline. It used to be read here and again inside `_intervals` and
         # `_heal_marks` - 77% of everything a warm render still touched,
         # measured, and the largest cost left after the caches landed.
-        render_timeline(waterfall(run_dir, repo_root, now=now, events=events)),
+        # `now or frozen`: a vanished run's open bars end at the journal's
+        # last line, exactly as the hero's clock does (None = live wall).
+        render_timeline(waterfall(run_dir, repo_root, now=(now or frozen),
+                                  events=events)),
         "</div>",
 
         _cost_card(run_dir, cost_stack(run), usage=run),

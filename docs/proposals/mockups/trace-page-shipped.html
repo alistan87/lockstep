@@ -24,7 +24,10 @@
  --inset:#0e0f11;      /* evidence, pre blocks, the meter track */
  --line:rgba(255,255,255,.07);
  --line-2:rgba(255,255,255,.045);
+ --raise:#191b1e;      /* one step above --surface: the rail's hover/current (F7) */
  --ink:#fff; --ink-2:#c3c2b7; --muted:#8a8f98;
+ --accent:var(--ink); /* the critical path is chrome, and chrome is ink (F7);
+                         a hue here would be a fifth colour meaning */
  --grid:#232529; --axis:#2e3136;
  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
  --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500;   /* generated from COST_HEX: one source, or the stylesheet and the
@@ -84,6 +87,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
 .dot.good{background:var(--good)}.dot.warn{background:var(--warning)}
 .dot.crit{background:var(--critical)}.dot.run{background:var(--ink)}
+/* the RAIL's word classes (rail rows say ok/bad, chips say good/crit) — used
+   but never defined until the F7 lesson was applied to classes too (P5) */
+.dot.ok{background:var(--good)}.dot.bad{background:var(--critical)}
 .live .dot{animation:pulse 1.8s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
@@ -99,9 +105,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
  padding:14px 16px;margin-bottom:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
 .card>h2,.card .cardhead h2{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 0 10px;
  letter-spacing:.02em}
-.meter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
-.meter-head .lab{color:var(--ink-2);font-size:13px}
-.meter-head .num{font-size:14px;font-variant-numeric:tabular-nums}
+.tile .track{margin-top:8px}
+.tile-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
+.cost-switch{margin:10px 0 6px}
 .track{position:relative;height:6px;border-radius:3px;background:var(--inset);
  border:1px solid var(--line-2)}
 .fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--c1)}
@@ -110,6 +116,13 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .meter-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
 .decide{border-left:2px solid var(--warning)}
 .decide h2{color:var(--warning);font-size:12.5px}
+/* The blocker card (work order Batch 0). --critical is a status step doing
+   status work — a failed step's card — not a categorical as chrome. */
+.blocker{border-left:2px solid var(--critical)}
+.blocker h2{color:var(--critical);font-size:12.5px}
+.blocker .blocker-name{margin:0 0 6px;font-size:13.5px}
+.blocker .blocker-name a{color:var(--ink);text-decoration:none}
+.blocker .blocker-name a:hover{text-decoration:underline}
 /* A question is not a decision, and it is not a severity either, so it takes
    INK rather than a hue. Slot-1 blue here — which is what the first cut used —
    would be the cost stack's "input" colour doing duty as chrome, and a
@@ -218,6 +231,15 @@ pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospa
  padding:10px 12px}
 .feed{display:grid;gap:1px;font-size:12.5px;color:var(--ink-2)}
 .feed div{padding:2px 0}
+/* The peek panel (Batch 2): a non-modal slide-over OUTSIDE .wrap, so the
+   poll's innerHTML swap cannot destroy it. Chrome only — ink and surface. */
+.peek{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);z-index:5;
+ background:var(--surface);border-left:1px solid var(--line);
+ box-shadow:-24px 0 48px rgba(0,0,0,.5);padding:14px 16px;overflow:auto}
+.peek .panel-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.peek .panel-head h2{font-size:13.5px;font-weight:600;margin:0;flex:1;
+ letter-spacing:0}
+.drawer-absent{color:var(--muted);font-size:12.5px;margin:6px 0 2px}
 .foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
 body.offline .live .dot{animation:none;background:var(--muted)}
 @media (min-width:1280px){.wf-plot{--gutter:260px}.wf-track{height:26px}
@@ -228,23 +250,22 @@ body.offline .live .dot{animation:none;background:var(--muted)}
    contexts where a positioned bar says nothing; the twin carries every value a
    bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
 @media print,(forced-colors:active){
- .wf-plot,.stack,.track,.ceil{display:none}
+ .wf-plot,.stack,.track,.ceil,.peek{display:none}
  #l0,#l1{display:block!important}
  .viewswitch{display:none}
 }
 @media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
 </style>
-<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-08-10T14:39:48Z" data-event-cursor="18" data-run="2026-08-08-quarterly-brief-a41c">
+<body data-run-token="2026-08-08-quarterly-brief-a41c:2026-09-12T14:46:34Z" data-event-cursor="1dca11da.1261.0" data-run="2026-08-08-quarterly-brief-a41c">
 <div class="shell"><nav class="side" aria-label="runs">
 <div class="side-h">runs on this machine</div>
-<a class="side-run cur" href="?run=2026-08-08-quarterly-brief-a41c" aria-current="page"><span class="dot warn"></span><span class="side-name">quarterly-brief</span><span class="side-word">07:39 &middot; needs you</span></a>
+<a class="side-run cur" href="?run=2026-08-08-quarterly-brief-a41c" aria-current="page"><span class="dot warn"></span><span class="side-name">quarterly-brief</span><span class="side-word">07:46 &middot; needs you</span></a>
 </nav><div class="wrap"><div class="top"><span class="brand">MISSION</span><span class="runid">2026-08-08-quarterly-brief-a41c</span><span class="spacer"></span><span class="chip"><span class="dot mut"></span>not running</span><span class="chip" title="unchained: 18 events carry no chain digest"><span class="dot warn"></span>unchained — 18 events carry no fingerprint</span></div>
 <p class="stale-note" id="offline-note" role="status" hidden>This page has stopped hearing from the run. What you can see below is the last thing it knew, and it may be out of date — ask the assistant whether the run is still going.</p>
 <p class="hero">step 7 of 9  -  needs you  -  18 m  -  1 rework round  -  your decision is next</p>
 <p class="hero-sub" style="color:var(--warning)">NEEDS YOU &mdash; read the terminal pane.</p>
 <p class="hero-sub">This page only reads files. Decisions are not made here — when something needs you, it happens in the terminal.</p>
-<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">10m00s</div></div><div class="tile"><div class="k">agent tasks</div><div class="v">9</div></div><div class="tile"><div class="k">your decision</div><div class="v">next</div></div></div>
-<div class="card"><div class="meter-head"><span class="lab">agent tasks used</span><span class="num">9 of 25</span></div><div class="track"><div class="fill" style="width:36.0%"></div><div class="ceil"></div></div><div class="meter-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div></div>
+<div class="stats"><div class="tile"><div class="k">step</div><div class="v">7 of 9</div></div><div class="tile"><div class="k">node time</div><div class="v">10m00s</div></div><div class="tile"><div class="k">agent tasks used</div><div class="v">9 of 25</div><div class="track"><div class="fill" style="width:36.0%"></div><div class="ceil"></div></div><div class="tile-foot">The ceiling is the number this flow declared — the one you agreed to before anything started.</div></div><div class="tile"><div class="k">your decision</div><div class="v">next</div></div></div>
 <div class="card"><h2>spend</h2><pre>1 rework round | 10m of node time | tokens: 178,150 in / 22,500 out | $1.66 notional
 running: nothing - waiting or done
 this session: no orchestrator transcript found for this repo</pre></div>
@@ -258,7 +279,7 @@ What this changes if you approve
 --impact      3 files, +214 / -38 lines, one directory
 --reversible  yes - the previous brief is kept in the run folder
 </div><p class="terminal-note" id="terminal-note">This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p><p class="key-echo" id="key-echo" role="status" hidden>This decision happens in your terminal, at the prompt — a to approve, r to send back. Those keys do nothing here, and that is deliberate: nothing but a person at a keyboard can answer.</p></div>
-<div class="card"><div class="cardhead"><h2>the steps</h2><div class="viewswitch"><button class="btn" data-view="l0" aria-pressed="true">board</button><button class="btn" data-view="l1" aria-pressed="false">show every step</button></div></div>
+<div class="card"><div class="cardhead"><h2>the steps</h2><div class="viewswitch" data-group="view"><button class="btn" data-view="l0" aria-pressed="true">board</button><button class="btn" data-view="l1" aria-pressed="false">show every step</button></div></div>
 <div id="l0" class="steps">
 <div class="step"><span class="ico good">✓</span><a class="name" href="#step-draft">draft the sections</a><span class="word">done (sent back once)</span></div>
 <div class="note">two figures disagreed with the source; sent back once</div>
@@ -269,54 +290,52 @@ What this changes if you approve
 <div id="l1">
 <div class="wf-legend"><span><i class="k-crit"></i>the chain everything else waited for</span><span><i class="k-roll"></i>work sent back and files restored</span><span><i class="k-ser"></i>an attempt that was replaced</span></div>
 <div class="wf-plot"><div class="wf-scale">
-<div class="gridline" style="left:1.11%"></div>
-<div class="gridline" style="left:28.89%"></div>
-<div class="gridline" style="left:56.67%"></div>
-<div class="gridline" style="left:84.44%"></div>
-<div class="rollback" style="left:35.00%" title="07:46 — numbers sent work back and the files were restored; bars to the left of this line describe work that was then discarded"></div>
+<div class="gridline" style="left:19.07%"></div>
+<div class="gridline" style="left:46.85%"></div>
+<div class="gridline" style="left:74.63%"></div>
+<div class="rollback" style="left:35.00%" title="07:52 — numbers sent work back and the files were restored; bars to the left of this line describe work that was then discarded"></div>
 </div><div class="wf">
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-plan">plan the brief</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 07:39–07:42 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 07:39–07:42 · 2m30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="plan the brief — done · 07:46–07:49 · 2m30s" style="left:0.00%;width:13.89%"><span class="hint" aria-hidden="true">plan the brief — done · 07:46–07:49 · 2m30s</span></div>
 </div></div>
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-draft">draft the sections</a> <span class="ico mut" title="this step left a note">•</span></span><span class="w">done (sent back once)</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:42–07:46 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:42–07:46 · 3m42s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:47–07:48 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:47–07:48 · 1m12s</span></div>
+<div class="seg ser" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:49–07:52 · 3m42s" style="left:13.89%;width:20.56%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:49–07:52 · 3m42s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="draft the sections — done (sent back once) · 07:54–07:55 · 1m12s" style="left:42.78%;width:6.67%"><span class="hint" aria-hidden="true">draft the sections — done (sent back once) · 07:54–07:55 · 1m12s</span></div>
 </div></div>
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-numbers">check the numbers</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 07:46–07:46 · 6s" style="left:34.44%;width:0.56%"><span class="hint" aria-hidden="true">check the numbers — done · 07:46–07:46 · 6s</span></div>
-<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 07:48–07:49 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 07:48–07:49 · 30s</span></div>
+<div class="seg ser" tabindex="0" role="img" aria-label="check the numbers — done · 07:52–07:52 · 6s" style="left:34.44%;width:0.56%"><span class="hint" aria-hidden="true">check the numbers — done · 07:52–07:52 · 6s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="check the numbers — done · 07:55–07:55 · 30s" style="left:49.44%;width:2.78%"><span class="hint" aria-hidden="true">check the numbers — done · 07:55–07:55 · 30s</span></div>
 </div></div>
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-figures">fix the figures</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 07:49–07:49 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 07:49–07:49 · 12s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="fix the figures — done · 07:55–07:56 · 12s" style="left:52.22%;width:1.11%"><span class="hint" aria-hidden="true">fix the figures — done · 07:55–07:56 · 12s</span></div>
 </div></div>
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-evidence">write the evidence</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 07:49–07:49 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 07:49–07:49 · 30s</span></div>
+<div class="seg good" tabindex="0" role="img" aria-label="write the evidence — done · 07:56–07:56 · 30s" style="left:53.33%;width:2.78%"><span class="hint" aria-hidden="true">write the evidence — done · 07:56–07:56 · 30s</span></div>
 </div></div>
 <div class="wf-row crit"><div class="wf-lab"><span class="n"><span class="ico good">✓</span><a href="#step-render">render the appendix</a></span><span class="w">done</span></div><div class="wf-track">
-<div class="seg good end" tabindex="0" role="img" aria-label="render the appendix — done · 07:49–07:51 · 1m18s" style="left:56.11%;width:7.22%"><span class="hint" aria-hidden="true">render the appendix — done · 07:49–07:51 · 1m18s</span></div>
+<div class="seg good end" tabindex="0" role="img" aria-label="render the appendix — done · 07:56–07:57 · 1m18s" style="left:56.11%;width:7.22%"><span class="hint" aria-hidden="true">render the appendix — done · 07:56–07:57 · 1m18s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico warn">⊗</span><a href="#step-approve">approve the brief</a></span><span class="w">needs you</span></div><div class="wf-track">
-<div class="seg warn open inside" tabindex="0" role="img" aria-label="approve the brief — needs you · 07:51–now · 6m36s" style="left:63.33%;width:36.67%"><span class="hint" aria-hidden="true">approve the brief — needs you · 07:51–now · 6m36s</span><span class="tip">6m36s</span></div>
+<div class="seg warn open inside" tabindex="0" role="img" aria-label="approve the brief — needs you · 07:57–now · 6m36s" style="left:63.33%;width:36.67%"><span class="hint" aria-hidden="true">approve the brief — needs you · 07:57–now · 6m36s</span><span class="tip">6m36s</span></div>
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">○</span><a href="#step-publish">publish to the drive</a></span><span class="w">waiting</span></div><div class="wf-track">
 </div></div>
 <div class="wf-row"><div class="wf-lab"><span class="n"><span class="ico mut">⊘</span><a href="#step-notify">notify the team</a></span><span class="w">not needed</span></div><div class="wf-track skip">
 </div></div>
 </div><div class="wf-axis">
-<span class="tick" style="left:1.11%">07:40</span>
-<span class="tick" style="left:28.89%">07:45</span>
-<span class="tick" style="left:56.67%">07:50</span>
-<span class="tick" style="left:84.44%">07:55</span>
+<span class="tick" style="left:19.07%">07:50</span>
+<span class="tick" style="left:46.85%">07:55</span>
+<span class="tick" style="left:74.63%">08:00</span>
 </div></div>
 <details id="table-twin" open><summary>the same thing as a table</summary><table>
 <tr><th>step</th><th>state</th><th class="n">started</th><th class="n">worked for</th><th class="n">tries</th></tr>
-<tr><td>plan the brief</td><td>done</td><td class="n">07:39</td><td class="n">2m30s</td><td class="n">1</td></tr>
-<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>done (sent back once)</td><td class="n">07:42</td><td class="n">4m54s</td><td class="n">2</td></tr>
-<tr><td>check the numbers</td><td>done</td><td class="n">07:46</td><td class="n">36s</td><td class="n">2</td></tr>
-<tr><td>fix the figures</td><td>done</td><td class="n">07:49</td><td class="n">12s</td><td class="n">1</td></tr>
-<tr><td>write the evidence</td><td>done</td><td class="n">07:49</td><td class="n">30s</td><td class="n">1</td></tr>
-<tr><td>render the appendix</td><td>done</td><td class="n">07:49</td><td class="n">1m18s</td><td class="n">1</td></tr>
-<tr><td>approve the brief</td><td>needs you</td><td class="n">07:51</td><td class="n">6m36s</td><td class="n">1</td></tr>
+<tr><td>plan the brief</td><td>done</td><td class="n">07:46</td><td class="n">2m30s</td><td class="n">1</td></tr>
+<tr><td>draft the sections<div class="note">two figures disagreed with the source; sent back once</div></td><td>done (sent back once)</td><td class="n">07:49</td><td class="n">4m54s</td><td class="n">2</td></tr>
+<tr><td>check the numbers</td><td>done</td><td class="n">07:52</td><td class="n">36s</td><td class="n">2</td></tr>
+<tr><td>fix the figures</td><td>done</td><td class="n">07:55</td><td class="n">12s</td><td class="n">1</td></tr>
+<tr><td>write the evidence</td><td>done</td><td class="n">07:56</td><td class="n">30s</td><td class="n">1</td></tr>
+<tr><td>render the appendix</td><td>done</td><td class="n">07:56</td><td class="n">1m18s</td><td class="n">1</td></tr>
+<tr><td>approve the brief</td><td>needs you</td><td class="n">07:57</td><td class="n">6m36s</td><td class="n">1</td></tr>
 <tr><td>publish to the drive</td><td>waiting</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 <tr><td>notify the team</td><td>not needed</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
 </table></details></div>
@@ -333,8 +352,11 @@ What this changes if you approve
 <span><i class="sw" style="background:var(--c3)"></i>cache read 69,000</span>
 <span><i class="sw" style="background:var(--c4)"></i>cache write 10,200</span>
 </div>
-<details id="cost-history"><summary>per step, every attempt counted</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m01s
+<details id="cost-tree"><summary>per step</summary>
+<div class="viewswitch cost-switch" data-group="cost"><button class="btn" data-view="cost-history" aria-pressed="true">every attempt</button><button class="btn" data-view="cost-head" aria-pressed="false">kept only</button></div>
+<pre id="cost-history">✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
   (history: every attempt is counted)
+  (cache: 87% read (69k read / 10.2k written))
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
     ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
@@ -344,9 +366,10 @@ What this changes if you approve
     ✓ render    harness  claude-opus-5  $0.08  1m18s
     ⊗ approve   ?        needs you
     ○ publish   shell    -
-    ⊘ notify    shell    not needed</pre></details>
-<details id="cost-head"><summary>per step, kept attempts only</summary><pre>✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m01s
+    ⊘ notify    shell    not needed</pre>
+<pre id="cost-head">✗ quarterly-brief  7/9 · 1✗ · $1.66 · 18m00s
   (head: kept attempts only)
+  (cache: 87% read (69k read / 10.2k written))
 
     ✓ plan      harness  claude-opus-5  $0.31  2m30s
     ✓ draft     harness  claude-opus-5  $0.94  ↻1  4m54s
@@ -356,22 +379,22 @@ What this changes if you approve
     ✓ render    harness  claude-opus-5  $0.08  1m18s
     ⊗ approve   ?        needs you
     ○ publish   shell    -
-    ⊘ notify    shell    not needed</pre></details>
-</div>
+    ⊘ notify    shell    not needed</pre>
+</details></div>
 <div class="card"><h2>ACTIVITY</h2><pre>needs you - nothing is spending</pre></div>
 <div class="card"><h2>what just happened</h2><div class="feed" id="feed">
-<div>07:47  draft the sections  running</div>
-<div>07:47  check the numbers  done</div>
-<div>07:48  draft the sections  done</div>
-<div>07:48  check the numbers  running</div>
-<div>07:49  check the numbers  done</div>
-<div>07:49  fix the figures  running</div>
-<div>07:49  fix the figures  done</div>
-<div>07:49  write the evidence  running</div>
-<div>07:49  write the evidence  done</div>
-<div>07:49  render the appendix  running</div>
-<div>07:51  render the appendix  done</div>
-<div>07:51  approve the brief  running</div>
+<div>07:54  draft the sections  running</div>
+<div>07:54  check the numbers  done</div>
+<div>07:55  draft the sections  done</div>
+<div>07:55  check the numbers  running</div>
+<div>07:55  check the numbers  done</div>
+<div>07:55  fix the figures  running</div>
+<div>07:56  fix the figures  done</div>
+<div>07:56  write the evidence  running</div>
+<div>07:56  write the evidence  done</div>
+<div>07:56  render the appendix  running</div>
+<div>07:57  render the appendix  done</div>
+<div>07:57  approve the brief  running</div>
 </div>
 <details id="raw-record"><summary>show the raw record</summary><table>
 <tr><th>term</th><th>what it means</th><th>value</th></tr>
@@ -384,8 +407,15 @@ What this changes if you approve
 <div class="card"><h2>what happened at each step</h2>
 <details id="step-plan"><summary>plan the brief</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-10T14:39:48Z
-  ended_at   : 2026-08-10T14:42:18Z
+  started_at : 2026-09-12T14:46:34Z
+  ended_at   : 2026-09-12T14:49:04Z
+
+  agent
+    asked for  : claude | no model pinned in the stanza
+    answered by: claude-opus-5
+    tool calls : not reported by this harness
+    tokens     : 38,200 in / 4,100 out / 12,000 cached
+    cost       : $0.31 notional
 
   artifacts
     argv.json                          50 bytes
@@ -394,8 +424,15 @@ What this changes if you approve
 <details id="step-draft"><summary>draft the sections</summary><pre>  state      : done
   attempts   : 2
   rework     : round 1
-  started_at : 2026-08-10T14:42:18Z
-  ended_at   : 2026-08-10T14:48:42Z
+  started_at : 2026-09-12T14:49:04Z
+  ended_at   : 2026-09-12T14:55:28Z
+
+  agent
+    asked for  : claude | no model pinned in the stanza
+    answered by: claude-opus-5
+    tool calls : not reported by this harness
+    tokens     : 91,400 in / 11,800 out / 41,000 cached
+    cost       : $0.94 notional
 
   artifacts
     argv.json                          50 bytes
@@ -404,8 +441,15 @@ What this changes if you approve
     stdout.log                        234 bytes</pre></details>
 <details id="step-numbers"><summary>check the numbers</summary><pre>  state      : done
   attempts   : 2
-  started_at : 2026-08-10T14:46:00Z
-  ended_at   : 2026-08-10T14:49:12Z
+  started_at : 2026-09-12T14:52:46Z
+  ended_at   : 2026-09-12T14:55:58Z
+
+  agent
+    asked for  : claude | no model pinned in the stanza
+    answered by: claude-opus-5
+    tool calls : not reported by this harness
+    tokens     : 27,900 in / 3,300 out / 9,000 cached
+    cost       : $0.22 notional
 
   latest verdict (lossy - per-round truth is in the rotated files)
     pass
@@ -416,8 +460,15 @@ What this changes if you approve
     stdout.log                        232 bytes</pre></details>
 <details id="step-figures"><summary>fix the figures</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-10T14:49:12Z
-  ended_at   : 2026-08-10T14:49:24Z
+  started_at : 2026-09-12T14:55:58Z
+  ended_at   : 2026-09-12T14:56:10Z
+
+  agent
+    asked for  : claude | no model pinned in the stanza
+    answered by: claude-opus-5
+    tool calls : not reported by this harness
+    tokens     : 12,050 in / 1,900 out / 4,000 cached
+    cost       : $0.11 notional
 
   artifacts
     argv.json                          50 bytes
@@ -425,15 +476,22 @@ What this changes if you approve
     stdout.log                        231 bytes</pre></details>
 <details id="step-evidence"><summary>write the evidence</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-10T14:49:24Z
-  ended_at   : 2026-08-10T14:49:54Z
+  started_at : 2026-09-12T14:56:10Z
+  ended_at   : 2026-09-12T14:56:40Z
 
   artifacts
     result.txt                          4 bytes</pre></details>
 <details id="step-render"><summary>render the appendix</summary><pre>  state      : done
   attempts   : 1
-  started_at : 2026-08-10T14:49:54Z
-  ended_at   : 2026-08-10T14:51:12Z
+  started_at : 2026-09-12T14:56:40Z
+  ended_at   : 2026-09-12T14:57:58Z
+
+  agent
+    asked for  : claude | no model pinned in the stanza
+    answered by: claude-opus-5
+    tool calls : not reported by this harness
+    tokens     : 8,600 in / 1,400 out / 3,000 cached
+    cost       : $0.08 notional
 
   artifacts
     argv.json                          50 bytes
@@ -441,7 +499,10 @@ What this changes if you approve
     stdout.log                        230 bytes</pre></details>
 <details id="step-approve"><summary>approve the brief</summary><pre>  state      : needs you
   attempts   : 1
-  started_at : 2026-08-10T14:51:12Z
+  started_at : 2026-09-12T14:57:58Z
+
+  agent
+    tool calls : not reported by this harness
 
   artifacts
     result.txt                          4 bytes</pre></details>
@@ -457,6 +518,7 @@ What this changes if you approve
     result.txt                          4 bytes</pre></details>
 </div>
 <p class="foot">This page only reads files. It never changes the run.</p></div></div>
+<aside id="peek" class="peek" role="complementary" aria-label="step detail" hidden></aside>
 <script>
 (function () {
   var wrap = document.querySelector('.wrap');
@@ -468,21 +530,49 @@ What this changes if you approve
     var n = document.body.dataset.run || '';
     return n ? (sep || '?') + 'run=' + encodeURIComponent(n) : '';
   }
-  function show(which) {
-    var l0 = document.getElementById('l0'), l1 = document.getElementById('l1');
-    if (!l0 || !l1) return;
-    l0.hidden = which !== 'l0'; l1.hidden = which !== 'l1';
-    document.querySelectorAll('.viewswitch .btn').forEach(function (b) {
-      b.setAttribute('aria-pressed', String(b.dataset.view === which));
-    });
-    try { sessionStorage.setItem('lockstep-view', which); } catch (err) {}
+  // A view switch is N server-rendered fragments plus a row of buttons; the
+  // client only hides all but one. Membership comes from the BUTTONS, which
+  // the server rendered -- so this is generic over switch groups (the
+  // board/timeline pair, the cost card's every-attempt/kept-only pair)
+  // without a client-side list that could drift from the markup.
+  function show(group, which) {
+    document.querySelectorAll('.viewswitch[data-group="' + group + '"] .btn')
+      .forEach(function (b) {
+        var el = document.getElementById(b.dataset.view);
+        if (el) el.hidden = b.dataset.view !== which;
+        b.setAttribute('aria-pressed', String(b.dataset.view === which));
+      });
+    try { sessionStorage.setItem('lockstep-' + group, which); } catch (err) {}
   }
   window.lockstepShow = show;
+  function pressedAll() {
+    var out = {};
+    document.querySelectorAll('.viewswitch[data-group]').forEach(function (sw) {
+      var b = sw.querySelector('.btn[aria-pressed="true"]');
+      if (b) out[sw.dataset.group] = b.dataset.view;
+    });
+    return out;
+  }
+  function restoreAll(pressed) {
+    // Priority: what was pressed before the swap (survives even with
+    // sessionStorage unavailable), then the stored choice, then the server's
+    // own default (the button it rendered pressed).
+    document.querySelectorAll('.viewswitch[data-group]').forEach(function (sw) {
+      var group = sw.dataset.group;
+      var which = (pressed && pressed[group]) || null;
+      if (!which) { try { which = sessionStorage.getItem('lockstep-' + group); } catch (err) {} }
+      if (!which) {
+        var def = sw.querySelector('.btn[aria-pressed="true"]') || sw.querySelector('.btn');
+        which = def && def.dataset.view;
+      }
+      if (which) show(group, which);
+    });
+  }
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest && ev.target.closest('.viewswitch .btn');
-    if (b) show(b.dataset.view);
+    if (b) show(b.closest('.viewswitch').dataset.group, b.dataset.view);
   });
-  try { show(sessionStorage.getItem('lockstep-view') || 'l0'); } catch (err) { show('l0'); }
+  restoreAll(null);
 
   var echoShown = false;
   // `a` and `r` are the keys the domain expert was taught. The sentence they
@@ -495,16 +585,68 @@ What this changes if you approve
   });
 
   var token = document.body.dataset.runToken || '';
-  var cursor = parseInt(document.body.dataset.eventCursor || '0', 10);
+  var cursor = document.body.dataset.eventCursor || '0';  // opaque: echoed, never parsed
   var quiet = 0, fails = 0, busy = false, dirty = false;
 
-  function selecting() {
-    var s = window.getSelection();
-    return !!(s && !s.isCollapsed && s.anchorNode && wrap.contains(s.anchorNode));
+  // ---- the peek panel (Batch 2, S1.5). Injects the SERVER-rendered
+  // fragment from /api/node verbatim; renders no word, formats nothing.
+  var panel = document.getElementById('peek');
+  var panelNode = null, panelHtml = '', panelFrom = null;
+  function closePanel() {
+    if (!panel || panel.hidden) return;
+    panel.hidden = true; panelNode = null; panelHtml = '';
+    if (panelFrom && document.contains(panelFrom)) panelFrom.focus();
+    panelFrom = null;
   }
-  function currentView() {
-    var b = document.querySelector('.viewswitch .btn[aria-pressed="true"]');
-    return b ? b.dataset.view : 'l0';
+  function fetchPanel(id, focusIn) {
+    fetch('api/node/' + encodeURIComponent(id) + runq(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
+      .then(function (doc) {
+        if (doc.token !== token) return closePanel();
+        panelNode = id;
+        // Swap only when the fragment actually CHANGED: an innerHTML swap
+        // resets the reader's scroll, at 1 Hz on a live run, into a <pre>
+        // that is often hundreds of lines.
+        if (doc.html !== panelHtml) {
+          var top = panel.scrollTop;
+          panel.innerHTML = doc.html;
+          panelHtml = doc.html;
+          panel.scrollTop = top;
+        }
+        if (panel.hidden) panel.hidden = false;
+        if (focusIn) {
+          var c = document.getElementById('panel-close');
+          if (c) c.focus();
+        }
+      })
+      .catch(function () { closePanel(); });
+  }
+  function openPanel(id, invoker) {
+    if (!panel) return;
+    panelFrom = invoker || document.activeElement;
+    fetchPanel(id, true);
+  }
+  document.addEventListener('click', function (ev) {
+    if (ev.target.closest && ev.target.closest('#panel-close')) { closePanel(); return; }
+    var a = ev.target.closest && ev.target.closest('a[href^="#step-"]');
+    if (a && wrap.contains(a)) {
+      // No-JS keeps the fragment jump to the inline drawer; with JS the same
+      // link opens the panel and the reader never loses their place.
+      ev.preventDefault();
+      openPanel(a.getAttribute('href').slice('#step-'.length), a);
+    }
+  });
+  addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') closePanel();
+  });
+
+  function selecting() {
+    // The panel lives OUTSIDE .wrap, so wrap.contains alone would never
+    // protect a selection made in it (§6.1) - and the panel's own re-fetch
+    // rides behind the same guard.
+    var s = window.getSelection();
+    if (!s || s.isCollapsed || !s.anchorNode) return false;
+    return wrap.contains(s.anchorNode) || !!(panel && panel.contains(s.anchorNode));
   }
   function openIds() {
     return Array.prototype.map.call(
@@ -521,17 +663,20 @@ What this changes if you approve
   function refresh() {
     if (busy || selecting()) return false;  // never take the page out from under a reader
     busy = true;
-    var view = currentView(), open = openIds();
+    var pressed = pressedAll(), open = openIds();
     var focused = document.activeElement && document.activeElement.id;
     wrap.classList.add('stale');       // hold the previous render, never a skeleton
     fetch('api/state' + runq(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (doc) {
         wrap.innerHTML = doc.html;
-        show(view);
+        restoreAll(pressed);
         open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
         if (focused) { var f = document.getElementById(focused); if (f) f.focus(); }
         if (echoShown) { var e = document.getElementById('key-echo'); if (e) e.hidden = false; }
+        // An open panel follows the run: re-fetched after each successful
+        // swap, behind the same selecting() guard, swap-only-when-changed.
+        if (panelNode && panel && !panel.hidden) fetchPanel(panelNode, false);
       })
       .catch(function () {})
       .then(function () { wrap.classList.remove('stale'); busy = false; });
@@ -549,7 +694,9 @@ What this changes if you approve
         // leave the client asking for `after=400` of a twelve-event run, which
         // is the exact failure the run token exists to prevent.
         if (doc.token !== token) {
-          token = doc.token; cursor = 0; quiet = 0; dirty = true;
+          token = doc.token; cursor = '0'; quiet = 0; dirty = true;
+          closePanel();   // it described the OLD run; a same-named step in
+                          // the new one would wear its clothes
           if (refresh()) { dirty = false; }
           return;
         }
@@ -563,7 +710,13 @@ What this changes if you approve
           if (refresh()) { dirty = false; quiet = 0; }
         }
       })
-      .catch(function () { if (++fails >= 3) { offline(true); } });
+      .catch(function (status) {
+        // A 404 means the CURSOR was rejected - e.g. a page open across a
+        // server upgrade still holding a pre-S1.1 integer. Reset it, or the
+        // page sits OFFLINE over live data until someone reloads.
+        if (status === 404) { cursor = '0'; }
+        if (++fails >= 3) { offline(true); }
+      });
   }
   setInterval(tick, 1000);
 })();

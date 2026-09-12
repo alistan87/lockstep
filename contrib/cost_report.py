@@ -828,11 +828,17 @@ def read_state(run_dir: Path, retries: int = 3) -> dict | None:
 
 
 def collect_run(run_dir: Path, maps: dict[str, dict[str, str]],
-                events: list[dict] | None = None) -> dict:
+                events: list[dict] | None = None,
+                now: datetime | None = None) -> dict:
     """S1.2: `events` lets a caller that has already parsed the journal hand
     it over. The MISSION page parses it for the feed and the timeline, and
     this read it a THIRD time for the wall/heal pass. `None` keeps the
-    standalone behaviour every other caller (and the CLI) relies on."""
+    standalone behaviour every other caller (and the CLI) relies on.
+
+    `now` reaches `_running_wall` only: the page passes the journal's last
+    timestamp for a run whose driver vanished, so a corpse `running` record
+    stops growing a node-time figure against the real wall clock. `None`
+    (every other caller) keeps the live behaviour."""
     state = read_state(run_dir)
     if state is None:
         raise FileNotFoundError(f"{run_dir}: state.json unreadable")
@@ -862,7 +868,8 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]],
             "status": status,
             "attempts": attempts,
             "heal_rounds": heals.get(node_id, 0),
-            "wall_s": wall.get(node_id, _running_wall(rec) if status == RUNNING else None),
+            "wall_s": wall.get(node_id,
+                               _running_wall(rec, now) if status == RUNNING else None),
             **{f: tokens["sums"].get(f) for f in KNOWN_FIELDS},
             # The history/head split and the recorded models (None, never 0,
             # where nothing was reported — same policy as the flat fields).
@@ -892,14 +899,22 @@ def collect_run(run_dir: Path, maps: dict[str, dict[str, str]],
     }
 
 
-def _running_wall(rec: dict) -> float | None:
+def _running_wall(rec: dict, now: datetime | None = None) -> float | None:
     """Elapsed-so-far for a node with no terminal transition yet. events.jsonl
     carries no end timestamp for it — by definition — so this is the one place
-    wall time comes from the record and `now`."""
+    wall time comes from the record and `now`.
+
+    `now` is overridable for the same reason `mission_view.headline` freezes
+    its clock: a run whose driver VANISHED has nodes recorded `running` that
+    are corpses, and measuring them against the real wall grew a "node time"
+    figure forever beside a hero frozen at the journal's last line — found by
+    the §7 render-and-look, invisible to every unit test (mission-ux Batch 0
+    look pass)."""
     t = _ts(rec.get("started_at", "") or "")
     if t is None:
         return None
-    now = datetime.now(timezone.utc)
+    if now is None:
+        now = datetime.now(timezone.utc)
     if t.tzinfo is None:
         t = t.replace(tzinfo=timezone.utc)
     return max(0.0, (now - t).total_seconds())
