@@ -258,9 +258,16 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None, *,
         # segment-spanning, and cross-segment elapsed is §8 Q3.
         until = now or datetime.now(timezone.utc)
         if vanished:
+            # No parseable journal tail (empty journal, torn line) falls to
+            # the last ended_at rather than the wall clock — a growing number
+            # beside "stopped unexpectedly" would be F1's lie wearing F8's
+            # word (Batch 0 review, P1).
             stamp = _parse_ts(last_event_at)
+            ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
             if stamp:
                 until = stamp
+            elif ends:
+                until = max(ends)
         elif total and not running and not blocked and (failed or settled == total):
             ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
             if ends:
@@ -925,6 +932,14 @@ def needs_you(state: dict | None) -> bool:
 # ------------------------------------------------- blockers and the driver
 # (mission-ux work order, Batch 0: F2/F8, decisions D6/D8)
 
+# One constant shared by the code and its test, so the named absence cannot
+# drift out from under the pin (Batch 0 review, C6).
+PRESENCE_UNAVAILABLE_LINE = (
+    "whether a driver is alive cannot be checked from this copy — the "
+    "lockstep package is not importable here"
+)
+
+
 def driver_presence(run_dir: Path) -> dict | None:
     """What `<run_dir>/lock` says about the driver, via the engine's ONE
     decider — `lockstep.state.inspect_lock`, read-only and extracted from
@@ -942,12 +957,13 @@ def driver_presence(run_dir: Path) -> dict | None:
         try:
             from lockstep.state import inspect_lock
         except ImportError:
-            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+            fallback = str(Path(__file__).resolve().parents[1] / "src")
+            if fallback not in sys.path:   # once — this runs per render, forever
+                sys.path.insert(0, fallback)
             from lockstep.state import inspect_lock
     except Exception:  # noqa: BLE001 - a copy without the package is a fact, not a crash
         return {"state": "unavailable", "pid": None, "hostname": None,
-                "line": "whether a driver is alive cannot be checked from this "
-                        "copy — the lockstep package is not importable here"}
+                "line": PRESENCE_UNAVAILABLE_LINE}
     try:
         info = inspect_lock(Path(run_dir))
     except Exception:  # noqa: BLE001 - a view never raises
@@ -1025,32 +1041,46 @@ def blocker_summary(run_dir: Path, state: dict, flow: dict | None, *,
                     labels: dict[str, str] | None = None) -> list[dict] | None:
     """One entry per failed node, mechanical fields only: human label, the
     engine's error VERBATIM, attempt count, stalled-behind count (None with
-    no flow copy — a refusal to guess, never a zero), and whether anything
-    else is still running (the card's header is liveness-aware, A3).
+    no flow copy — a refusal to guess, never a zero), map item counts, and
+    whether anything else is still running (the card's header is
+    liveness-aware, A3). None when nothing failed.
 
-    None when nothing failed. A failed node the engine has a PENDING heal
-    round for is excluded: the run will retry it on this drive, and a card
-    for a self-recovering condition is a false alarm — the DE guide already
-    separates "sent back for rework" from "stopped with a problem".
+    A `failed` status is TERMINAL for the drive, and deliberately not
+    filtered on `heal_pending` (Batch 0 review, C1): a failed MAP node keeps
+    its heal signal unconsumed by design (`_run_map` consumes it only when
+    the whole fan-out finishes), so excluding it hid the card for exactly
+    the failed-map shape — permanently, until a resume. The self-recovering
+    state the exclusion imagined renders as `pending`/`running` ("sent back
+    for rework"), never `failed`.
+
+    Map awareness (C2): a map parent's `attempts` is never incremented —
+    only per-item counts are — so the card derives its facts from `items`
+    when they exist rather than saying "never started" beside the map's own
+    item error.
     """
     nodes = state.get("nodes") or {}
-    healing = state.get("heal_pending") or {}
-    failed = [(nid, r) for nid, r in nodes.items()
-              if r.get("status") == "failed" and nid not in healing]
+    failed = [(nid, r) for nid, r in nodes.items() if r.get("status") == "failed"]
     if not failed:
         return None
     if labels is None:
         labels = load_labels(Path(run_dir))
     behind = stalled_behind(flow, state)
     others_running = any(r.get("status") == "running" for r in nodes.values())
-    return [{
-        "node_id": nid,
-        "label": label_for(labels, nid),
-        "error": rec.get("error") or "",
-        "attempts": int(rec.get("attempts") or 0),
-        "stalled": behind.get(nid) if flow else None,
-        "others_running": others_running,
-    } for nid, rec in failed]
+    out = []
+    for nid, rec in failed:
+        items = rec.get("items") or {}
+        out.append({
+            "node_id": nid,
+            "label": label_for(labels, nid),
+            "error": rec.get("error") or "",
+            "attempts": int(rec.get("attempts") or 0),
+            "items_total": len(items),
+            "items_failed": sum(1 for i in items.values()
+                                if i.get("status") == "failed"),
+            "stalled": behind.get(nid) if flow else None,
+            "others_running": others_running,
+        })
+    return out
 
 
 # --------------------------------------------------- questions and evidence

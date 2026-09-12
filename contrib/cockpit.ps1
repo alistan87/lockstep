@@ -455,7 +455,7 @@ function Get-HeadlineLine {
             }
             elseif ($blocked.Count) { 'needs you' }
             elseif ($running.Count) { 'running' }
-            elseif ($settled -eq $total) { 'done' }
+            elseif ($total -and $settled -eq $total) { 'done' }
             else { 'waiting' }
 
   # Wall time from the run's own start stamp: the DE asks "how long has this
@@ -485,7 +485,9 @@ function Get-HeadlineLine {
           if ($last) { $until = $last }
         }
       }
-      $mins = [int]($until - $began).TotalMinutes
+      # Floor, not [int]'s round-half-even: Python floors, and 89.5 minutes
+      # must not read "1 h 30 m" in the pane and "89 m" on the page.
+      $mins = [int][Math]::Floor(($until - $began).TotalMinutes)
       if ($mins -lt 0) { $mins = 0 }
       $parts += if ($mins -ge 90) { "$([int]($mins / 60)) h $($mins % 60) m" } else { "$mins m" }
     } catch { }

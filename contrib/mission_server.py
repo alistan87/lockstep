@@ -850,6 +850,9 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
 .dot.good{background:var(--good)}.dot.warn{background:var(--warning)}
 .dot.crit{background:var(--critical)}.dot.run{background:var(--ink)}
+/* the RAIL's word classes (rail rows say ok/bad, chips say good/crit) — used
+   but never defined until the F7 lesson was applied to classes too (P5) */
+.dot.ok{background:var(--good)}.dot.bad{background:var(--critical)}
 .live .dot{animation:pulse 1.8s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
@@ -1507,8 +1510,15 @@ def _blocker_card(run_dir: Path, state: dict, flow: dict | None,
     a card that names a problem without naming whose move it is fails the
     test the decision card passes.
     """
+    # A refused run's headline says "refused: …" and nothing is going to run;
+    # a card saying "ask the assistant to restart it" beside that would be
+    # two contradictory instructions (Batch 0 review, P2). The record is
+    # cleared by the next drive, so this guard never outlives its truth.
+    if state.get("terminal"):
+        return ""
     out: list[str] = []
-    if mv.driver_vanished(state, presence):
+    vanished = mv.driver_vanished(state, presence)
+    if vanished:
         out.append(
             '<div class="card blocker"><h2>✗ stopped unexpectedly</h2>'
             '<p class="hero-sub">The tool driving this run is gone — nothing is '
@@ -1527,8 +1537,13 @@ def _blocker_card(run_dir: Path, state: dict, flow: dict | None,
 
     blockers = mv.blocker_summary(run_dir, state, flow, labels=labels)
     if blockers:
+        # `others_running` comes from state.json's `running` records — the
+        # exact corpse records F8 distrusts — so a vanished driver forces the
+        # quiet header: "nothing is being worked on" stacked above "other
+        # work continues" would be a one-screen contradiction (review, C3).
         head = ("a step stopped, other work continues"
-                if blockers[0]["others_running"] else "stopped with a problem")
+                if blockers[0]["others_running"] and not vanished
+                else "stopped with a problem")
         parts = [f'<div class="card blocker"><h2>✗ {e(head)}</h2>']
         for b in blockers:
             parts.append(f'<p class="blocker-name"><a href="#step-{e(b["node_id"])}">'
@@ -1539,7 +1554,12 @@ def _blocker_card(run_dir: Path, state: dict, flow: dict | None,
             else:
                 parts.append('<p class="hero-sub">No reason was recorded for '
                              'this stop.</p>')
-            facts = [mv.tried_phrase(b["attempts"])]
+            # A map parent's `attempts` is never incremented (review, C2):
+            # its facts are its items', in the words node_word already uses.
+            if b["items_total"]:
+                facts = [f'{b["items_failed"]} of {b["items_total"]} items stopped']
+            else:
+                facts = [mv.tried_phrase(b["attempts"])]
             if b["stalled"] is None:
                 pass  # no flow copy: refuse to guess, never say zero
             elif b["stalled"] == 0:
@@ -1883,6 +1903,10 @@ def _rail_row(d: Path) -> dict | None:
         "when": mv.format_clock(state.get("started_at")) or "",
         "day": (state.get("started_at") or "")[:10],
         "word": word, "cls": cls,
+        # cacheable (derived from this state.json); read by _true_rail_word,
+        # whose lock check must stay OUTSIDE the cache
+        "unfinished": any(r.get("status") in ("pending", "running", "blocked")
+                          for r in nodes),
     }
     with _RAIL_LOCK:
         _RAIL_ROWS[key] = (fingerprint, dict(row))
@@ -1892,20 +1916,27 @@ def _rail_row(d: Path) -> dict | None:
     return row
 
 
-def _true_running_word(d: Path, row: dict) -> dict:
-    """A rail row that would say `running` is re-checked against the lock,
-    LIVE and outside the cache: presence changes with no state.json write, so
-    a cached "running" over a dead driver would never correct itself — and a
-    rail saying "running" beside a board saying "stopped unexpectedly" about
-    the SAME run is two surfaces disagreeing on one page (F8). Only rows
-    already wearing the running word pay the lock read, which is at most the
-    handful of live runs. A "running" row implies running nodes, so the
-    presence states suffice: dead, or none while nodes record running, is
-    exactly `driver_vanished`'s rule."""
-    if row.get("word") != mv.GLOSSARY.get("running", "running"):
+def _true_rail_word(d: Path, row: dict) -> dict:
+    """An UNFINISHED run's rail row is re-checked against the lock, LIVE and
+    outside the cache: presence changes with no state.json write, so a cached
+    word over a dead driver would never correct itself — and a rail
+    disagreeing with the board about the SAME run is the two-surfaces split
+    F8 exists to end.
+
+    Covers both of `driver_vanished`'s arms (Batch 0 review, C4): a DEAD
+    lock over any unfinished run (a driver killed before its first spawn
+    leaves every node pending, which the word ladder otherwise renders
+    "done"), and NO lock while nodes record `running`. Only unfinished rows
+    pay the lock read, bounded by the rail's dozen rows. `refused` outranks:
+    a terminal record is a decided stop, not a vanishing (P2 parity)."""
+    if not row.get("unfinished") or row.get("word") == "refused":
         return row
     presence = mv.driver_presence(d)
-    if presence and presence.get("state") in ("dead", "none"):
+    if not presence:
+        return row
+    st = presence.get("state")
+    if st == "dead" or (st == "none"
+                        and row.get("word") == mv.GLOSSARY.get("running", "running")):
         return {**row, "word": "stopped unexpectedly", "cls": "bad"}
     return row
 
@@ -1938,7 +1969,7 @@ def run_list(runs_root: Path, current: Path | None,
         row = _rail_row(d)
         if row is None:
             continue
-        row = _true_running_word(d, row)
+        row = _true_rail_word(d, row)
         row["current"] = bool(current and d.resolve() == current.resolve())
         out.append(row)
     return out, len(ready)
@@ -1991,7 +2022,7 @@ def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
             word, cls = mv.GLOSSARY.get("blocked", "needs you"), "warn"
         else:
             word, cls = mv.GLOSSARY.get("done", "done"), "ok"
-        row = _true_running_word(d, {
+        row = _true_rail_word(d, {
             "name": d.name,
             "flow": (state.get("flow_name") or d.name.rsplit("-", 1)[0]),
             # WITHOUT this the rail was nine rows all reading "webapp-local"
@@ -2000,6 +2031,8 @@ def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
             "when": mv.format_clock(state.get("started_at")) or "",
             "day": (state.get("started_at") or "")[:10],
             "word": word, "cls": cls,
+            "unfinished": any(r.get("status") in ("pending", "running", "blocked")
+                              for r in nodes),
         })
         row["current"] = bool(current and d.resolve() == current.resolve())
         out.append(row)

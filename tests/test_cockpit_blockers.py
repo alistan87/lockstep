@@ -592,14 +592,84 @@ def test_blocker_summary_carries_the_error_verbatim(tmp_path):
     assert got[0]["stalled"] is None      # no flow copy: refused, never zero
 
 
-def test_a_healing_node_shows_no_blocker_entry(tmp_path):
-    """A failed node the engine has a PENDING heal round for will be retried
-    on this drive — a card for a self-recovering condition is a false alarm.
-    The DE guide already separates "sent back for rework" from "stopped with
-    a problem"; the card must not collapse that distinction (§4.2)."""
-    state = _state(gate="failed", worker="pending")
+def test_a_failed_map_mid_heal_still_gets_its_card(tmp_path):
+    """Batch 0 review C1. The first cut excluded failed nodes present in
+    `heal_pending`, imagining a self-recovering transient. That state renders
+    as pending/running ("sent back for rework"), never `failed` — while a
+    failed MAP keeps its heal signal UNCONSUMED by design (`_run_map`
+    consumes it only when the whole fan-out finishes, roles.py), so the
+    exclusion hid the card for exactly the failed-map shape, permanently,
+    until a resume. A `failed` status is terminal for the drive: it always
+    gets its entry."""
+    state = _state(worker="pending")
+    state["nodes"]["fanout"] = {
+        "status": "failed", "attempts": 0,
+        "error": "item 0 failed: exit code 1",
+        "items": {"0": {"status": "failed", "attempts": 2},
+                  "1": {"status": "done", "attempts": 1}},
+    }
+    state["heal_pending"] = {"fanout": 1}
+    got = mv.blocker_summary(tmp_path, state, None)
+    assert got is not None and got[0]["node_id"] == "fanout"
+
+
+def test_a_node_sent_back_for_rework_is_not_a_blocker(tmp_path):
+    """The state the old exclusion imagined: rework-in-progress renders as
+    pending/running with a heal_round, never `failed` — so it never enters
+    the summary in the first place."""
+    state = _state(gate="pending", worker="running")
+    state["nodes"]["gate"]["heal_round"] = 1
     state["heal_pending"] = {"gate": 1}
     assert mv.blocker_summary(tmp_path, state, None) is None
+
+
+def test_a_failed_maps_facts_are_its_items_not_never_started(tmp_path):
+    """Batch 0 review C2: a map parent's `attempts` is never incremented —
+    only per-item counts are — so the common failed-map case rendered
+    "never started" directly beside the map's own item error. The entry
+    carries item counts instead."""
+    state = _state()
+    state["nodes"]["fanout"] = {
+        "status": "failed", "attempts": 0,
+        "error": "item 3 failed: provider said 429",
+        "items": {str(i): {"status": "done", "attempts": 1} for i in range(4)},
+    }
+    state["nodes"]["fanout"]["items"]["3"] = {"status": "failed", "attempts": 3}
+    got = mv.blocker_summary(tmp_path, state, None)
+    assert got[0]["items_total"] == 4 and got[0]["items_failed"] == 1
+
+
+def test_a_vanished_runs_clock_falls_to_ended_at_without_a_journal_tail():
+    """Batch 0 review P1: an unparseable (or absent) journal tail must not
+    fall through to the wall clock — a growing number beside "stopped
+    unexpectedly" is F1's lie wearing F8's word."""
+    state = {
+        "started_at": _ts(0),
+        "nodes": {
+            "a": {"role": "work", "status": "done", "attempts": 1, "ended_at": _ts(12)},
+            "b": {"role": "work", "status": "running", "attempts": 1},
+        },
+    }
+    line = mv.headline(state, None, now=BEGAN + timedelta(days=2),
+                       presence={"state": "dead", "line": "x"}, last_event_at=None)
+    assert "stopped unexpectedly" in line
+    assert "12 m" in line
+
+
+def test_driver_presence_names_the_absence_through_the_real_import_path(tmp_path, monkeypatch):
+    """Batch 0 review C5/C6: the unavailable branch is exercised through a
+    REAL import failure (not an injected dict), the sentence is a module
+    constant shared with the page, and repeated calls must not grow sys.path
+    without bound — this runs once per render, forever."""
+    monkeypatch.setitem(sys.modules, "lockstep", None)
+    monkeypatch.setitem(sys.modules, "lockstep.state", None)
+    before = len(sys.path)
+    first = mv.driver_presence(tmp_path)
+    second = mv.driver_presence(tmp_path)
+    assert first["state"] == "unavailable"
+    assert first["line"] == mv.PRESENCE_UNAVAILABLE_LINE
+    assert second == first
+    assert len(sys.path) <= before + 1, "sys.path grows per call"
 
 
 def test_blocker_summary_reports_whether_other_work_continues(tmp_path):

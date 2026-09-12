@@ -1222,8 +1222,7 @@ def test_a_copy_that_cannot_check_liveness_says_so(tmp_path, monkeypatch):
                                       "started_at": _iso(11)})
     (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
     absent = {"state": "unavailable", "pid": None, "hostname": None,
-              "line": "whether a driver is alive cannot be checked from this "
-                      "copy — the lockstep package is not importable here"}
+              "line": mission_server.mv.PRESENCE_UNAVAILABLE_LINE}
     monkeypatch.setattr(mission_server.mv, "driver_presence", lambda rd: absent)
     body = get(run, "/", tmp_path)[2].decode("utf-8")
     assert "cannot be checked from this copy" in body
@@ -1381,11 +1380,104 @@ def test_every_css_variable_the_stylesheet_uses_is_defined():
     Definitions are checkable mechanically even though pixels are not; this
     closes the class."""
     import re
-    css = mission_server.stylesheet()
+    # comments stripped FIRST: a var "defined" only in prose must not count
+    # (Batch 0 review, P4)
+    css = re.sub(r"/\*.*?\*/", "", mission_server.stylesheet(), flags=re.S)
     defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", css))
     used = set(re.findall(r"var\((--[a-z0-9-]+)", css))
     assert used <= defined, f"used but never defined: {sorted(used - defined)}"
     assert {"--raise", "--accent"} <= defined     # the two that motivated this
+
+
+def test_every_dot_class_the_page_emits_is_defined():
+    """P5, the F7 lesson applied to classes: the rail's `ok`/`bad` words wore
+    dot classes no CSS rule defined, so "stopped with a problem" drew the
+    same muted grey as everything fine."""
+    import re
+    css = mission_server.stylesheet()
+    for cls in ("good", "warn", "crit", "run", "ok", "bad"):
+        assert re.search(r"\.dot\." + cls + r"\{", css), f".dot.{cls} undefined"
+
+
+def test_the_new_headline_words_are_pinned_to_the_guide():
+    """P6: the two Batch 0 hero words bind to guide-table rows, the same
+    anti-drift rule every other DE-facing word gets."""
+    text = (ROOT / "docs" / "guides" / "COCKPIT-FOR-DOMAIN-EXPERTS.md").read_text(
+        encoding="utf-8")
+    for phrase in ("a step stopped, other work continues", "stopped unexpectedly"):
+        assert f"| **{phrase}** |" in text, f"guide table lacks {phrase!r}"
+
+
+def test_a_vanished_driver_forces_the_quiet_blocker_header(tmp_path):
+    """C3: `others_running` comes from state.json's `running` records — the
+    corpse records F8 distrusts — so "nothing is being worked on" must never
+    stack above "other work continues" on one screen."""
+    run = page_run(tmp_path, evidence=False)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["produce"].update({"status": "failed", "attempts": 1,
+                                      "error": "boom"})
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    state["nodes"]["approve"]["status"] = "pending"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _hold_lock(run, _dead_pid())
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "stopped unexpectedly" in body
+    assert "other work continues" not in body
+
+
+def test_a_refused_run_renders_no_restart_card(tmp_path):
+    """P2: headline "refused: …" beside "ask the assistant to restart it" is
+    two contradictory instructions. Terminal outranks the card exactly as it
+    outranks the hero."""
+    run = page_run(tmp_path, evidence=False)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["terminal"] = {"reason": "dirty_tree", "message": "uncommitted changes"}
+    state["nodes"]["deliver"].update({"status": "failed", "attempts": 1,
+                                      "error": "boom"})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _hold_lock(run, _dead_pid())
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "refused" in body
+    assert 'class="card blocker"' not in body
+    assert "Ask the assistant to restart it" not in body
+
+
+def test_the_rail_does_not_say_done_over_a_dead_driver(tmp_path):
+    """C4: a driver killed before its first spawn leaves every node pending,
+    which the rail's word ladder renders "done" — beside a board saying
+    "stopped unexpectedly". The live check covers every unfinished row, not
+    just the ones already wearing "running"."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    for rec in state["nodes"].values():
+        rec["status"] = "pending"
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _hold_lock(run, _dead_pid())
+    mission_server._RAIL_MEMBERS.clear()
+    mission_server._RAIL_ROWS.clear()
+    rows, _ = mission_server.run_list(tmp_path, run)
+    row = next(r for r in rows if r["name"] == run.name)
+    assert row["word"] == "stopped unexpectedly" and row["cls"] == "bad"
+
+
+def test_a_failed_maps_card_counts_items_not_never_started(tmp_path):
+    """C2 at the page level: the common failed-map case must not say "never
+    started" beside its own item error."""
+    run = page_run(tmp_path, evidence=False)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["approve"].update({"status": "done", "ended_at": _iso(11)})
+    state["nodes"]["deliver"].update({
+        "status": "failed", "attempts": 0,
+        "error": "item 1 failed: exit code 1",
+        "items": {"0": {"status": "done", "attempts": 1},
+                  "1": {"status": "failed", "attempts": 2},
+                  "2": {"status": "done", "attempts": 1}},
+    })
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "1 of 3 items stopped" in body
+    assert "never started" not in body
 
 
 def test_a_stale_open_interval_is_not_measured_to_now(tmp_path):
