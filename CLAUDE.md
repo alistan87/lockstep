@@ -292,10 +292,17 @@ what you may say. Three rules that are enforced by code, not discretion:
   have been. Without it a cockpit copied without that one file drew an empty
   timeline and a column of dashes — indistinguishable from a run that did
   nothing, which is the one thing the page may not say.
-- **Never let the page rescan what it already read.** Three process-local
+- **Never let the page re-read what this render already parsed.** The
+  journal is read ONCE per render in `render_wrap` and handed to every
+  reader below it (`_intervals`, `_heal_marks`, `collect_run` all take an
+  optional pre-read list and keep their standalone behaviour for other
+  callers). It used to be read three times, which profiling put at 77% of a
+  warm render.
+- **Never let the page rescan what it already read.** Four process-local
   caches, all provably output-neutral (`_run_list_uncached` is kept as the
   rail's oracle so a test asserts it, not a comment): the journal byte
-  cursor, the attempt-log memo keyed on `(path, size, mtime_ns)`, and the
+  cursor, the attempt-log memo keyed on `(path, size, mtime_ns)`,
+  `_TRACE_MEMO` (a whole-file re-chain one render asks for twice), and the
   two-layer rail cache. The rail's two layers are NOT interchangeable —
   membership keys on the runs-root mtime, status on each run's own
   `state.json`, because writing inside a child does not reliably bump the

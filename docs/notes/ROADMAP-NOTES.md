@@ -247,10 +247,14 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   parent (downstream catch); plus the byte-offset journal cursor, which
   was NOT in this note's list and turned out to be the largest single win:
   a quiet heartbeat went from 274,500 B (x16 with journal size) to a
-  constant 4,096 B. Still open: (2) the wall/heal pass still re-parses the
-  whole journal per render, inside the ~1.75 MB that a full render costs
-  warm — that is S1.2 (one shared projection per snapshot) in
-  `upstream-response-mission-scale.md`, deliberately unbuilt.
+  constant 4,096 B. (2) closed in 0.15.0 (S1.2): the journal was
+  read THREE times per render — the feed, `collect_run`'s wall/heal pass,
+  and `_intervals` for the timeline — which profiling put at 77% of
+  everything a warm render still touched. Parsed once and handed down now,
+  with `_trace_status` memoized on the journal's identity; warm render
+  1,750,760 B -> 378,260 B. The whole note is therefore resolved, and its
+  lesson holds: every number here came from `mission_bench.py`, and the one
+  centre I would have optimized on intuition (drawers) was already free.
 
 - **2026-08-15 (whole-implementation review): per-stanza `default_retry`.**
   Retry defaults are per-KIND (`HarnessExecutor.default_retry` = 2 x 60s),

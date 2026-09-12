@@ -3,7 +3,7 @@ type: plan
 title: "Upstream response: MISSION scale, blocker intelligence, and execution provenance"
 description: Point-by-point disposition of the downstream MISSION feature request filed against lockstep 0.13.0 — one accepted P0 (incremental projections, gated behind a measurement phase), two accepted with scope reductions, one counter-proposal (journal attempt events instead of a new per-attempt manifest artifact), and answers to all five upstream questions. Every source-level claim in the report was verified before classification; all five were accurate.
 resource: docs/proposals/upstream-response-mission-scale.md
-status: S1.1/S1.3/S1.4 + S3 engine half BUILT 2026-09-10; S1.2/S1.5 and the S2/S4 views open
+status: S1 (1-4) + S3 engine half BUILT through 0.15.0; S1.5 and the S2/S4 views open
 upstream_baseline: "lockstep 0.13.0 (9bee0c4)"
 ---
 
@@ -280,10 +280,42 @@ the other direction by the first fix — membership was filtered on
 `state.json` at scan time, so a run started while the page was open stayed
 invisible for the life of the process. It has a test now.
 
-**Still open, deliberately:** S1.2 (one shared projection per snapshot —
-the remaining ~1.75 MB warm render), S1.5 (lazy drawers, whose guard rail
-`drawers_unshared` is already pinned), and the S2/S4 views, which this
-document's own sequencing puts behind S1.
+### S1.2, and what the reporter's own numbers changed (0.15.0)
+
+The reporter adopted 0.14.0 and returned a real-history profile (132 run
+dirs). It corrected an upstream claim: the byte cursor was described here as
+"the largest single win", which was true of the upstream FIXTURE (a 277 KB
+journal) and false of their machine (45 KB). Their biggest win was the rail
+cache — 294,159 B → 0 B per paint — and their warm render was only 10%
+better than cold, with `first_paint_warm` the heaviest centre. That is a
+profile dominated by per-render re-reads, which is precisely S1.2, and it
+is why their priority ordering was right and the upstream fixture's was not.
+
+S1.2 shipped in 0.15.0. `events.jsonl` was read THREE times per render (the
+feed, `collect_run`'s wall/heal pass, `_intervals` for the timeline) —
+77% of everything a warm render still touched. It is now parsed once and
+handed down; `_trace_status` is memoized on the journal's identity, since
+one render asks for that whole-file re-chain twice independently.
+
+| | 0.14.0 | 0.15.0 |
+|---|---|---|
+| warm render (upstream fixture) | 1,750,760 B | **378,260 B** (−78%) |
+
+**Two defects the reporter found on adoption, fixed in 0.14.1**, both
+invisible upstream and both worth recording as a process result rather than
+a bug list: CPython moved `JSONDecodeError.pos` in 3.13, so the
+deletion-only repair silently stopped repairing and every dangling comma
+fell through to a billed corrective re-spawn; and a test branched on the
+gitignored `cost-fields.toml`, passing on any machine that had one. Four
+adversarial review rounds missed both, because every round ran on one
+interpreter inside a working tree carrying untracked files. The reviews were
+adversarial about the CODE and never about the ENVIRONMENT.
+`contrib/portability_check.py` now runs the suite from a clean clone under a
+named interpreter, and doing so is a pre-tag rule.
+
+**Still open, in the reporter's stated priority:** S1.5 (lazy drawers, whose
+guard rail `drawers_unshared` is already pinned so it cannot be built
+carelessly), then the S2/S4 views.
 
 **Still worth having from the reporter:** `mission_bench.py --runs-root
 <runs> --json` from the slow machine. Not to choose what to build — the

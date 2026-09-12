@@ -540,6 +540,14 @@ that render to nothing:
   is the only place the page says nothing ran, and silencing it made a
   `--replay` read exactly like a real run.
 
+**That expensive render parses the journal once.** `render_wrap` reads
+`events.jsonl` at the top and hands the parsed list to the feed, the
+timeline and the cost collector; before 0.15.0 each of those read it for
+itself, which measured at 77% of everything a warm render touched. The
+chain verdict is memoized the same way, because re-chaining is a whole-file
+read that one render asks for twice — the chain chip and the feed's raw
+record, independently.
+
 The expensive render is fetched only when the journal
 moved, the token changed, or every fifth tick while something runs. A quiet
 second costs 0.4 ms and 80 bytes instead of 40–128 ms and a whole page. That is
