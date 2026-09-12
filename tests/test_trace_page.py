@@ -1196,13 +1196,22 @@ def test_a_missing_field_map_costs_the_figures_but_not_the_timings(tmp_path, mon
     assert "cost-fields.toml" in mission_server.reader_note(run)["detail"]
 
 
-def test_the_empty_cost_block_tells_setup_apart_from_a_harness_limit(tmp_path):
+def test_the_empty_cost_block_tells_setup_apart_from_a_harness_limit(
+        tmp_path, monkeypatch):
     """Four events used to print the same seven words. Three are a setup
     problem fixable in a minute; the fourth is a limit no configuration lifts —
     `copilot-cli` has no JSON output mode, so no usage envelope is ever written.
     A reader who cannot tell those apart either chases a phantom or gives up on
-    a number that was one file away."""
+    a number that was one file away.
+
+    The field map is INJECTED. `cost_absence` branches on whether
+    `contrib/cost-fields.toml` exists, and that file is gitignored — so this
+    test passed on a machine that happened to have one and failed on a clean
+    checkout of the tag (found downstream). A test whose outcome depends on
+    an ambient untracked file is testing the machine.
+    """
     run = page_run(tmp_path)
+    monkeypatch.setattr(mission_server, "reader_note", lambda *a, **k: {})
 
     unmapped, _ = mission_server.cost_absence(
         run, {"rows": [{"note": "no field map (copilot)"}]})

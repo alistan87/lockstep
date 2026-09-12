@@ -478,3 +478,73 @@ class TestSalvageLayer:
         assert repair_json(text, single_value=True) is None
         # permissive (stdout single-extracted-value) mode unaffected
         assert repair_json(text) is not None
+
+
+# ------------------------------- interpreter portability (downstream, 3.13)
+
+
+class TestDecoderPositionPortability:
+    """CPython MOVED `JSONDecodeError.pos`: <= 3.12 reports the CLOSER,
+    3.13 reports the COMMA. A reader trusting either stops repairing on the
+    other — found downstream on 3.13, where every dangling comma fell through
+    to a corrective re-spawn (a billed request on a metered harness).
+
+    These assert the comma is located from BOTH directions, so the result is
+    the same on every interpreter without needing that interpreter to run.
+    """
+
+    def test_both_report_positions_find_the_same_comma(self):
+        from lockstep.repair import _dangling_comma_at
+
+        text = '{"a": 1,}'
+        closer = text.index("}")
+        comma = text.index(",")
+        # <= 3.12 semantics                      # 3.13 semantics
+        assert _dangling_comma_at(text, closer, 0) == comma
+        assert _dangling_comma_at(text, comma, 0) == comma
+
+    def test_whitespace_between_comma_and_closer_either_way(self):
+        from lockstep.repair import _dangling_comma_at
+
+        text = '[1, 2,\n  ]'
+        assert _dangling_comma_at(text, text.index("]"), 0) == text.index(",", 3)
+        assert _dangling_comma_at(text, text.index(",", 3), 0) == text.index(",", 3)
+
+    def test_a_double_comma_is_refused_from_either_position(self):
+        """The F-E2 rule must not weaken on any interpreter: deleting one of
+        two commas is guessing at data, not deleting garbage around it."""
+        from lockstep.repair import _dangling_comma_at
+
+        text = '[1,,2]'
+        first, second = text.index(","), text.index(",", 3)
+        assert _dangling_comma_at(text, second, 0) is None   # 3.13 view
+        assert _dangling_comma_at(text, first, 0) is None
+        assert repair_json(text) is None
+
+    def test_repair_survives_a_simulated_313_decoder(self, monkeypatch):
+        """End to end with a decoder that reports 3.13-style positions, so the
+        fix is proved rather than reasoned about from this interpreter."""
+        import json as _json
+
+        import lockstep.repair as repair_mod
+
+        real = repair_mod._decoder.raw_decode
+
+        def pos_at_comma(s, idx=0):
+            try:
+                return real(s, idx)
+            except _json.JSONDecodeError as e:
+                p = e.pos
+                if p is not None and p < len(s) and s[p] in "]}":
+                    q = p - 1
+                    while q > idx and s[q].isspace():
+                        q -= 1
+                    if q >= idx and s[q] == ",":
+                        raise _json.JSONDecodeError(e.msg, s, q) from None
+                raise
+
+        monkeypatch.setattr(repair_mod._decoder, "raw_decode", pos_at_comma)
+        repaired, _ = repair_json('{"findings": [], "verdict": "pass", "reason": "ok",}')
+        assert json.loads(repaired) == VALID
+        assert repair_json('[1,,2]') is None
+        assert repair_json('[{"a": 1}, {"b": 2},') is None   # truncation still refused

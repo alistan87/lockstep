@@ -6,6 +6,30 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.14.1 — 2026-09-11
+
+Two defects found by the downstream consumer adopting 0.14.0, both of them
+mine, and both invisible on this machine — which is the point worth
+recording.
+
+- **`JSONDecodeError.pos` moved in CPython 3.13.** Through 3.12 it reports
+  the CLOSER (`{"a": 1,}` → `}`); on 3.13 it reports the COMMA. The
+  deletion-only repair trusted the 3.12 shape, so on 3.13 every dangling
+  comma went unrepaired and fell through to a corrective re-spawn — a
+  billed request on a metered harness, silently. The comma is now located
+  from BOTH directions and yields the same index either way; `[1,,2]` stays
+  refused on every version. Pinned by tests that simulate the 3.13 decoder,
+  so the fix is proved without needing that interpreter.
+- **A test depended on a gitignored file.** `cost_absence` branches on
+  whether `contrib/cost-fields.toml` exists; the tag ships only the
+  example. The test passed on any machine that happened to have one and
+  failed on a clean checkout. It now injects its own condition — a test
+  whose outcome depends on an ambient untracked file is testing the machine.
+
+Neither could have been caught here: this repo runs 3.11 and carries a
+local `cost-fields.toml`. Four adversarial rounds did not find them because
+every round ran on the same interpreter with the same untracked files.
+
 ## 0.14.0 — 2026-09-11
 
 The measure-first release. MISSION scale (`upstream-response-mission-scale.md`, S1 + S3's engine half),

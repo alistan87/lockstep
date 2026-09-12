@@ -30,28 +30,54 @@ _decoder = json.JSONDecoder()
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*$", re.MULTILINE)
 
 
+def _dangling_comma_at(s: str, pos: int | None, start: int) -> int | None:
+    """Index of the trailing comma the decoder tripped on, or None.
+
+    CPython MOVED this. Through 3.12 `JSONDecodeError.pos` points at the
+    CLOSER (`{"a": 1,}` reports `}`); on 3.13 it points at the COMMA. A
+    reader that trusts either one silently stops repairing on the other
+    interpreter — found downstream on 3.13, where ten repair tests failed
+    because every dangling comma went unfixed and fell through to a
+    corrective re-spawn (a billed request on a metered harness).
+
+    So the comma is located from BOTH directions and the answer is the same
+    index either way. `[1,,2]` stays refused on every version: the character
+    after the comma the decoder reports is `2`, not a closer, and deleting
+    one of two commas would be guessing at data rather than deleting garbage
+    around it.
+    """
+    if pos is None or not (start <= pos < len(s)):
+        return None
+    ch = s[pos]
+    if ch in "]}":                       # <= 3.12: walk back to the comma
+        q = pos - 1
+        while q > start and s[q].isspace():
+            q -= 1
+        return q if q >= start and s[q] == "," else None
+    if ch == ",":                        # 3.13+: look forward for the closer
+        q = pos + 1
+        while q < len(s) and s[q].isspace():
+            q += 1
+        return pos if q < len(s) and s[q] in "]}" else None
+    return None
+
+
 def _decode_deleting_commas(s: str, start: int) -> tuple[str, int | None, int]:
     """Strict raw_decode at `start`, deleting a dangling comma whenever the
-    decoder's failure position points at an EXISTING closer whose previous
-    non-space character is a comma. Error-driven, so a comma inside a string
-    literal is unreachable — the decoder never fails there. Returns
-    (possibly-shortened s, end-or-None, commas_deleted)."""
+    decoder trips on one before an EXISTING closer. Error-driven, so a comma
+    inside a string literal is unreachable — the decoder never fails there.
+    Returns (possibly-shortened s, end-or-None, commas_deleted)."""
     deleted = 0
     while True:
         try:
             _, end = _decoder.raw_decode(s, start)
             return s, end, deleted
         except json.JSONDecodeError as e:
-            p = e.pos
-            if p is not None and start <= p < len(s) and s[p] in "]}":
-                q = p - 1
-                while q > start and s[q].isspace():
-                    q -= 1
-                if q >= start and s[q] == ",":
-                    s = s[:q] + s[q + 1:]  # delete exactly the comma
-                    deleted += 1
-                    continue
-            return s, None, deleted
+            comma = _dangling_comma_at(s, e.pos, start)
+            if comma is None:
+                return s, None, deleted
+            s = s[:comma] + s[comma + 1:]   # delete exactly the comma
+            deleted += 1
 
 
 def _decode_travel(s: str, start: int) -> int:
