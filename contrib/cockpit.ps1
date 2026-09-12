@@ -489,7 +489,9 @@ function Get-HeadlineLine {
       # must not read "1 h 30 m" in the pane and "89 m" on the page.
       $mins = [int][Math]::Floor(($until - $began).TotalMinutes)
       if ($mins -lt 0) { $mins = 0 }
-      $parts += if ($mins -ge 90) { "$([int]($mins / 60)) h $($mins % 60) m" } else { "$mins m" }
+      # Floor here too: a bare [int] cast rounds to nearest, so 95 minutes
+      # read "2 h 35 m" in the pane while the page said "1 h 35 m".
+      $parts += if ($mins -ge 90) { "$([Math]::Floor($mins / 60)) h $($mins % 60) m" } else { "$mins m" }
     } catch { }
   }
   if ($heals -gt 0) { $parts += "$heals rework round$(if ($heals -ne 1) { 's' })" }

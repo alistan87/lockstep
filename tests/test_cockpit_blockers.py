@@ -414,6 +414,34 @@ def test_spend_never_goes_backwards_or_blank():
     assert got["first"] == "agent tasks used 9 of 25"         # placeholder yields
 
 
+_HEADLINE_HARNESS = """
+$src = Get-Content -Raw -LiteralPath '{script}'
+foreach ($n in @('Get-StepsToDecision', 'Get-HeadlineLine')) {{
+  $m = [regex]::Match($src, "(?ms)^function $n \\{{.*?^\\}}")
+  if (-not $m.Success) {{ throw "cockpit.ps1 no longer defines $n" }}
+  Invoke-Expression $m.Value
+}}
+$state = '{{"started_at":"2026-08-01T12:00:00Z","nodes":{{"a":{{"status":"done","ended_at":"2026-08-01T13:35:00Z"}}}}}}' | ConvertFrom-Json
+Get-HeadlineLine -State $state
+"""
+
+
+@pwsh
+def test_the_pane_floors_its_hours_like_the_page():
+    """Combined review, defect 1: the minutes got [Math]::Floor but the hours
+    digit kept a bare [int] cast, which rounds to nearest — so 95 minutes
+    read "2 h 35 m" in the pane while the page said "1 h 35 m". Driven
+    through the real Get-HeadlineLine on a finished (clock-frozen) run, so
+    the arithmetic is executed rather than grepped."""
+    proc = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+         _HEADLINE_HARNESS.format(script=(CONTRIB / "cockpit.ps1").as_posix())],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    assert "1 h 35 m" in proc.stdout
+    assert "2 h 35 m" not in proc.stdout
+
+
 @pwsh
 def test_show_mission_actually_uses_the_guard():
     # A guard nothing calls is the defect it was written to fix.
@@ -515,6 +543,21 @@ def _dead_pid() -> int:
     proc = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
                           capture_output=True, text=True, check=True)
     return int(proc.stdout.strip())
+
+
+def test_a_vanished_run_with_no_anchor_shows_no_duration():
+    """Review concern 10, the P1 residual: driver killed before anything
+    ended AND the journal unreadable — no anchor exists, so the duration is
+    omitted outright. No number beats a wrong one."""
+    state = {
+        "started_at": _ts(0),
+        "nodes": {"a": {"role": "work", "status": "running", "attempts": 1}},
+    }
+    line = mv.headline(state, None, now=BEGAN + timedelta(days=2),
+                       presence={"state": "dead", "line": "x"}, last_event_at=None)
+    assert "stopped unexpectedly" in line
+    assert re.search(r"\d+ m\b", line) is None, line
+    assert " h " not in line
 
 
 def test_driver_presence_asks_the_engines_one_decider(tmp_path):

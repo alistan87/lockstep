@@ -257,23 +257,29 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None, *,
         # days later snaps back to wall-clock-since-start — `began` is
         # segment-spanning, and cross-segment elapsed is §8 Q3.
         until = now or datetime.now(timezone.utc)
+        show_clock = True
         if vanished:
             # No parseable journal tail (empty journal, torn line) falls to
             # the last ended_at rather than the wall clock — a growing number
             # beside "stopped unexpectedly" would be F1's lie wearing F8's
-            # word (Batch 0 review, P1).
+            # word (Batch 0 review, P1). With NO anchor at all (driver killed
+            # before anything ended, journal unreadable) the duration is
+            # omitted outright: no number beats a wrong one.
             stamp = _parse_ts(last_event_at)
             ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
             if stamp:
                 until = stamp
             elif ends:
                 until = max(ends)
+            else:
+                show_clock = False
         elif total and not running and not blocked and (failed or settled == total):
             ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
             if ends:
                 until = max(ends)
-        mins = max(0, int((until - began).total_seconds() // 60))
-        parts.append(f"{mins // 60} h {mins % 60} m" if mins >= 90 else f"{mins} m")
+        if show_clock:
+            mins = max(0, int((until - began).total_seconds() // 60))
+            parts.append(f"{mins // 60} h {mins % 60} m" if mins >= 90 else f"{mins} m")
     if heals:
         parts.append(f"{heals} rework round{'s' if heals != 1 else ''}")
 

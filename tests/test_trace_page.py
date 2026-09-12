@@ -546,7 +546,10 @@ def test_forced_colors_and_print_fall_to_the_table_view():
     css = mission_server.CSS
     block = css.split("@media print,(forced-colors:active){")[1].split("\n}")[0]
     assert ".wf-plot,.stack,.track,.ceil,.peek{display:none}" in block
-    assert "#l0,#l1{display:block!important}" in block, "ID selectors beat [hidden]"
+    # every switch GROUP falls open on paper, not just l0/l1 — a JS-hidden
+    # twin must reappear (the cost pair joined the rule with Batch 1)
+    assert "#l0,#l1,#cost-history,#cost-head{display:block!important}" in block, \
+        "ID selectors beat [hidden]"
     assert ".viewswitch{display:none}" in block
 
 
@@ -941,6 +944,10 @@ def test_the_view_switch_is_generic_over_groups():
     assert "function show(group, which)" in js
     assert '.viewswitch[data-group="' in js
     assert "restoreAll(pressed)" in js, "the reader's chosen views survive a swap"
+    # a stale stored view id (renamed across an upgrade) is discarded, never
+    # applied — show() with an unknown id would blank the whole group for
+    # the session (review concern 7)
+    assert "valid.indexOf(which) < 0" in js
 
 
 def test_the_meter_degrades_to_of_at_least_across_segments():
@@ -1306,6 +1313,24 @@ def test_the_panel_client_keeps_the_reader_discipline():
     assert "closePanel()" in boundary
     after_swap = js.split("wrap.innerHTML = doc.html;")[1].split(".catch")[0]
     assert "fetchPanel(panelNode, false)" in after_swap
+    # The combined review's four panel defects, each pinned (source greps —
+    # the honest limit of a no-JS-runtime test net, and said out loud):
+    # (2) the generation counter: open AND close supersede in-flight fetches,
+    # so a dismissed panel cannot resurrect and responses cannot land
+    # out of order; close increments BEFORE its early return.
+    assert "var panelSeq = 0;" in js
+    assert js.count("panelSeq += 1;") == 2
+    assert "if (seq !== panelSeq) return;" in js
+    close_head = js.split("function closePanel() {")[1].split("if (!panel")[0]
+    assert "panelSeq += 1;" in close_head
+    # (3) a transient network failure must not tear down an open panel —
+    # only the server's own answer (a numeric HTTP status) closes it.
+    assert "if (typeof status === 'number') closePanel();" in js
+    # (4) modifier and non-primary clicks keep the browser's behaviour.
+    assert "ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey" in js
+    # (6) focus returns to the SAME step's link in the current wrap when the
+    # original invoker was destroyed by a swap.
+    assert "a[href=\"#step-' + panelFromId" in js
 
 
 def _bulk_run(tmp_path: Path, settled: int, loud: dict[str, str] | None = None):
@@ -1406,6 +1431,17 @@ def test_the_new_headline_words_are_pinned_to_the_guide():
         encoding="utf-8")
     for phrase in ("a step stopped, other work continues", "stopped unexpectedly"):
         assert f"| **{phrase}** |" in text, f"guide table lacks {phrase!r}"
+
+
+def test_the_map_cards_item_phrase_is_in_the_guide():
+    """Review defect 5: the C2 fix introduced "N of M items stopped" — a
+    DE-facing phrase — with no guide sentence behind it, in the same commit
+    that established the pin rule for its own hero words. The guide's card
+    paragraph now carries it."""
+    import re
+    text = (ROOT / "docs" / "guides" / "COCKPIT-FOR-DOMAIN-EXPERTS.md").read_text(
+        encoding="utf-8")
+    assert re.search(r"its items\s+stopped", text), "guide lacks the map-card item phrase"
 
 
 def test_a_vanished_driver_forces_the_quiet_blocker_header(tmp_path):

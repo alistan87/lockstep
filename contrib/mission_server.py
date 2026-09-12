@@ -1015,7 +1015,9 @@ body.offline .live .dot{animation:none;background:var(--muted)}
    bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
 @media print,(forced-colors:active){
  .wf-plot,.stack,.track,.ceil,.peek{display:none}
- #l0,#l1{display:block!important}
+ /* every switch GROUP falls open, not just l0/l1: a JS-hidden twin must
+    reappear on paper (the cost pair joined the rule with Batch 1) */
+ #l0,#l1,#cost-history,#cost-head{display:block!important}
  .viewswitch{display:none}
 }
 @media (forced-colors:active){.seg,.fill,.stack>i{forced-color-adjust:none}}
@@ -1073,12 +1075,17 @@ JS = """
   function restoreAll(pressed) {
     // Priority: what was pressed before the swap (survives even with
     // sessionStorage unavailable), then the stored choice, then the server's
-    // own default (the button it rendered pressed).
+    // own default (the button it rendered pressed). A candidate naming no
+    // current button is DISCARDED, not applied: show() hides every fragment
+    // of a group for an unknown id, so a stale stored value (a view renamed
+    // across an upgrade) would blank the card for the whole session.
     document.querySelectorAll('.viewswitch[data-group]').forEach(function (sw) {
       var group = sw.dataset.group;
+      var valid = Array.prototype.map.call(
+        sw.querySelectorAll('.btn'), function (b) { return b.dataset.view; });
       var which = (pressed && pressed[group]) || null;
       if (!which) { try { which = sessionStorage.getItem('lockstep-' + group); } catch (err) {} }
-      if (!which) {
+      if (valid.indexOf(which) < 0) {
         var def = sw.querySelector('.btn[aria-pressed="true"]') || sw.querySelector('.btn');
         which = def && def.dataset.view;
       }
@@ -1108,17 +1115,32 @@ JS = """
   // ---- the peek panel (Batch 2, S1.5). Injects the SERVER-rendered
   // fragment from /api/node verbatim; renders no word, formats nothing.
   var panel = document.getElementById('peek');
-  var panelNode = null, panelHtml = '', panelFrom = null;
+  var panelNode = null, panelHtml = '', panelFrom = null, panelFromId = null;
+  // The generation counter (review defect 2): every open and every close
+  // supersedes any request still in flight, so a dismissed panel cannot
+  // resurrect itself when a 1 Hz refetch lands late, and a heavy step's slow
+  // response cannot overwrite the light step clicked after it. Incremented
+  // BEFORE closePanel's early return: Escape pressed while the FIRST
+  // response is still in flight must cancel it too.
+  var panelSeq = 0;
   function closePanel() {
+    panelSeq += 1;
     if (!panel || panel.hidden) return;
     panel.hidden = true; panelNode = null; panelHtml = '';
-    if (panelFrom && document.contains(panelFrom)) panelFrom.focus();
-    panelFrom = null;
+    // The invoker link is destroyed by every wrap swap on a live run, so
+    // focus falls back to the SAME step's link in the current wrap (review
+    // defect 6) — never silently to <body>.
+    var back = (panelFrom && document.contains(panelFrom)) ? panelFrom
+      : (panelFromId && wrap.querySelector('a[href="#step-' + panelFromId + '"]'));
+    if (back) back.focus();
+    panelFrom = null; panelFromId = null;
   }
   function fetchPanel(id, focusIn) {
+    var seq = panelSeq;
     fetch('api/node/' + encodeURIComponent(id) + runq(), { cache: 'no-store' })
       .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
       .then(function (doc) {
+        if (seq !== panelSeq) return;      // superseded by a click or a close
         if (doc.token !== token) return closePanel();
         panelNode = id;
         // Swap only when the fragment actually CHANGED: an innerHTML swap
@@ -1136,15 +1158,30 @@ JS = """
           if (c) c.focus();
         }
       })
-      .catch(function () { closePanel(); });
+      .catch(function (status) {
+        if (seq !== panelSeq) return;
+        // A numeric status is the server's ANSWER (the step or the run is
+        // gone) and closes the panel. A network blip is not: the main poll
+        // tolerates three of those before even showing the offline note,
+        // and a background refetch must not tear down what the reader is
+        // reading — this machine's AV makes transient failures routine
+        // (review defect 3).
+        if (typeof status === 'number') closePanel();
+      });
   }
   function openPanel(id, invoker) {
     if (!panel) return;
+    panelSeq += 1;
     panelFrom = invoker || document.activeElement;
+    panelFromId = id;
     fetchPanel(id, true);
   }
   document.addEventListener('click', function (ev) {
     if (ev.target.closest && ev.target.closest('#panel-close')) { closePanel(); return; }
+    // A modifier or non-primary click keeps the browser's own behaviour
+    // (open the fragment in a new tab) — the no-JS path is the designed
+    // fallback, not something to hijack (review defect 4).
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
     var a = ev.target.closest && ev.target.closest('a[href^="#step-"]');
     if (a && wrap.contains(a)) {
       // No-JS keeps the fragment jump to the inline drawer; with JS the same
@@ -1705,9 +1742,12 @@ DRAWER_ABSENT_SENTENCE = (
     "only left off this page. Anything running, needing you, or stopped "
     "keeps its full detail below."
 )
+# Worded so the no-JS reader who fragment-jumped HERE is not told to repeat
+# the click that brought them: the panel is named as a thing with a
+# condition, the assistant as the path that always works (review concern 8).
 DRAWER_ABSENT_BODY = (
-    "Finished quietly — open it from its name above (needs JavaScript), or "
-    "ask the assistant."
+    "Finished quietly. The side panel has its detail (needs JavaScript) — "
+    "or ask the assistant."
 )
 
 

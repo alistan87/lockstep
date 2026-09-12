@@ -146,11 +146,12 @@ MISSION shows, and it opens further if you want it to:
 
 When a step stops with a problem, the page says so near the top, in a card —
 not somewhere you have to scroll for. The card names the step, shows the
-machine's own words for what went wrong, how many times the step was tried,
-and how many steps are waiting behind it. That last number is a fact about
-how the plan is wired together, never a schedule. The card ends with the only
-move that exists: **ask the assistant** — a stopped step never restarts on
-its own. And if the whole run stops because the tool driving it is gone, the
+machine's own words for what went wrong, how many times the step was tried —
+or, for a step that fans out into many items, how many of **its items
+stopped** — and how many steps are waiting behind it. That last number is a
+fact about how the plan is wired together, never a schedule. The card ends
+with the only move that exists: **ask the assistant** — a stopped step never
+restarts on its own. And if the whole run stops because the tool driving it is gone, the
 page says **stopped unexpectedly** and shows the machine's own record of who
 was driving; nothing is spending when it says that, and restarting is the
 assistant's job.
