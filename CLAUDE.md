@@ -53,6 +53,7 @@ python contrib\lane.py harvest <worktree>          # commit the lane branch (rec
 python contrib\who_holds.py <file>                 # LIVE/STALE/NONE (also FOREIGN/UNKNOWN) over <file>.holder.json; reports, never decides (the deciding gate is lockstep.gates.lock_held)
 .venv\Scripts\lockstep.exe run flows\selftest-replay.tg.json   # zero-token doc self-check; also the portable replay fixture's source
 .venv\Scripts\lockstep.exe run flows\demo\compose-smoke.tg.json  # zero-token composition smoke (kind:"flow" end to end); run after touching executors\flow.py or RunResources
+python contrib\portability_check.py --python 3.13  # the suite as a CONSUMER gets it: clean clone (no gitignored files), another interpreter; checks HEAD, so commit first
 python contrib\replay_suite.py                     # zero-token flow regression; 0/0 on stderr when there are no fixtures (--require-fixtures to fail instead)
 python contrib\torture_suite.py                    # zero-token ENGINE regression: heal/rollback/cascade, corrective re-spawn, quarantine, timeout — the paths a recording never takes (flows\demo\torture\README.md)
 python contrib\export_fixture.py <run_dir> <dest>  # scrubbed replayable fixture (review before committing)
@@ -125,6 +126,16 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
   serves what its input_hash matches and runs the rest (warm-start a new
   lineage). The seed decision is made in `plan()` so a served node sets
   `costs_tokens=False` and never spends spawn budget.
+
+**Before tagging a release, run `contrib/portability_check.py` — including
+`--python 3.13`.** Two defects reached a consumer in 0.14.0 that four
+adversarial review rounds missed, because every round ran on one
+interpreter inside a working tree carrying gitignored files: CPython moved
+`JSONDecodeError.pos` in 3.13 (the JSON repair silently stopped repairing,
+so dangling commas fell through to billed corrective re-spawns) and a test
+branched on the gitignored `cost-fields.toml`. The reviews here are
+adversarial about the code and were never adversarial about the
+ENVIRONMENT; this is the gate that is.
 
 ## Frozen surfaces — stop and ask before changing
 
