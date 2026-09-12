@@ -991,6 +991,15 @@ pre{white-space:pre-wrap;margin:0;font:12.5px/1.55 ui-monospace,Consolas,monospa
  padding:10px 12px}
 .feed{display:grid;gap:1px;font-size:12.5px;color:var(--ink-2)}
 .feed div{padding:2px 0}
+/* The peek panel (Batch 2): a non-modal slide-over OUTSIDE .wrap, so the
+   poll's innerHTML swap cannot destroy it. Chrome only — ink and surface. */
+.peek{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);z-index:5;
+ background:var(--surface);border-left:1px solid var(--line);
+ box-shadow:-24px 0 48px rgba(0,0,0,.5);padding:14px 16px;overflow:auto}
+.peek .panel-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.peek .panel-head h2{font-size:13.5px;font-weight:600;margin:0;flex:1;
+ letter-spacing:0}
+.drawer-absent{color:var(--muted);font-size:12.5px;margin:6px 0 2px}
 .foot{color:var(--muted);font-size:11.5px;margin-top:22px;text-align:center}
 body.offline .live .dot{animation:none;background:var(--muted)}
 @media (min-width:1280px){.wf-plot{--gutter:260px}.wf-track{height:26px}
@@ -1001,7 +1010,7 @@ body.offline .live .dot{animation:none;background:var(--muted)}
    contexts where a positioned bar says nothing; the twin carries every value a
    bar carries, which is why it exists. The ID selectors beat `[hidden]`. */
 @media print,(forced-colors:active){
- .wf-plot,.stack,.track,.ceil{display:none}
+ .wf-plot,.stack,.track,.ceil,.peek{display:none}
  #l0,#l1{display:block!important}
  .viewswitch{display:none}
 }
@@ -1092,9 +1101,65 @@ JS = """
   var cursor = document.body.dataset.eventCursor || '0';  // opaque: echoed, never parsed
   var quiet = 0, fails = 0, busy = false, dirty = false;
 
+  // ---- the peek panel (Batch 2, S1.5). Injects the SERVER-rendered
+  // fragment from /api/node verbatim; renders no word, formats nothing.
+  var panel = document.getElementById('peek');
+  var panelNode = null, panelHtml = '', panelFrom = null;
+  function closePanel() {
+    if (!panel || panel.hidden) return;
+    panel.hidden = true; panelNode = null; panelHtml = '';
+    if (panelFrom && document.contains(panelFrom)) panelFrom.focus();
+    panelFrom = null;
+  }
+  function fetchPanel(id, focusIn) {
+    fetch('api/node/' + encodeURIComponent(id) + runq(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) { throw r.status; } return r.json(); })
+      .then(function (doc) {
+        if (doc.token !== token) return closePanel();
+        panelNode = id;
+        // Swap only when the fragment actually CHANGED: an innerHTML swap
+        // resets the reader's scroll, at 1 Hz on a live run, into a <pre>
+        // that is often hundreds of lines.
+        if (doc.html !== panelHtml) {
+          var top = panel.scrollTop;
+          panel.innerHTML = doc.html;
+          panelHtml = doc.html;
+          panel.scrollTop = top;
+        }
+        if (panel.hidden) panel.hidden = false;
+        if (focusIn) {
+          var c = document.getElementById('panel-close');
+          if (c) c.focus();
+        }
+      })
+      .catch(function () { closePanel(); });
+  }
+  function openPanel(id, invoker) {
+    if (!panel) return;
+    panelFrom = invoker || document.activeElement;
+    fetchPanel(id, true);
+  }
+  document.addEventListener('click', function (ev) {
+    if (ev.target.closest && ev.target.closest('#panel-close')) { closePanel(); return; }
+    var a = ev.target.closest && ev.target.closest('a[href^="#step-"]');
+    if (a && wrap.contains(a)) {
+      // No-JS keeps the fragment jump to the inline drawer; with JS the same
+      // link opens the panel and the reader never loses their place.
+      ev.preventDefault();
+      openPanel(a.getAttribute('href').slice('#step-'.length), a);
+    }
+  });
+  addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') closePanel();
+  });
+
   function selecting() {
+    // The panel lives OUTSIDE .wrap, so wrap.contains alone would never
+    // protect a selection made in it (§6.1) - and the panel's own re-fetch
+    // rides behind the same guard.
     var s = window.getSelection();
-    return !!(s && !s.isCollapsed && s.anchorNode && wrap.contains(s.anchorNode));
+    if (!s || s.isCollapsed || !s.anchorNode) return false;
+    return wrap.contains(s.anchorNode) || !!(panel && panel.contains(s.anchorNode));
   }
   function openIds() {
     return Array.prototype.map.call(
@@ -1122,6 +1187,9 @@ JS = """
         open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
         if (focused) { var f = document.getElementById(focused); if (f) f.focus(); }
         if (echoShown) { var e = document.getElementById('key-echo'); if (e) e.hidden = false; }
+        // An open panel follows the run: re-fetched after each successful
+        // swap, behind the same selecting() guard, swap-only-when-changed.
+        if (panelNode && panel && !panel.hidden) fetchPanel(panelNode, false);
       })
       .catch(function () {})
       .then(function () { wrap.classList.remove('stale'); busy = false; });
@@ -1140,6 +1208,8 @@ JS = """
         // is the exact failure the run token exists to prevent.
         if (doc.token !== token) {
           token = doc.token; cursor = '0'; quiet = 0; dirty = true;
+          closePanel();   // it described the OLD run; a same-named step in
+                          // the new one would wear its clothes
           if (refresh()) { dirty = false; }
           return;
         }
@@ -1586,6 +1656,40 @@ def _feed_card(run_dir: Path, events: list[dict], labels: dict[str, str],
     return "\n".join(out)
 
 
+# Batch 2 (D1 as amended by D7): above this many SETTLED drawers, the settled
+# ones stop carrying inline bodies. Status-aware on purpose — failed, blocked
+# and running drawers keep full bodies at ANY run size, which is the board's
+# own pinned collapse rule ("the loud minority never collapses") applied to
+# L2: the 120-node reader's question is "which one broke", and that is the one
+# drawer a status-blind threshold would have emptied. The number comes from
+# the synthetic fixture (mission_bench --synthetic): ~600 B of drawer HTML per
+# node per swap, so 30 settled drawers ≈ 18 KB — about the weight of the rest
+# of the page; beyond it the quiet majority dominates every refresh tick. At
+# domain-expert scale (a run this size fits on the board) nothing degrades and
+# the render is byte-identical.
+DRAWER_INLINE_MAX = 30
+
+# A5: worded for the weakest reader who will see it. Both reader kinds do —
+# the JS reader who opens the drawer stack inline reads it too — and for a
+# no-JS reader the panel does not exist, so the sentence names both paths
+# with their honest conditions and no CLI command (not in the DE guide's
+# vocabulary). A named absence, never a blank. TWO constants because the full
+# sentence repeated per drawer was ~330 B a drawer — most of the weight the
+# threshold exists to shed — so the explanation renders ONCE at the card top
+# and each degraded drawer carries the short form.
+DRAWER_ABSENT_SENTENCE = (
+    "On a run this size, steps that finished quietly stop carrying their "
+    "detail inline. Click a step's name in the list above to open it in the "
+    "side panel (needs JavaScript), or ask the assistant — nothing is lost, "
+    "only left off this page. Anything running, needing you, or stopped "
+    "keeps its full detail below."
+)
+DRAWER_ABSENT_BODY = (
+    "Finished quietly — open it from its name above (needs JavaScript), or "
+    "ask the assistant."
+)
+
+
 def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
              state: dict | None = None, labels: dict[str, str] | None = None,
              usage: dict | None = None) -> str:
@@ -1598,9 +1702,32 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
     `usage` is the page's already-computed `collect_run`, passed for the same
     reason `state` and `labels` are: the agent block in each drawer reads it,
     and without it one page render walks every phase dir once per step.
+
+    Over `DRAWER_INLINE_MAX` settled drawers, each SETTLED drawer degrades to
+    its summary line plus `DRAWER_ABSENT_SENTENCE` (D7) — and skips its
+    `node_drawer` walk entirely, so the threshold saves server work as well
+    as transfer. Loud drawers are never degraded, so a live run crossing the
+    threshold mid-read (a map fan-out materializes items at runtime) changes
+    no drawer a reader is likely to have open.
     """
+    if state is None:
+        state = mv.read_json(Path(run_dir) / "state.json") or {}
+    statuses = {nid: ((state.get("nodes") or {}).get(nid) or {}).get("status")
+                for nid in node_ids}
+    settled = [nid for nid in node_ids if statuses[nid] in ("done", "skipped")]
+    degrade = set(settled) if len(settled) > DRAWER_INLINE_MAX else set()
+    if degrade and labels is None:
+        labels = mv.load_labels(Path(run_dir), repo_root)
     out = ['<div class="card"><h2>what happened at each step</h2>']
+    if degrade:
+        out.append(f'<p class="drawer-absent">{e(DRAWER_ABSENT_SENTENCE)}</p>')
     for node_id in node_ids:
+        if node_id in degrade:
+            out.append(f'<details id="step-{e(node_id)}">'
+                       f'<summary>{e(mv.label_for(labels or {}, node_id))}</summary>'
+                       f'<p class="drawer-absent">{e(DRAWER_ABSENT_BODY)}</p>'
+                       "</details>")
+            continue
         drawer = node_drawer(run_dir, node_id, repo_root, state=state, labels=labels,
                              usage=usage)
         body = "\n".join(drawer["lines"])
@@ -1611,6 +1738,23 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
         out.append("<p>(nothing to show yet)</p>")
     out.append("</div>")
     return "\n".join(out)
+
+
+def _panel_fragment(drawer: dict, raw: list[dict]) -> str:
+    """The peek panel's body (§6.1): the SAME renderers as the inline drawer
+    — `node_drawer` (over node_detail/node_agent_lines) plus the glossed
+    raw-record table — assembled here, never a fourth formatter (S1
+    condition a). The client injects it verbatim: every word and every
+    formatted value in the panel is server-rendered."""
+    out = [f'<div class="panel-head"><h2>{e(drawer["label"])}</h2>'
+           '<button class="btn" id="panel-close">close</button></div>',
+           f'<pre>{e(chr(10).join(drawer["lines"]))}</pre>',
+           "<table><tr><th>term</th><th>what it means</th><th>value</th></tr>"]
+    for item in raw:
+        out.append(f'<tr><td>{e(item["term"])}</td><td>{e(item["gloss"])}</td>'
+                   f'<td>{e(item["value"])}</td></tr>')
+    out.append("</table>")
+    return "".join(out)
 
 
 # S1.4 - the rail cache, in two layers, because the two facts change on
@@ -2023,6 +2167,10 @@ def render_page(run_dir: Path | None, repo_root: Path, runs_root: Path,
         f' data-run="{e(run_dir.name if run_dir else "")}">\n'
         f'<div class="shell">{render_nav(runs_root, run_dir)}'
         f'<div class="wrap">{body}</div></div>\n'
+        # OUTSIDE .wrap by construction: refresh() swaps .wrap's innerHTML,
+        # and a panel inside it would die on every poll (§6.1).
+        '<aside id="peek" class="peek" role="complementary" '
+        'aria-label="step detail" hidden></aside>\n'
         f"<script>{client_js()}</script>\n"
     )
 
@@ -2126,6 +2274,10 @@ def handle(path: str, runs_root: Path, pinned: Path | None, repo_root: Path,
         drawer = node_drawer(run_dir, node_id, repo_root)
         drawer["raw"] = raw_record(run_dir, node_id)
         drawer["token"] = token
+        # D4: the route grows ONE field — the server-rendered panel fragment,
+        # assembled from the same drawer/raw projections this response already
+        # carries. The route table does not change.
+        drawer["html"] = _panel_fragment(drawer, drawer["raw"])
         return _json(drawer)
 
     if route == "/api/evidence":

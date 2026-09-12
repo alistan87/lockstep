@@ -277,10 +277,26 @@ def profile(runs_root: Path, repo_root: Path) -> dict:
                             state=state, labels=labels, usage=usage))
     # The same call WITHOUT the shared projection - not a cost the page pays
     # today, but the one S1.5's lazy detail would reintroduce per drawer if
-    # built without passing a projection through. Kept as the guard rail.
+    # built without passing a projection through. Kept as the guard rail:
+    # the panel's per-click fetch is ONE node, and it must not quietly
+    # become N. (Post-Batch-2, `drawers_shared`/`drawers_unshared` measure
+    # the INLINE stack, whose settled drawers degrade over
+    # ms.DRAWER_INLINE_MAX - the threshold's byte win shows up in
+    # full_render on an over-threshold fixture.)
     clear_caches()
     centres["drawers_unshared"], _ = measure(
         lambda: ms._drawers(run_dir, node_ids, repo_root))
+
+    # Batch 2: what one panel click costs, cold and warm. This is the request
+    # the page makes when a reader opens a step - and re-makes after each
+    # swap while the panel is open, so the warm number is the recurring one.
+    if node_ids:
+        first = node_ids[0]
+        clear_caches()
+        centres["node_fetch_cold"], _ = measure(
+            lambda: ms.handle(f"/api/node/{first}", runs_root, run_dir, repo_root))
+        centres["node_fetch_warm"], _ = measure(
+            lambda: ms.handle(f"/api/node/{first}", runs_root, run_dir, repo_root))
 
     out["verdict"] = verdict(centres, out["shape"])
     return out

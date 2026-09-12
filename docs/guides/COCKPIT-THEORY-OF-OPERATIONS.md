@@ -458,6 +458,22 @@ Four things about it that are decisions, not accidents:
 - **Every response carries a run token.** A meta-refresh page reset its client
   state by construction; a poll does not, so at a segment boundary the client
   would hold segment A's cursor against segment B forever.
+- **L2 opens in a peek panel, and the inline drawer stack has a status-aware
+  threshold** (mission-ux work order Batch 2). A step-name click fetches
+  `/api/node/<id>`'s `html` field — the SAME `node_drawer` output plus the
+  glossed raw-record table, server-rendered, injected verbatim into an
+  `<aside>` that lives OUTSIDE `.wrap` so the poll's swap cannot destroy it.
+  While open on a live run it re-fetches after each successful refresh,
+  swap-only-when-changed (an unconditional swap resets the reader's scroll at
+  1 Hz), behind a `selecting()` guard that covers the panel as well as the
+  wrap. With JavaScript off the links keep their `#step-` fragment jumps and
+  the inline drawers carry everything. Over `DRAWER_INLINE_MAX` SETTLED
+  drawers, the settled ones degrade to a summary plus a named-absence
+  sentence — failed, blocked and running drawers keep full bodies at any run
+  size, the board's loud-first collapse rule applied to L2. The sentence is
+  worded for the weakest reader who sees it: it names the panel WITH its
+  JavaScript condition and the assistant as the always-true path, and no CLI
+  command.
 
 ### The agent block (L2)
 

@@ -134,7 +134,13 @@ MISSION shows, and it opens further if you want it to:
   was allowed to use while doing it, and how many times it reached for a file.
   Where that count says **not reported by this harness**, it means that
   assistant cannot tell anyone — never that it did nothing. Never the raw text a
-  worker wrote; that is not something anyone should have to read.
+  worker wrote; that is not something anyone should have to read. Clicking a
+  step's name opens this in a panel beside the board, so you never lose your
+  place; press Esc or its close button to put it away. On a very large run,
+  steps that finished quietly stop carrying their detail further down the
+  page — the page says so in place, and the panel (or the assistant) still
+  has all of it. Anything running, needing you, or stopped always keeps its
+  full detail, at any size.
 - **show the raw record** — the machinery's own names for things, each with one
   line saying what it means. Nothing here is ever something you have to act on.
 

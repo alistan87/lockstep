@@ -545,7 +545,7 @@ def test_forced_colors_and_print_fall_to_the_table_view():
     every value a bar carries, which is why it exists."""
     css = mission_server.CSS
     block = css.split("@media print,(forced-colors:active){")[1].split("\n}")[0]
-    assert ".wf-plot,.stack,.track,.ceil{display:none}" in block
+    assert ".wf-plot,.stack,.track,.ceil,.peek{display:none}" in block
     assert "#l0,#l1{display:block!important}" in block, "ID selectors beat [hidden]"
     assert ".viewswitch{display:none}" in block
 
@@ -1252,6 +1252,128 @@ def test_the_rail_does_not_say_running_over_a_dead_driver(tmp_path):
     assert row["word"] == "running", "a live driver must not be reported dead"
 
 
+# ------------- the peek panel and the drawer threshold (mission-ux Batch 2)
+
+def test_api_node_carries_a_server_rendered_panel_fragment(tmp_path):
+    """§6.1/D4: the route grows ONE field — the panel's body, server-rendered.
+    The fragment is `node_drawer`'s lines plus the glossed raw-record table:
+    the same renderers as the inline drawer, never a fourth formatter (S1
+    condition a)."""
+    run = page_run(tmp_path)
+    doc = json.loads(get(run, "/api/node/produce", tmp_path)[2])
+    frag = doc["html"]
+    assert 'id="panel-close"' in frag
+    drawer = mission_server.node_drawer(run, "produce", ROOT)
+    assert html.escape(drawer["label"]) in frag or drawer["label"] in frag
+    assert html.escape("\n".join(drawer["lines"])) in frag
+    for item in mission_server.raw_record(run, "produce"):
+        assert html.escape(item["gloss"]) in frag, item["term"]
+
+
+def test_the_panel_fragment_names_no_stdout_bodies(tmp_path):
+    run = page_run(tmp_path)
+    (run / "phases" / "produce" / "stdout.log").write_text(
+        "SECRET MODEL OUTPUT\n" * 20, encoding="utf-8")
+    doc = json.loads(get(run, "/api/node/produce", tmp_path)[2])
+    assert "stdout.log" in doc["html"]
+    assert "SECRET MODEL OUTPUT" not in doc["html"]
+
+
+def test_the_panel_aside_lives_outside_the_swapped_wrap(tmp_path):
+    """§6.1: refresh() swaps .wrap's innerHTML; a panel inside it would die on
+    every poll. So the <aside> is served outside .wrap, hidden, and the wrap
+    fragment /api/state ships never contains it."""
+    run = page_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert '<aside id="peek"' in body
+    aside_at = body.index('<aside id="peek"')
+    assert aside_at > body.index('class="wrap"')
+    assert 'hidden' in body[aside_at:aside_at + 120]
+    wrap_html, _ = mission_server.render_wrap(run, ROOT, tmp_path, now=PAGE_NOW)
+    assert "peek" not in wrap_html
+
+
+def test_the_panel_client_keeps_the_reader_discipline():
+    """The pinned client behaviours §6.1 requires: intercept (no-JS keeps the
+    fragment jump), swap-only-when-changed, scroll preserved, the selecting()
+    guard extended to the panel, Esc closes, the token boundary closes."""
+    js = mission_server.JS
+    assert "ev.preventDefault()" in js
+    assert "doc.html !== panelHtml" in js
+    assert "panel.scrollTop = top" in js
+    assert "panel.contains(s.anchorNode)" in js
+    assert "if (ev.key === 'Escape') closePanel();" in js
+    boundary = js.split("if (doc.token !== token) {")[1].split("return;")[0]
+    assert "closePanel()" in boundary
+    after_swap = js.split("wrap.innerHTML = doc.html;")[1].split(".catch")[0]
+    assert "fetchPanel(panelNode, false)" in after_swap
+
+
+def _bulk_run(tmp_path: Path, settled: int, loud: dict[str, str] | None = None):
+    """A run with `settled` done nodes plus `loud` (id -> status) extras, for
+    driving `_drawers` around DRAWER_INLINE_MAX."""
+    run = tmp_path / "bulk"
+    run.mkdir(parents=True, exist_ok=True)
+    nodes = {f"n{i}": {"node_id": f"n{i}", "role": "work", "kind": "harness",
+                       "status": "done", "attempts": 1} for i in range(settled)}
+    for nid, status in (loud or {}).items():
+        nodes[nid] = {"node_id": nid, "role": "work", "kind": "harness",
+                      "status": status, "attempts": 1}
+    state = {"flow_name": "bulk", "nodes": nodes}
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return run, state, list(nodes)
+
+
+def test_drawers_keep_full_bodies_at_the_threshold(tmp_path):
+    """§6.2: at or below DRAWER_INLINE_MAX settled drawers, the render is
+    exactly what it was — full inline bodies, no absence sentence."""
+    run, state, ids = _bulk_run(tmp_path, mission_server.DRAWER_INLINE_MAX)
+    out = mission_server._drawers(run, ids, ROOT, state=state, labels={},
+                                  usage={"rows": []})
+    assert "drawer-absent" not in out
+    assert out.count("<pre>") == len(ids)
+
+
+def test_settled_drawers_degrade_past_the_threshold(tmp_path):
+    run, state, ids = _bulk_run(tmp_path, mission_server.DRAWER_INLINE_MAX + 1)
+    out = mission_server._drawers(run, ids, ROOT, state=state, labels={},
+                                  usage={"rows": []})
+    # the full explanation once at the card top; the short form per drawer
+    assert out.count("On a run this size") == 1
+    assert out.count("Finished quietly") == len(ids)
+    assert "<pre>" not in out
+    # every degraded drawer still has its summary line and its anchor
+    for nid in ids:
+        assert f'id="step-{nid}"' in out
+
+
+def test_a_failed_nodes_drawer_never_degrades(tmp_path):
+    """D7: the board's pinned collapse rule applied to L2 — anything running,
+    anything that needs you, anything that went wrong keeps its full body at
+    ANY run size. The 120-node reader's question is "which one broke"."""
+    run, state, ids = _bulk_run(
+        tmp_path, mission_server.DRAWER_INLINE_MAX + 5,
+        loud={"broke": "failed", "busy": "running", "asks": "blocked"})
+    out = mission_server._drawers(run, ids, ROOT, state=state, labels={},
+                                  usage={"rows": []})
+    assert out.count("<pre>") == 3            # exactly the loud minority
+    for nid in ("broke", "busy", "asks"):
+        drawer = out.split(f'id="step-{nid}"')[1].split("</details>")[0]
+        assert "<pre>" in drawer and "drawer-absent" not in drawer
+
+
+def test_the_over_threshold_sentence_is_worded_for_the_weakest_reader():
+    """A5: both reader kinds see this sentence, and for the no-JS reader the
+    panel does not exist — so it names the panel WITH its condition, names
+    the assistant (the always-true path), and no CLI command (`lockstep` is
+    not in the DE guide's vocabulary)."""
+    for s in (mission_server.DRAWER_ABSENT_SENTENCE, mission_server.DRAWER_ABSENT_BODY):
+        assert "needs JavaScript" in s
+        assert "ask the assistant" in s
+        assert "lockstep" not in s
+    assert "nothing is lost" in mission_server.DRAWER_ABSENT_SENTENCE
+
+
 def test_every_css_variable_the_stylesheet_uses_is_defined():
     """F7: `var(--accent)` and `var(--raise)` were referenced and never
     defined — invalid at computed-value time, so the critical-path edge and
@@ -1331,7 +1453,14 @@ def test_nothing_a_model_or_a_flow_author_controls_can_inject_markup(tmp_path):
     assert html.escape(XSS) in json.loads(get(run, "/api/state", tmp_path)[2])["html"]
     assert XSS in json.loads(get(run, "/api/question", tmp_path)[2])["question"]
     js = mission_server.JS
-    assert js.count("innerHTML") == 1 and "wrap.innerHTML = doc.html;" in js
+    # Exactly TWO sanctioned sinks, both fed by server-escaped html: the wrap
+    # swap and the peek panel (Batch 2). Anything else is an injection path.
+    assert js.count("innerHTML = ") == 2
+    assert "wrap.innerHTML = doc.html;" in js
+    assert "panel.innerHTML = doc.html;" in js
+    # the panel fragment is escaped server-side like everything else
+    doc = json.loads(get(run, "/api/node/produce", tmp_path)[2])
+    assert html.escape(XSS) in doc["html"] or XSS not in doc["html"]
 
 
 def test_the_waterfall_escapes_a_label_inside_an_attribute(tmp_path):
