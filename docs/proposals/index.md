@@ -29,3 +29,4 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [upstream-response-ow07-feedback.md](upstream-response-ow07-feedback.md) | `plan` | stable | Upstream response: OW-07 consumer feedback — convergent reviews, adoption, and truthful terminal state |
 | [upstream-response-mission-scale.md](upstream-response-mission-scale.md) | `plan` | S1 (1-4) + S3 engine half BUILT through 0.15.0 | Upstream response: MISSION scale, blocker intelligence, and execution provenance |
 | [DESIGN-NOTE-adopt.md](DESIGN-NOTE-adopt.md) | `proposal` | adopted (BUILT 2026-09-08) | Design note: `lockstep adopt` — settling a human-remediated artifact into a run |
+| [mission-ux-work-order.md](mission-ux-work-order.md) | `plan` | accepted 2026-09-12 — building | Work order: MISSION UX — the blocker card, one number per fact, and the peek panel |
