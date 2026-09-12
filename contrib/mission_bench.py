@@ -198,6 +198,7 @@ def clear_caches() -> None:
         with ms._RAIL_LOCK:
             ms._RAIL_MEMBERS.clear()
             ms._RAIL_ROWS.clear()
+            ms._TRACE_MEMO.clear()
     except Exception as e:  # noqa: BLE001
         missed.append(f"mission_server rail cache ({e})")
     if missed:

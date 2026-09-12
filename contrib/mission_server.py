@@ -184,12 +184,43 @@ FEED_LIMIT = 12
 
 # ----------------------------------------------------------------- reading
 
+_TRACE_MEMO: dict[str, tuple] = {}
+_TRACE_MEMO_MAX = 8
+
+
 def _trace_status(run_dir: Path) -> dict | None:
+    """The hash-chain verdict, memoized on the journal's identity.
+
+    Re-chaining is a whole-file read, and ONE render asks for it twice — the
+    chain chip and the feed's raw record, independently. Keyed on
+    `(size, mtime_ns)` for the same reason the attempt-log memo is: the
+    journal is append-only, so a change always moves one of them. Derived and
+    bounded; evicting an entry changes timing only.
+    """
+    path = Path(run_dir) / "events.jsonl"
+    try:
+        st = path.stat()
+        key, fingerprint = str(run_dir), (st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = fingerprint = None
+    if key is not None:
+        with _RAIL_LOCK:
+            hit = _TRACE_MEMO.get(key)
+            if hit is not None and hit[0] == fingerprint:
+                _TRACE_MEMO[key] = _TRACE_MEMO.pop(key)   # refresh on hit
+                return dict(hit[1]) if hit[1] is not None else None
     try:
         from lockstep.state import trace_status
-        return trace_status(Path(run_dir))
+        value = trace_status(Path(run_dir))
     except Exception:  # noqa: BLE001 - a view never raises
-        return None
+        value = None
+    if key is not None:
+        with _RAIL_LOCK:
+            _TRACE_MEMO[key] = (fingerprint, dict(value) if value is not None else None)
+            if len(_TRACE_MEMO) > _TRACE_MEMO_MAX:
+                for stale in list(_TRACE_MEMO)[:len(_TRACE_MEMO) - _TRACE_MEMO_MAX]:
+                    _TRACE_MEMO.pop(stale, None)
+    return dict(value) if value is not None else None
 
 
 def _cost_reader() -> tuple[object | None, str]:
@@ -257,23 +288,31 @@ def _events_after(run_dir: Path, cursor: tuple[str, int, int]) -> tuple[list[dic
     return mission_cursor.read(Path(run_dir), cursor)
 
 
-def _intervals(run_dir: Path) -> dict[str, list[tuple[str, str | None]]]:
+def _intervals(run_dir: Path,
+               events: list[dict] | None = None) -> dict[str, list[tuple[str, str | None]]]:
+    """S1.2: `events` lets a caller that has already parsed the journal hand it
+    over. `render_wrap` had read and parsed `events.jsonl` for the feed and
+    then this read it AGAIN for the timeline — measured at 77% of everything a
+    warm render still touched, the single largest remaining cost after the
+    caches landed. `None` keeps the standalone behaviour for every other
+    caller."""
     reader, _ = _cost_reader()
     if reader is None:
         return {}
     try:
-        return reader.node_intervals(_events(run_dir))  # type: ignore[attr-defined]
+        return reader.node_intervals(  # type: ignore[attr-defined]
+            _events(run_dir) if events is None else events)
     except Exception:  # noqa: BLE001
         return {}
 
 
-def _collect(run_dir: Path) -> dict | None:
+def _collect(run_dir: Path, events: list[dict] | None = None) -> dict | None:
     reader, _ = _cost_reader()
     if reader is None:
         return None
     try:
         return reader.collect_run(  # type: ignore[attr-defined]
-            Path(run_dir), reader.load_field_maps(None))
+            Path(run_dir), reader.load_field_maps(None), events)
     except Exception:  # noqa: BLE001
         return None
 
@@ -423,7 +462,8 @@ def _critical_path(run_dir: Path, spans: dict) -> set[str]:
     return chain
 
 
-def _heal_marks(run_dir: Path, t0, total: float) -> list[dict]:
+def _heal_marks(run_dir: Path, t0, total: float,
+                events: list[dict] | None = None) -> list[dict]:
     """Vertical markers where the engine ROLLED THE TREE BACK.
 
     A heal round is the one event that makes earlier bars on the plot stop
@@ -436,7 +476,7 @@ def _heal_marks(run_dir: Path, t0, total: float) -> list[dict]:
     if not t0 or total <= 0:
         return []
     marks = []
-    for ev in _events(run_dir):
+    for ev in (_events(run_dir) if events is None else events):
         if ev.get("status") != "heal-round":
             continue
         when = mv._parse_ts(ev.get("ts"))
@@ -449,7 +489,9 @@ def _heal_marks(run_dir: Path, t0, total: float) -> list[dict]:
 
 
 def waterfall(run_dir: Path, repo_root: Path | None = None,
-              now: datetime | None = None) -> dict:
+              now: datetime | None = None, *,
+              events: list[dict] | None = None,
+              steps: list[dict] | None = None) -> dict:
     """`{rows, ticks, plotted, span_s, note}` — the timeline's whole geometry.
 
     `note` is why there is no plot when there is no plot, and it rides in the
@@ -465,8 +507,9 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
     Row order is first `running` event; nodes that never ran sort last, in
     graph order, and draw an empty track.
     """
-    steps = mv.step_rows(run_dir, repo_root, collapsed=False)
-    spans = _intervals(run_dir)
+    # S1.2: both are handed over by `render_wrap`, which already has them.
+    steps = mv.step_rows(run_dir, repo_root, collapsed=False) if steps is None else steps
+    spans = _intervals(run_dir, events)
     now = now or datetime.now(timezone.utc)
 
     def start_of(step: dict):
@@ -570,7 +613,7 @@ def waterfall(run_dir: Path, repo_root: Path | None = None,
         row["critical"] = row["node_id"] in critical
     note = reader_note(run_dir)
     return {"rows": rows, "ticks": ticks, "plotted": plotted, "span_s": total,
-            "marks": _heal_marks(run_dir, t0, total) if plotted else [],
+            "marks": _heal_marks(run_dir, t0, total, events) if plotted else [],
             "critical": sorted(critical),
             "note": note if note.get("scope") == "all" else {}}
 
@@ -1742,10 +1785,14 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     state = mv.read_json(run_dir / "state.json") or {}
     flow = mv.read_json(run_dir / "flow.tg.json")
     labels = mv.load_labels(run_dir, repo_root)
-    run = _collect(run_dir)
+    # S1.2: parse the journal ONCE, at the top, and hand it to every reader
+    # below. It was read three times per render - here for the feed, inside
+    # `_collect` for the wall/heal pass, and again inside `_intervals` for the
+    # timeline - which was 77% of everything a warm render still touched.
+    events = _events(run_dir)
+    run = _collect(run_dir, events)
     meter = spend_meter([run] if run else [], [_cap(run_dir)] if run else [])
     chain = chain_chip(run_dir)
-    events = _events(run_dir)
     node_ids = list((state.get("nodes") or {}).keys())
     running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
     ledger = mv.ledger_summary(run_dir, repo_root=repo_root, state=state)
@@ -1789,7 +1836,11 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         '<button class="btn" data-view="l1" aria-pressed="false">show every step</button>'
         "</div></div>",
         render_board(run_dir, repo_root),
-        render_timeline(waterfall(run_dir, repo_root, now=now)),
+        # S1.2: the journal is parsed ONCE per render and handed to the
+        # timeline. It used to be read here and again inside `_intervals` and
+        # `_heal_marks` - 77% of everything a warm render still touched,
+        # measured, and the largest cost left after the caches landed.
+        render_timeline(waterfall(run_dir, repo_root, now=now, events=events)),
         "</div>",
 
         _cost_card(run_dir, cost_stack(run), usage=run),

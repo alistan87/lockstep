@@ -382,3 +382,68 @@ def test_the_rail_cache_actually_hits(tmp_path):
         f"warm rail read {warm_files} files - the row cache is dead")
     # Stated against the COLD cost rather than a constant: a fixture-calibrated
     # threshold went red at 12 runs while nothing was rescanning.
+
+
+def test_the_journal_is_parsed_once_per_render(tmp_path):
+    """S1.2: `render_wrap` read `events.jsonl` THREE times — for the feed, for
+    `collect_run`'s wall/heal pass, and again inside `_intervals` for the
+    timeline. That was 77% of everything a warm render still touched once the
+    caches landed, and it grows with the journal forever.
+
+    Asserted as a multiple of the file, not a byte constant, so it survives a
+    change of fixture."""
+    import mission_server as ms
+
+    runs = mission_bench.synthesize(tmp_path / "runs", runs=2, nodes=4,
+                                    events=400, attempts=2, log_kb=8)
+    run = ms.resolve_run(runs, None, None)
+    journal = (run / "events.jsonl").stat().st_size
+    assert journal > 10_000, "precondition: a journal worth not re-reading"
+
+    mission_bench.clear_caches()
+    ms.render_wrap(run, tmp_path, runs)          # warm every cache first
+
+    # Count the JOURNAL's bytes specifically. `counting()` totals every read a
+    # render makes (state, flow, logs, argv), so asserting against its total
+    # would measure the fixture rather than the claim.
+    import pathlib
+
+    seen = []
+    real = pathlib.Path.read_text
+
+    def watch(self, *a, **k):
+        out = real(self, *a, **k)
+        if self.name == "events.jsonl":
+            seen.append(len(out.encode("utf-8", "replace")))
+        return out
+
+    pathlib.Path.read_text = watch
+    try:
+        ms.render_wrap(run, tmp_path, runs)
+    finally:
+        pathlib.Path.read_text = real
+    # ONE pass. The chain verification is a second, DIFFERENT read of the same
+    # file (it re-chains rather than parsing for display) and is memoized on
+    # the journal's identity, so a warm render pays for it once or not at all.
+    assert len(seen) <= 1, (
+        f"a warm render read the journal in {len(seen)} passes "
+        f"({sum(seen)} B of {journal} B) - it is parsing it more than once")
+
+
+def test_the_projection_does_not_change_what_is_rendered(tmp_path):
+    """The rule every cache and every shared projection here answers to:
+    handing a reader its input may change timing and NOTHING else."""
+    import mission_server as ms
+
+    runs = mission_bench.synthesize(tmp_path / "runs", runs=2, nodes=3,
+                                    events=120, attempts=2, log_kb=4)
+    run = ms.resolve_run(runs, None, None)
+    # A fixed `now`: the geometry extends to the present while anything runs,
+    # so two calls a millisecond apart legitimately differ and would make this
+    # a test of the clock.
+    from datetime import datetime, timezone
+
+    fixed = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    shared = ms.waterfall(run, tmp_path, now=fixed, events=ms._events(run))
+    alone = ms.waterfall(run, tmp_path, now=fixed)
+    assert shared == alone, "the threaded projection rendered something else"

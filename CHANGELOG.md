@@ -6,6 +6,38 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.15.0 — 2026-09-11
+
+S1.2 (one projection per render) and the environment gate — the two
+follow-ups the downstream adoption of 0.14.0 argued for.
+
+**S1.2: the journal is parsed once.** `render_wrap` read `events.jsonl`
+three times per render — for the feed, inside `collect_run`'s wall/heal
+pass, and again inside `_intervals` for the timeline — which profiling put
+at 77% of everything a warm render still touched after the caches landed.
+It is now parsed at the top and handed down; `_intervals`, `_heal_marks`
+and `collect_run` all take an optional pre-read journal and keep their
+standalone behaviour for every other caller. `_trace_status` (a whole-file
+re-chain, asked for twice per render by the chain chip and the feed's raw
+record) is memoized on the journal's identity.
+
+Warm render on a 40-run / 3,000-event fixture: **1,750,760 B → 378,260 B**,
+a 78% cut. Cold: 3,326,312 B → 2,228,312 B.
+
+**The environment gate.** `contrib/portability_check.py` runs the suite the
+way a consumer gets it: `git clone` HEAD into a temp dir (tracked files
+only — no `lockstep.toml`, no `cost-fields.toml`, no `runs/`), build a venv
+under any named interpreter, install, run. Both 0.14.1 defects were
+invisible here because every adversarial round ran on one interpreter
+inside a working tree carrying gitignored files. Running it is now a
+pre-tag rule in CLAUDE.md.
+
+It taught something on its first run: `git archive` gives tracked files but
+not a *repository*, and lockstep needs one — so it reported a failure no
+consumer would ever see. A clone is the consumer's actual condition.
+
+Priority for the remaining slices is the consumer's: S1.5, then S2/S4.
+
 ## 0.14.1 — 2026-09-11
 
 Two defects found by the downstream consumer adopting 0.14.0, both of them

@@ -827,11 +827,16 @@ def read_state(run_dir: Path, retries: int = 3) -> dict | None:
     return None
 
 
-def collect_run(run_dir: Path, maps: dict[str, dict[str, str]]) -> dict:
+def collect_run(run_dir: Path, maps: dict[str, dict[str, str]],
+                events: list[dict] | None = None) -> dict:
+    """S1.2: `events` lets a caller that has already parsed the journal hand
+    it over. The MISSION page parses it for the feed and the timeline, and
+    this read it a THIRD time for the wall/heal pass. `None` keeps the
+    standalone behaviour every other caller (and the CLI) relies on."""
     state = read_state(run_dir)
     if state is None:
         raise FileNotFoundError(f"{run_dir}: state.json unreadable")
-    wall, heals = wall_and_heals(_read_events(run_dir))
+    wall, heals = wall_and_heals(_read_events(run_dir) if events is None else events)
     rows = []
     for node_id, rec in state.get("nodes", {}).items():
         phase_dir = run_dir / "phases" / node_id
