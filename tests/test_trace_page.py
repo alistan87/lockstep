@@ -1033,6 +1033,178 @@ def test_the_raw_record_is_reachable_from_the_page(tmp_path):
         assert html.escape(gloss) in body, gloss
 
 
+# ----------------- the blocker card and the dead driver (mission-ux Batch 0)
+
+def _hold_lock(run: Path, pid: int) -> None:
+    import socket
+    (run / "lock").write_text(json.dumps(
+        {"pid": pid, "hostname": socket.gethostname(),
+         "started": "2026-08-08T09:02:00Z"}), encoding="utf-8")
+
+
+def _dead_pid() -> int:
+    import subprocess
+    proc = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
+                          capture_output=True, text=True, check=True)
+    return int(proc.stdout.strip())
+
+
+def failed_run(tmp_path: Path, *, error: str = "exit code 128 (no result emitted)"):
+    """page_run with the approval decided and the tail step failed — the
+    release-cut shape the work order measured (§1 F2)."""
+    run = page_run(tmp_path, evidence=False)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["approve"].update({"status": "done", "ended_at": _iso(11)})
+    state["nodes"]["deliver"].update({"status": "failed", "attempts": 1,
+                                      "error": error, "started_at": _iso(11),
+                                      "ended_at": _iso(12)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return run
+
+
+def test_the_blocker_card_sits_above_the_fold_on_a_failed_run(tmp_path):
+    """F2: an approval gets a card above the fold; a failure got four hero
+    words and a scroll hunt. Mirror of the offline-note placement test."""
+    run = failed_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.index('class="card blocker"') < body.index("<h2>the steps</h2>")
+
+
+def test_the_blocker_card_carries_the_error_verbatim_and_named_as_machinery(tmp_path):
+    """A3: verbatim is the S2 evidence rule; NAMED as machinery is the guide's
+    rule for machinery vocabulary. And the counts are glossary words — "tried
+    once", never "1 attempt"."""
+    run = failed_run(tmp_path)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "exit code 128 (no result emitted)" in body
+    assert "the machine&#x27;s own words" in body or "the machine's own words" in body
+    assert "tried once" in body
+    assert "1 attempt" not in body
+    assert "Ask the assistant" in body      # the guide's own next step, last
+    # deliver is terminal, and saying nothing invites a scroll hunt for the
+    # dependents that do not exist
+    assert "nothing else is waiting on it" in body
+
+
+def test_the_blocker_card_counts_the_steps_waiting_behind_the_failure(tmp_path):
+    run = page_run(tmp_path, evidence=False)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["produce"].update({"status": "failed", "attempts": 2,
+                                      "error": "provider said 429"})
+    for nid in ("render-evidence", "approve", "deliver"):
+        state["nodes"][nid].update({"status": "pending"})
+        state["nodes"][nid].pop("started_at", None)
+        state["nodes"][nid].pop("ended_at", None)
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "3 steps are waiting behind this one" in body
+    assert "tried twice" in body
+
+
+def test_a_decision_still_outranks_the_blocker_card(tmp_path):
+    """Precedence (§4.2): a waiting human outranks a stalled branch; both
+    render."""
+    run = page_run(tmp_path)          # approve blocked, evidence present
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"].update({"status": "failed", "attempts": 1,
+                                      "error": "boom"})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert body.index("needs you — a decision") < body.index('class="card blocker"')
+
+
+def test_no_blocker_card_on_a_healthy_run(tmp_path):
+    body = get(page_run(tmp_path), "/", tmp_path)[2].decode("utf-8")
+    assert 'class="card blocker"' not in body
+
+
+def test_a_dead_drivers_run_does_not_render_as_running(tmp_path):
+    """F8: kill the driver mid-node (a session limit does exactly this on
+    this machine) and state.json still says `running` — the page said
+    "running" with a growing clock and a pulsing dot, forever, over a corpse.
+    The guide's rule: nothing on screen may be ambiguous between fine and
+    broken."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["approve"].update({"status": "done", "ended_at": _iso(11)})
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _hold_lock(run, _dead_pid())
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "stopped unexpectedly" in body
+    assert "NOT alive" in body                       # the lock's words, verbatim
+    assert "Ask the assistant to restart it" in body
+    assert ">not running</span>" in body             # the chip stops pretending
+    assert 'class="chip live"' not in body           # and the dot stops pulsing
+
+
+def test_a_live_lock_keeps_a_running_run_running(tmp_path):
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _hold_lock(run, os.getpid())
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "stopped unexpectedly" not in body
+    assert ">running</span>" in body
+
+
+def test_a_copy_that_cannot_check_liveness_says_so(tmp_path, monkeypatch):
+    """D6's named absence: a cockpit copied without the lockstep package must
+    not render a healthy "running" by omission — the same rule as the missing
+    cost reader."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    absent = {"state": "unavailable", "pid": None, "hostname": None,
+              "line": "whether a driver is alive cannot be checked from this "
+                      "copy — the lockstep package is not importable here"}
+    monkeypatch.setattr(mission_server.mv, "driver_presence", lambda rd: absent)
+    body = get(run, "/", tmp_path)[2].decode("utf-8")
+    assert "cannot be checked from this copy" in body
+    assert "stopped unexpectedly" not in body        # it does not claim what it cannot know
+
+
+def test_the_rail_does_not_say_running_over_a_dead_driver(tmp_path):
+    """The rail row and the board describe the SAME run on the same page; one
+    saying "running" while the other says "stopped unexpectedly" is the
+    two-surfaces split the glossary tests exist to prevent. Presence changes
+    with no state.json write, so the check lives OUTSIDE the row cache."""
+    run = page_run(tmp_path)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["deliver"].update({"status": "running", "attempts": 1,
+                                      "started_at": _iso(11)})
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    mission_server._RAIL_MEMBERS.clear()
+    mission_server._RAIL_ROWS.clear()
+    rows, _ = mission_server.run_list(tmp_path, run)
+    row = next(r for r in rows if r["name"] == run.name)
+    assert row["word"] == "stopped unexpectedly" and row["cls"] == "bad"
+
+    _hold_lock(run, os.getpid())
+    rows, _ = mission_server.run_list(tmp_path, run)
+    row = next(r for r in rows if r["name"] == run.name)
+    assert row["word"] == "running", "a live driver must not be reported dead"
+
+
+def test_every_css_variable_the_stylesheet_uses_is_defined():
+    """F7: `var(--accent)` and `var(--raise)` were referenced and never
+    defined — invalid at computed-value time, so the critical-path edge and
+    the rail highlight silently painted nothing, and no test sees pixels.
+    Definitions are checkable mechanically even though pixels are not; this
+    closes the class."""
+    import re
+    css = mission_server.stylesheet()
+    defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", css))
+    used = set(re.findall(r"var\((--[a-z0-9-]+)", css))
+    assert used <= defined, f"used but never defined: {sorted(used - defined)}"
+    assert {"--raise", "--accent"} <= defined     # the two that motivated this
+
+
 def test_a_stale_open_interval_is_not_measured_to_now(tmp_path):
     """An interval left open by a crash belongs to a step that is NOT running.
     Measuring it to `now` grows forever: the bar stretches across the plot and

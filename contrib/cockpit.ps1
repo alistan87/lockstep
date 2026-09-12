@@ -446,7 +446,13 @@ function Get-HeadlineLine {
               $reason = if ($terminal.reason) { $terminal.reason } else { 'refused' }
               "refused: $($reason -replace '_', ' ')"
             }
-            elseif ($failed.Count) { 'stopped with a problem' }
+            elseif ($failed.Count) {
+              # A3 (mission-ux work order): "stopped with a problem" beside
+              # steps that are visibly still working is a contradiction on one
+              # screen. Mirrors mission_view.headline.
+              if ($running.Count) { 'a step stopped, other work continues' }
+              else { 'stopped with a problem' }
+            }
             elseif ($blocked.Count) { 'needs you' }
             elseif ($running.Count) { 'running' }
             elseif ($settled -eq $total) { 'done' }
@@ -464,7 +470,11 @@ function Get-HeadlineLine {
       $began = [datetime]::Parse($State.started_at, [cultureinfo]::InvariantCulture,
                                  [System.Globalization.DateTimeStyles]::AdjustToUniversal)
       $until = (Get-Date).ToUniversalTime()
-      if (-not ($running.Count -or $blocked.Count -or $failed.Count) -and $settled -eq $total) {
+      # A FAILED run's clock freezes exactly as a done run's does (F1): the
+      # number beside "stopped with a problem" otherwise grows forever.
+      # Mirrors mission_view.headline's condition.
+      if (-not ($running.Count -or $blocked.Count) -and $total -and
+          ($failed.Count -or $settled -eq $total)) {
         $ends = @($recs | ForEach-Object { $_.ended_at } | Where-Object { $_ })
         if ($ends.Count) {
           $last = ($ends | ForEach-Object {

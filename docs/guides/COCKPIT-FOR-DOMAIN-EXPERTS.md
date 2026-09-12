@@ -80,6 +80,8 @@ Those words on MISSION mean exactly this:
 | **needs you - resume from a terminal to answer** | the run reached your question while nobody was at a keyboard, so it parked. Nothing was decided for you; the assistant restarts it in a terminal and the question is asked there, once, for real |
 | **done** | finished |
 | **stopped with a problem** | something went wrong; ask the assistant |
+| **a step stopped, other work continues** | one step failed while other steps keep working; the stopped step never restarts on its own — ask the assistant |
+| **stopped unexpectedly** | the tool driving this run is gone — nothing is spending and nothing will finish on its own; ask the assistant to restart it |
 | **refused: …** | the run never started — it found something unsafe to run over (the rest of the line says what) and stopped before spending anything. Ask the assistant; nothing was lost |
 
 MISSION also shows spend, like `agent tasks used 9 of 25`. An "agent task" is one
@@ -129,6 +131,17 @@ MISSION shows, and it opens further if you want it to:
   worker wrote; that is not something anyone should have to read.
 - **show the raw record** — the machinery's own names for things, each with one
   line saying what it means. Nothing here is ever something you have to act on.
+
+When a step stops with a problem, the page says so near the top, in a card —
+not somewhere you have to scroll for. The card names the step, shows the
+machine's own words for what went wrong, how many times the step was tried,
+and how many steps are waiting behind it. That last number is a fact about
+how the plan is wired together, never a schedule. The card ends with the only
+move that exists: **ask the assistant** — a stopped step never restarts on
+its own. And if the whole run stops because the tool driving it is gone, the
+page says **stopped unexpectedly** and shows the machine's own record of who
+was driving; nothing is spending when it says that, and restarting is the
+assistant's job.
 
 Three things about the page are worth knowing. It **only reads files** — there
 is no button on it that can change anything, which is why a decision still

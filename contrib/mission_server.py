@@ -787,7 +787,10 @@ CSS = """
  --inset:#0e0f11;      /* evidence, pre blocks, the meter track */
  --line:rgba(255,255,255,.07);
  --line-2:rgba(255,255,255,.045);
+ --raise:#191b1e;      /* one step above --surface: the rail's hover/current (F7) */
  --ink:#fff; --ink-2:#c3c2b7; --muted:#8a8f98;
+ --accent:var(--ink); /* the critical path is chrome, and chrome is ink (F7);
+                         a hue here would be a fifth colour meaning */
  --grid:#232529; --axis:#2e3136;
  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
  COST_VARS   /* generated from COST_HEX: one source, or the stylesheet and the
@@ -873,6 +876,13 @@ body{margin:0;padding:20px 20px 56px;background:var(--plane);color:var(--ink);
 .meter-foot{color:var(--muted);font-size:11.5px;margin-top:7px}
 .decide{border-left:2px solid var(--warning)}
 .decide h2{color:var(--warning);font-size:12.5px}
+/* The blocker card (work order Batch 0). --critical is a status step doing
+   status work — a failed step's card — not a categorical as chrome. */
+.blocker{border-left:2px solid var(--critical)}
+.blocker h2{color:var(--critical);font-size:12.5px}
+.blocker .blocker-name{margin:0 0 6px;font-size:13.5px}
+.blocker .blocker-name a{color:var(--ink);text-decoration:none}
+.blocker .blocker-name a:hover{text-decoration:underline}
 /* A question is not a decision, and it is not a severity either, so it takes
    INK rather than a hue. Slot-1 blue here — which is what the first cut used —
    would be the cost stack's "input" colour doing duty as chrome, and a
@@ -1376,6 +1386,70 @@ def _decision_card(run_dir: Path) -> str:
     return ""
 
 
+def _blocker_card(run_dir: Path, state: dict, flow: dict | None,
+                  presence: dict | None, labels: dict[str, str]) -> str:
+    """The failure case's card(s) — work order §4.2/§4.3 (F2, F8).
+
+    Rendered directly after `_decision_card`: a waiting human outranks a
+    stalled branch (and the decision card's own instruction — resume from a
+    terminal — is also the stale card's remedy), stale before blocker (a dead
+    driver explains why nothing moves), and all of them render when all are
+    true. The words follow the DE guide's rules: the error is verbatim but
+    NAMED as machinery, counts are glossary words ("tried once", never
+    "1 attempt"), the stalled-behind number is a dependency fact per entry
+    and never summed (D8), and the last line is the guide's own next step —
+    a card that names a problem without naming whose move it is fails the
+    test the decision card passes.
+    """
+    out: list[str] = []
+    if mv.driver_vanished(state, presence):
+        out.append(
+            '<div class="card blocker"><h2>✗ stopped unexpectedly</h2>'
+            '<p class="hero-sub">The tool driving this run is gone — nothing is '
+            'being worked on and nothing is spending.</p>'
+            f'<div class="evidence">the machine\'s own words: {e((presence or {}).get("line"))}</div>'
+            '<p class="terminal-note">Ask the assistant to restart it — a run '
+            'never restarts on its own.</p></div>'
+        )
+    elif (presence or {}).get("state") == "unavailable" and any(
+            r.get("status") == "running"
+            for r in (state.get("nodes") or {}).values()):
+        # Named absence (D6): a copy that cannot check liveness must say so
+        # exactly where a healthy "running" render could be a lie — never
+        # render healthy by omission.
+        out.append(f'<p class="stale-note" role="status">{e(presence["line"])}</p>')
+
+    blockers = mv.blocker_summary(run_dir, state, flow, labels=labels)
+    if blockers:
+        head = ("a step stopped, other work continues"
+                if blockers[0]["others_running"] else "stopped with a problem")
+        parts = [f'<div class="card blocker"><h2>✗ {e(head)}</h2>']
+        for b in blockers:
+            parts.append(f'<p class="blocker-name"><a href="#step-{e(b["node_id"])}">'
+                         f'{e(b["label"])}</a></p>')
+            if b["error"]:
+                parts.append('<div class="evidence">the machine\'s own words: '
+                             f'{e(b["error"])}</div>')
+            else:
+                parts.append('<p class="hero-sub">No reason was recorded for '
+                             'this stop.</p>')
+            facts = [mv.tried_phrase(b["attempts"])]
+            if b["stalled"] is None:
+                pass  # no flow copy: refuse to guess, never say zero
+            elif b["stalled"] == 0:
+                facts.append("nothing else is waiting on it")
+            else:
+                s = "" if b["stalled"] == 1 else "s"
+                facts.append(f'{b["stalled"]} step{s} '
+                             f'{"is" if b["stalled"] == 1 else "are"} waiting '
+                             'behind this one')
+            parts.append(f'<p class="hero-sub">{e("  ·  ".join(facts))}</p>')
+        parts.append('<p class="terminal-note">Ask the assistant — a stopped '
+                     'step never restarts on its own.</p></div>')
+        out.append("".join(parts))
+    return "\n".join(out)
+
+
 def cost_absence(run_dir: Path, usage: dict | None) -> tuple[str, str]:
     """`(sentence, detail)` for a cost block with nothing in it.
 
@@ -1627,6 +1701,24 @@ def _rail_row(d: Path) -> dict | None:
     return row
 
 
+def _true_running_word(d: Path, row: dict) -> dict:
+    """A rail row that would say `running` is re-checked against the lock,
+    LIVE and outside the cache: presence changes with no state.json write, so
+    a cached "running" over a dead driver would never correct itself — and a
+    rail saying "running" beside a board saying "stopped unexpectedly" about
+    the SAME run is two surfaces disagreeing on one page (F8). Only rows
+    already wearing the running word pay the lock read, which is at most the
+    handful of live runs. A "running" row implies running nodes, so the
+    presence states suffice: dead, or none while nodes record running, is
+    exactly `driver_vanished`'s rule."""
+    if row.get("word") != mv.GLOSSARY.get("running", "running"):
+        return row
+    presence = mv.driver_presence(d)
+    if presence and presence.get("state") in ("dead", "none"):
+        return {**row, "word": "stopped unexpectedly", "cls": "bad"}
+    return row
+
+
 def run_list(runs_root: Path, current: Path | None,
              limit: int = 12) -> tuple[list[dict], int]:
     """Recent runs, newest first, for the switcher.
@@ -1655,6 +1747,7 @@ def run_list(runs_root: Path, current: Path | None,
         row = _rail_row(d)
         if row is None:
             continue
+        row = _true_running_word(d, row)
         row["current"] = bool(current and d.resolve() == current.resolve())
         out.append(row)
     return out, len(ready)
@@ -1707,7 +1800,7 @@ def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
             word, cls = mv.GLOSSARY.get("blocked", "needs you"), "warn"
         else:
             word, cls = mv.GLOSSARY.get("done", "done"), "ok"
-        out.append({
+        row = _true_running_word(d, {
             "name": d.name,
             "flow": (state.get("flow_name") or d.name.rsplit("-", 1)[0]),
             # WITHOUT this the rail was nine rows all reading "webapp-local"
@@ -1716,8 +1809,9 @@ def _run_list_uncached(runs_root: Path, current: Path | None, limit: int = 12):
             "when": mv.format_clock(state.get("started_at")) or "",
             "day": (state.get("started_at") or "")[:10],
             "word": word, "cls": cls,
-            "current": bool(current and d.resolve() == current.resolve()),
         })
+        row["current"] = bool(current and d.resolve() == current.resolve())
+        out.append(row)
     return out, len(dirs)
 
 
@@ -1795,14 +1889,23 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     chain = chain_chip(run_dir)
     node_ids = list((state.get("nodes") or {}).keys())
     running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
+    # F8: the engine's one liveness decider, per render. A node recorded
+    # `running` under a dead (or missing) lock is a corpse, and the chip's
+    # pulsing "running" dot over it is the same lie as the hero's — so `live`
+    # is running AND driven, and `headline` freezes the clock off the same
+    # presence.
+    presence = mv.driver_presence(run_dir)
+    vanished = mv.driver_vanished(state, presence)
+    live = running and not vanished
+    last_event_at = (events[-1].get("ts") if events else None)
     ledger = mv.ledger_summary(run_dir, repo_root=repo_root, state=state)
 
     parts = [
         '<div class="top"><span class="brand">MISSION</span>'
         f'<span class="runid">{e(run_dir.name)}</span><span class="spacer"></span>'
-        f'<span class="chip{" live" if running else ""}">'
-        f'<span class="dot {"run" if running else "mut"}"></span>'
-        f'{"running" if running else "not running"}</span>'
+        f'<span class="chip{" live" if live else ""}">'
+        f'<span class="dot {"run" if live else "mut"}"></span>'
+        f'{"running" if live else "not running"}</span>'
         f'<span class="chip" title="{e(chain["detail"])}">'
         f'<span class="dot {e(chain["cls"])}"></span>{e(chain["text"])}</span></div>',
 
@@ -1813,7 +1916,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         # promises blank never means broken.
         f'<p class="stale-note" id="offline-note" role="status" hidden>{e(OFFLINE_SENTENCE)}</p>',
 
-        f'<p class="hero">{e(mv.headline(state, flow, now=now))}</p>',
+        f'<p class="hero">{e(mv.headline(state, flow, now=now, presence=presence, last_event_at=last_event_at))}</p>',
         # The findings-ledger line, when the run has one (adjudicated-review
         # follow-on): board-level context, same words as the pane and the TUI —
         # rendered right under the headline for the same reason mission_rows
@@ -1829,6 +1932,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
                                   usage=run, drop=meter["label"])))
         + "</pre></div>",
         _decision_card(run_dir),
+        _blocker_card(run_dir, state, flow, presence, labels),
 
         '<div class="card"><div class="cardhead"><h2>the steps</h2>'
         '<div class="viewswitch">'

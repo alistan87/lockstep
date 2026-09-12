@@ -197,8 +197,14 @@ def steps_to_decision(state: dict, flow: dict | None) -> int | None:
     return remaining
 
 
-def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str:
-    """One line above the list. Every element is a count over state.json."""
+def headline(state: dict, flow: dict | None, now: datetime | None = None, *,
+             presence: dict | None = None, last_event_at: str | None = None) -> str:
+    """One line above the list. Every element is a count over state.json.
+
+    `presence` is `driver_presence`'s dict and `last_event_at` the journal's
+    newest timestamp. Both are optional and page-only today (mission-ux work
+    order D6): the pane and the TUI pass nothing and behave exactly as before.
+    """
     recs = list((state.get("nodes") or {}).values())
     total = len(recs)
     settled = sum(1 for r in recs if r.get("status") in ("done", "skipped"))
@@ -213,13 +219,23 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
     # thing the page may not say about a run that was refused. The record is
     # cleared by the next drive, so this branch never outlives its truth.
     terminal = state.get("terminal") or {}
+    vanished = driver_vanished(state, presence)
 
     parts = [f"step {min(settled + len(running), total)} of {total}"]
     if terminal:
         reason = str(terminal.get("reason") or "refused").replace("_", " ")
         parts.append(f"refused: {reason}")
+    elif vanished:
+        # F8: a dead driver must not render as a healthy run. The word is the
+        # guide's; the decider is the engine's (`inspect_lock`, via
+        # `driver_presence`).
+        parts.append("stopped unexpectedly")
     elif failed:
-        parts.append("stopped with a problem")
+        # A3: "stopped with a problem" over visibly moving bars is a
+        # contradiction on one screen. While siblings still run, the failure
+        # is named without claiming the run stopped.
+        parts.append("a step stopped, other work continues" if running
+                     else "stopped with a problem")
     elif blocked:
         parts.append("needs you")
     elif running:
@@ -231,12 +247,21 @@ def headline(state: dict, flow: dict | None, now: datetime | None = None) -> str
 
     began = _parse_ts(state.get("started_at"))
     if began:
-        # A FINISHED run's clock stops at its last ended_at. It used to keep
-        # counting against the wall clock, so a completed run showed
-        # "done - 35 h 56 m" days later — and a duration beside "done" reads as
-        # what the work took.
+        # A run that is OVER stops its clock. Finished runs freeze at the last
+        # ended_at (it used to count against the wall forever: "done - 35 h
+        # 56 m" days later), FAILED runs freeze the same way (F1 — the number
+        # beside "stopped with a problem" otherwise grows without bound), and
+        # a run whose driver vanished freezes at the journal's last line (its
+        # running nodes have no ended_at, so that is the only honest "when it
+        # stopped"). Known limitation, not fixed here: a failed run resumed
+        # days later snaps back to wall-clock-since-start — `began` is
+        # segment-spanning, and cross-segment elapsed is §8 Q3.
         until = now or datetime.now(timezone.utc)
-        if not (running or blocked or failed) and total and settled == total:
+        if vanished:
+            stamp = _parse_ts(last_event_at)
+            if stamp:
+                until = stamp
+        elif total and not running and not blocked and (failed or settled == total):
             ends = [t for t in (_parse_ts(r.get("ended_at")) for r in recs) if t]
             if ends:
                 until = max(ends)
@@ -895,6 +920,137 @@ def needs_you(state: dict | None) -> bool:
     if not state:
         return False
     return any(r.get("status") == "blocked" for r in (state.get("nodes") or {}).values())
+
+
+# ------------------------------------------------- blockers and the driver
+# (mission-ux work order, Batch 0: F2/F8, decisions D6/D8)
+
+def driver_presence(run_dir: Path) -> dict | None:
+    """What `<run_dir>/lock` says about the driver, via the engine's ONE
+    decider — `lockstep.state.inspect_lock`, read-only and extracted from
+    `acquire_lock` for callers exactly like this. A second pid-liveness
+    implementation in contrib would be the drift this module exists to
+    prevent (D6).
+
+    `{"state", "pid", "hostname", "line"}`. `state` is inspect_lock's enum
+    plus `"unavailable"` when the package cannot be imported from this copy —
+    a fact the page must NAME, because a healthy render by omission is the
+    lie F8 exists to stop. None on a transient read failure: a view never
+    raises, and the next poll has it.
+    """
+    try:
+        try:
+            from lockstep.state import inspect_lock
+        except ImportError:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+            from lockstep.state import inspect_lock
+    except Exception:  # noqa: BLE001 - a copy without the package is a fact, not a crash
+        return {"state": "unavailable", "pid": None, "hostname": None,
+                "line": "whether a driver is alive cannot be checked from this "
+                        "copy — the lockstep package is not importable here"}
+    try:
+        info = inspect_lock(Path(run_dir))
+    except Exception:  # noqa: BLE001 - a view never raises
+        return None
+    return {"state": info.state, "pid": info.pid, "hostname": info.hostname,
+            "line": info.describe()}
+
+
+def driver_vanished(state: dict | None, presence: dict | None) -> bool:
+    """Is the driver gone while the run is unfinished? Mirrors `lockstep
+    active`'s STALE arm: a DEAD lock over an unfinished run, or NO lock while
+    nodes still record `running` — the driver died without releasing, or was
+    killed hard enough to take the lock with it. `foreign` and `unknown`
+    claim nothing, because from here nothing is known (D6); a released lock
+    over a parked (blocked/pending) run is a normal stop, not a vanishing.
+    """
+    if not state or not presence:
+        return False
+    statuses = [r.get("status") for r in (state.get("nodes") or {}).values()]
+    unfinished = any(s in ("pending", "running", "blocked") for s in statuses)
+    if presence.get("state") == "dead" and unfinished:
+        return True
+    return presence.get("state") == "none" and "running" in statuses
+
+
+def stalled_behind(flow: dict | None, state: dict) -> dict[str, int]:
+    """For each failed node, how many not-yet-settled transitive dependents
+    are waiting behind it — from the run's own flow copy, the same dep walk
+    `topo_layers` reads. `{}` without a flow copy, mirroring
+    `steps_to_decision`'s refusal to guess.
+
+    Per-entry semantics (D8): a failed descendant is EXCLUDED from every
+    count — it has its own entry, and appearing in both places would count
+    one problem twice. Counts from two failed nodes may overlap; no caller
+    may sum them, and none renders a total.
+    """
+    if not flow:
+        return {}
+    nodes = state.get("nodes") or {}
+    failed = [nid for nid, r in nodes.items() if r.get("status") == "failed"]
+    if not failed:
+        return {}
+    kids: dict[str, list[str]] = {}
+    for n in (flow.get("nodes") or []):
+        for dep in (n.get("depends_on") or []):
+            kids.setdefault(dep, []).append(n.get("id"))
+    out: dict[str, int] = {}
+    for fid in failed:
+        seen: set[str] = set()
+        stack = list(kids.get(fid, []))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(kids.get(cur, []))
+        out[fid] = sum(
+            1 for nid in seen
+            if nid in nodes
+            and nodes[nid].get("status") not in ("done", "skipped", "failed")
+        )
+    return out
+
+
+def tried_phrase(attempts: int) -> str:
+    """"tried once", never "1 attempt" — "attempt" is not in the glossary and
+    the card is read by the glossary's reader (work order A3)."""
+    if attempts < 1:
+        return "never started"
+    times = {1: "once", 2: "twice"}.get(attempts, f"{attempts} times")
+    return f"tried {times}"
+
+
+def blocker_summary(run_dir: Path, state: dict, flow: dict | None, *,
+                    labels: dict[str, str] | None = None) -> list[dict] | None:
+    """One entry per failed node, mechanical fields only: human label, the
+    engine's error VERBATIM, attempt count, stalled-behind count (None with
+    no flow copy — a refusal to guess, never a zero), and whether anything
+    else is still running (the card's header is liveness-aware, A3).
+
+    None when nothing failed. A failed node the engine has a PENDING heal
+    round for is excluded: the run will retry it on this drive, and a card
+    for a self-recovering condition is a false alarm — the DE guide already
+    separates "sent back for rework" from "stopped with a problem".
+    """
+    nodes = state.get("nodes") or {}
+    healing = state.get("heal_pending") or {}
+    failed = [(nid, r) for nid, r in nodes.items()
+              if r.get("status") == "failed" and nid not in healing]
+    if not failed:
+        return None
+    if labels is None:
+        labels = load_labels(Path(run_dir))
+    behind = stalled_behind(flow, state)
+    others_running = any(r.get("status") == "running" for r in nodes.values())
+    return [{
+        "node_id": nid,
+        "label": label_for(labels, nid),
+        "error": rec.get("error") or "",
+        "attempts": int(rec.get("attempts") or 0),
+        "stalled": behind.get(nid) if flow else None,
+        "others_running": others_running,
+    } for nid, rec in failed]
 
 
 # --------------------------------------------------- questions and evidence

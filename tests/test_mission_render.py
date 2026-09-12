@@ -66,10 +66,22 @@ def test_headline_counts_settled_and_running(tmp_path):
 
 
 def test_headline_prefers_the_loudest_state(tmp_path):
+    """A failure still outranks everything — but while siblings visibly keep
+    working, "stopped with a problem" is a contradiction on one screen, so
+    the failed-and-running case carries its own liveness-aware phrase
+    (mission-ux work order A3). The guide table carries both."""
     run = make_run(tmp_path, {"a": rec("running"), "b": rec("blocked"), "c": rec("failed")})
     line = mv.headline(mv.read_json(run / "state.json"), None, now=NOW)
-    assert "stopped with a problem" in line
+    assert "a step stopped, other work continues" in line
+    assert "stopped with a problem" not in line
     assert "needs you" not in line
+
+
+def test_headline_says_stopped_when_nothing_else_is_running(tmp_path):
+    run = make_run(tmp_path, {"a": rec("done"), "b": rec("failed")})
+    line = mv.headline(mv.read_json(run / "state.json"), None, now=NOW)
+    assert "stopped with a problem" in line
+    assert "other work continues" not in line
 
 
 def test_headline_reports_rework_rounds(tmp_path):

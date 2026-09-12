@@ -422,6 +422,201 @@ def test_show_mission_actually_uses_the_guard():
     assert "Update-Spend" in show[:show.index("\nfunction ")]
 
 
+# ==================== the stopped run tells the truth (mission-ux Batch 0)
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+BEGAN = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def _ts(minutes: float) -> str:
+    return (BEGAN + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+
+
+def test_a_failed_runs_clock_stops():
+    """F1: the stop-the-clock branch fired only when every node settled, so a
+    failed run's headline grew forever — the live release-cut run read
+    "stopped with a problem - 87 h 37 m" and counting.
+
+    Known limitation, recorded not fixed (§4.1): a failed run resumed days
+    later snaps back to wall-clock-since-start, because `began` is
+    segment-spanning. Cross-segment elapsed is a separate question; freezing
+    while failed is strictly more honest than today either way.
+    """
+    state = {
+        "started_at": _ts(0),
+        "nodes": {
+            "a": {"role": "work", "status": "done", "attempts": 1, "ended_at": _ts(15)},
+            "b": {"role": "work", "status": "failed", "attempts": 1, "ended_at": _ts(20)},
+        },
+    }
+    line = mv.headline(state, None, now=BEGAN + timedelta(days=3))
+    assert "stopped with a problem" in line
+    assert "20 m" in line
+
+
+def test_a_stale_runs_clock_stops():
+    """F8's clock half: a run whose driver vanished freezes at the journal's
+    last line — its running nodes have no ended_at, so that is the only
+    honest "when it stopped"."""
+    state = {
+        "started_at": _ts(0),
+        "nodes": {"a": {"role": "work", "status": "running", "attempts": 1}},
+    }
+    line = mv.headline(state, None, now=BEGAN + timedelta(days=3),
+                       presence={"state": "dead", "line": "x"},
+                       last_event_at=_ts(25))
+    assert "stopped unexpectedly" in line
+    assert "25 m" in line
+    assert "running" not in line
+
+
+def test_a_failed_run_with_work_continuing_keeps_its_clock_running():
+    state = {
+        "started_at": _ts(0),
+        "nodes": {
+            "a": {"role": "work", "status": "failed", "attempts": 1, "ended_at": _ts(5)},
+            "b": {"role": "work", "status": "running", "attempts": 1},
+        },
+    }
+    line = mv.headline(state, None, now=BEGAN + timedelta(minutes=30))
+    assert "a step stopped, other work continues" in line
+    assert "30 m" in line
+
+
+# ------------------------------------------------- driver presence (F8, D6)
+
+def test_driver_vanished_is_the_actives_stale_arm():
+    running = {"nodes": {"a": {"status": "running"}}}
+    parked = {"nodes": {"a": {"status": "blocked"}, "b": {"status": "pending"}}}
+    finished = {"nodes": {"a": {"status": "done"}}}
+    dead = {"state": "dead"}
+    assert mv.driver_vanished(running, dead)
+    assert mv.driver_vanished(parked, dead)          # died without releasing
+    assert not mv.driver_vanished(finished, dead)    # the corpse lock is cosmetic
+    assert mv.driver_vanished(running, {"state": "none"})
+    assert not mv.driver_vanished(parked, {"state": "none"})   # a normal stop
+    assert not mv.driver_vanished(running, {"state": "alive"})
+    # foreign and unknown claim nothing: from here nothing is known (D6)
+    assert not mv.driver_vanished(running, {"state": "foreign"})
+    assert not mv.driver_vanished(running, {"state": "unknown"})
+    assert not mv.driver_vanished(running, None)
+    assert not mv.driver_vanished(None, dead)
+
+
+def _lock(run: Path, pid: int) -> None:
+    import socket
+    (run / "lock").write_text(json.dumps(
+        {"pid": pid, "hostname": socket.gethostname(), "started": "2026-08-01T12:00:00Z"}),
+        encoding="utf-8")
+
+
+def _dead_pid() -> int:
+    proc = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
+                          capture_output=True, text=True, check=True)
+    return int(proc.stdout.strip())
+
+
+def test_driver_presence_asks_the_engines_one_decider(tmp_path):
+    """D6: presence is `lockstep.state.inspect_lock`'s answer, not a second
+    pid-liveness implementation. A real spawned-and-reaped pid, no guessing."""
+    run = tmp_path / "run"
+    run.mkdir()
+    assert mv.driver_presence(run)["state"] == "none"
+    _lock(run, os.getpid())
+    assert mv.driver_presence(run)["state"] == "alive"
+    _lock(run, _dead_pid())
+    got = mv.driver_presence(run)
+    assert got["state"] == "dead"
+    assert "NOT alive" in got["line"]     # the engine's own words, verbatim
+
+
+# --------------------------------------------- stalled_behind (F2, D8)
+
+def _flow(*nodes) -> dict:
+    return {"nodes": [{"id": nid, "depends_on": list(deps)} for nid, deps in nodes]}
+
+
+def _state(**statuses) -> dict:
+    return {"nodes": {nid: {"status": s, "attempts": 1} for nid, s in statuses.items()}}
+
+
+def test_stalled_behind_counts_a_chain():
+    flow = _flow(("a", []), ("b", ["a"]), ("c", ["b"]))
+    assert mv.stalled_behind(flow, _state(a="failed", b="pending", c="pending")) == {"a": 2}
+
+
+def test_stalled_behind_counts_a_diamond_once():
+    flow = _flow(("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b", "c"]))
+    got = mv.stalled_behind(flow, _state(a="failed", b="pending", c="pending", d="pending"))
+    assert got == {"a": 3}
+
+
+def test_stalled_behind_refuses_to_guess_without_a_flow_copy():
+    assert mv.stalled_behind(None, _state(a="failed", b="pending")) == {}
+
+
+def test_stalled_behind_may_overlap_between_two_failures_and_never_sums():
+    """D8: two failures sharing a dependent each count it; no total exists
+    anywhere for a reader to add up wrongly."""
+    flow = _flow(("a", []), ("b", []), ("c", ["a", "b"]))
+    got = mv.stalled_behind(flow, _state(a="failed", b="failed", c="pending"))
+    assert got == {"a": 1, "b": 1}
+
+
+def test_a_failed_descendant_is_excluded_from_every_count():
+    """It has its own entry; appearing in both places would count one problem
+    twice (D8)."""
+    flow = _flow(("a", []), ("b", ["a"]), ("c", ["b"]))
+    got = mv.stalled_behind(flow, _state(a="failed", b="failed", c="pending"))
+    assert got == {"a": 1, "b": 1}
+
+
+def test_settled_dependents_are_not_stalled():
+    flow = _flow(("a", []), ("b", ["a"]), ("c", ["a"]))
+    got = mv.stalled_behind(flow, _state(a="failed", b="done", c="skipped"))
+    assert got == {"a": 0}
+
+
+# --------------------------------------------- blocker_summary (F2, A3)
+
+def test_blocker_summary_is_none_on_a_healthy_run(tmp_path):
+    assert mv.blocker_summary(tmp_path, _state(a="done", b="running"), None) is None
+
+
+def test_blocker_summary_carries_the_error_verbatim(tmp_path):
+    state = _state(a="failed")
+    state["nodes"]["a"]["error"] = "exit code 128 (no result emitted)"
+    got = mv.blocker_summary(tmp_path, state, None)
+    assert got and got[0]["error"] == "exit code 128 (no result emitted)"
+    assert got[0]["stalled"] is None      # no flow copy: refused, never zero
+
+
+def test_a_healing_node_shows_no_blocker_entry(tmp_path):
+    """A failed node the engine has a PENDING heal round for will be retried
+    on this drive — a card for a self-recovering condition is a false alarm.
+    The DE guide already separates "sent back for rework" from "stopped with
+    a problem"; the card must not collapse that distinction (§4.2)."""
+    state = _state(gate="failed", worker="pending")
+    state["heal_pending"] = {"gate": 1}
+    assert mv.blocker_summary(tmp_path, state, None) is None
+
+
+def test_blocker_summary_reports_whether_other_work_continues(tmp_path):
+    live = _state(a="failed", b="running")
+    quiet = _state(a="failed", b="pending")
+    assert mv.blocker_summary(tmp_path, live, None)[0]["others_running"] is True
+    assert mv.blocker_summary(tmp_path, quiet, None)[0]["others_running"] is False
+
+
+def test_tried_phrase_speaks_the_glossarys_language():
+    assert mv.tried_phrase(1) == "tried once"
+    assert mv.tried_phrase(2) == "tried twice"
+    assert mv.tried_phrase(3) == "tried 3 times"
+    assert mv.tried_phrase(0) == "never started"
+    assert "attempt" not in mv.tried_phrase(1)   # not glossary language
+
+
 # ================================================ review minors (2026-08-04 pass)
 
 def test_a_finished_runs_clock_stops(tmp_path):
