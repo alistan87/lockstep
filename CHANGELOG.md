@@ -6,6 +6,18 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## Unreleased
+
+**The release-cut tag node says what it did.** Cutting 0.17.0 left that node
+`failed` with the tag correctly created: bare `git tag` is silent on success,
+a silent success leaves no result channel, and the engine fails a resultless
+attempt whatever its exit code — so it auto-retried into "tag already exists".
+`contrib/git_tag.py` prints one line naming the commit, tag and kind, and is
+idempotent on the same commit so a retry cannot manufacture the failure; a tag
+pointing elsewhere is still a hard refusal. The engine half — whether exit 0
+with empty stdout should pass for a work node — is OPEN-WORK item 24, recorded
+and not taken, because it touches the §7/§8.3 result-channel contract.
+
 ## 0.17.0 — 2026-09-20
 
 **The open-work release.** `docs/notes/OPEN-WORK.md` ranked every
