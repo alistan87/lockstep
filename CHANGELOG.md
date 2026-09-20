@@ -18,6 +18,14 @@ pointing elsewhere is still a hard refusal. The engine half — whether exit 0
 with empty stdout should pass for a work node — is OPEN-WORK item 24, recorded
 and not taken, because it touches the §7/§8.3 result-channel contract.
 
+The tag it makes is **annotated** unless you ask for `--lightweight`, since
+v0.9.0 and v0.16.0 are and v0.17.0 only was not because the node said nothing;
+`release-cut` takes an optional `message` arg for a real annotation and falls
+back to the tag name. Its output is ASCII because that stdout is the node's
+result channel: a piped CPython on Windows encodes with the locale codec, so
+an em dash arrived as invalid UTF-8 and was recorded as a replacement
+character.
+
 ## 0.17.0 — 2026-09-20
 
 **The open-work release.** `docs/notes/OPEN-WORK.md` ranked every
