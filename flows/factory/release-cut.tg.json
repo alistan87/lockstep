@@ -1,7 +1,7 @@
 {
   "format_version": "1.0",
   "name": "release-cut",
-  "description": "The software factory's closing loop (D1): deterministic collect -> readonly changelog draft written to CHANGELOG.draft.md -> version-sync gate (the r7 defect class: __version__ 0.2.0 vs pyproject 0.3.1 shipped; NO heal, version drift is a human decision) -> build+install+import+--help smoke in a scratch venv (a Verdict-emitting gate) -> evidence-bearing approval over the draft -> git tag. The tag node is the only thing downstream of the approval: seconds-long shell, W1-clean. CHANGELOG.draft.md is the human's to fold into the real changelog after approving.",
+  "description": "The software factory's closing loop (D1): deterministic collect -> readonly changelog draft written to CHANGELOG.draft.md -> version-sync gate (the r7 defect class: __version__ 0.2.0 vs pyproject 0.3.1 shipped; NO heal, version drift is a human decision) -> build+install+import+--help smoke in a scratch venv (a Verdict-emitting gate) -> evidence-bearing approval over the draft -> git tag. The tag node is the only thing downstream of the approval: seconds-long shell, W1-clean. It goes through contrib/git_tag.py rather than bare `git tag`: git tag is SILENT on success, a silent success leaves no result channel, and the engine fails a resultless attempt whatever its exit code - so the tag it had just made was scored a failure and auto-retried into 'tag already exists' (live, cutting 0.17.0). CHANGELOG.draft.md is the human's to fold into the real changelog after approving.",
   "budget": {
     "max_agent_spawns": 6,
     "max_run_minutes": 45
@@ -123,8 +123,9 @@
       ],
       "spec": {
         "cmd": [
-          "git",
-          "tag",
+          "python",
+          "contrib/git_tag.py",
+          "--tag",
           "{args.tag}"
         ],
         "writes": []

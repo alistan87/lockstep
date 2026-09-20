@@ -10,3 +10,10 @@ contrib/cost-fields.toml
 Deliverables/
 docs-manifest.json
 .cockpit-preview.html
+
+# release-cut writes this every run; it is the human's scratch to fold into
+# CHANGELOG.md, never a tracked file.
+CHANGELOG.draft.md
+
+# any hand-made copy of the local config is local too
+lockstep.toml.bak*

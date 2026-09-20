@@ -10,6 +10,10 @@ status: current
 > and shipped in **0.17.0**; their rows are marked BUILT and kept for the
 > record. Item 6 (persona composition) stays parked on its trigger, so the
 > ranked work still open starts at item 8.
+>
+> **Item 24 was added 2026-09-20, after 0.17.0 was tagged** — found by cutting it.
+> The ledger was 23 items at the release, which is what the CHANGELOG says; it is
+> 24 now. New items append rather than renumber, so a row's number stays citable.
 
 **What this is.** The actionable open items recorded across
 `ROADMAP-NOTES.md`, `LESSONS-TO-MECHANISMS.md`, the proposals index, and
@@ -62,6 +66,7 @@ section.
 | 8 | **`gc` and `explain --graph` for vanished worktrees** (ROADMAP 2026-08-16) | Harvested lanes stop reading as "every node moved"; `gc` can weight them honestly. | Small: both could say "root gone". | **Small polish.** No local run records a vanished root yet. |
 | 9 | **`stable_output` projection** (OW-07 S4, tentatively accepted, deliberately unbuilt) | `{steps.X.stable}` beside `{steps.X.output}` so a shell node's volatile stdout stops re-billing consumers. | A second interpolation and hash channel. | **Ships only if** the stable-shell-output authoring discipline proves insufficient in practice (CHANGELOG 0.12.0). No report yet. |
 | 10 | **G3b per-node spawn budgets** (OW-07, deferred not declined) | A runaway node cannot starve the rest of the run. | Interacts with heal rounds, map fan-out, and correctives. | **Revisit on a second starvation report.** The global cap override covered the first. |
+| 24 | **A silent shell success is scored as a resultless failure** (observed live 2026-09-20 cutting 0.17.0; `runs/release-cut-20260920T171840Z`) | A shell work node whose command succeeds without printing would stop being failed, then auto-retried into a real failure when the command is not idempotent. | `executors/shell.py` sets `result_text` only when `stdout.strip()` is truthy, and `roles.py::_finish` fails any attempt with `result_text is None` whatever the exit code. Narrowing that to "exit 0 and no result is a PASS for a work node" touches the SPEC §7/§8.3 result-channel contract and what `output: "text"` promises a consumer — a stated-guarantee surface, so stop-and-ask, not a quiet patch. It also weakens a real signal: a harness node that exits 0 having written nothing IS a failure, and the same code path carries both. | **Recorded, not scheduled.** The flow-level fix shipped instead and is the cheap one: `contrib/git_tag.py` prints, so the channel is never empty, and it is idempotent on the same commit so a retry cannot manufacture the failure. Every other shell node in the repo already prints. Trigger: a second silent-success node in a flow whose body genuinely cannot print — at which point the question is per-`kind` result-channel semantics, not a special case. |
 
 ## Tier 3: deferred by decision or by an unfired trigger
 
