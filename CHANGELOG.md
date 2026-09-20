@@ -26,6 +26,11 @@ an unhashed instruction channel, which was the last harness where
 `explain`, `--seed` and `--replay` could be quietly wrong about what a node
 was told.
 
+The work mirror's integration steps are
+`docs/proposals/passdown-0.17.0-work-repo.md` — the changed surface, the one
+machine-local edit (`--safe-mode`, and the one-time re-bill it buys), the
+`seeded:` line's new shape, and a verification checklist.
+
 The top three of `docs/notes/OPEN-WORK.md`, built in order, then two
 adversarial review passes before commit (engine and spec lenses; 23
 findings, no blockers, every confirmed one folded in). Two of them were
