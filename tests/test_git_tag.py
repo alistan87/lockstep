@@ -77,6 +77,56 @@ def test_creates_the_tag_and_prints_something(repo: Path):
     assert _git(repo, "rev-parse", "v1.0.0^{commit}") == _git(repo, "rev-parse", "HEAD")
 
 
+def test_the_default_is_annotated(repo: Path):
+    """v0.17.0 went out lightweight because the flow said nothing, while
+    v0.16.0 and v0.9.0 are annotated. The default is the one that matches
+    the releases before it; a bare tag object is now the opt-in."""
+    code, out, err = _run(repo, "--tag", "v1.0.0")
+    assert code == 0, err
+    assert _git(repo, "cat-file", "-t", "v1.0.0") == "tag"
+    assert "annotated" in out.lower()
+
+
+def test_the_default_message_is_the_tag_name(repo: Path):
+    """Predictable and never misleading. A real description comes from
+    --message; inventing one from a commit subject would describe the last
+    commit, not the release."""
+    assert _run(repo, "--tag", "v1.0.0")[0] == 0
+    assert _git(repo, "tag", "-l", "--format=%(contents:subject)", "v1.0.0") == "v1.0.0"
+
+
+def test_an_explicit_message_wins(repo: Path):
+    assert _run(repo, "--tag", "v1.0.0", "--message", "1.0.0: the first one")[0] == 0
+    assert _git(repo, "tag", "-l", "--format=%(contents:subject)",
+                "v1.0.0") == "1.0.0: the first one"
+
+
+def test_an_empty_message_falls_back_to_the_default(repo: Path):
+    """A flow passing `--message "{args.message}"` with the arg left at its
+    empty default must still produce an annotated tag, not an empty one."""
+    code, out, err = _run(repo, "--tag", "v1.0.0", "--message", "")
+    assert code == 0, err
+    assert _git(repo, "cat-file", "-t", "v1.0.0") == "tag"
+    assert _git(repo, "tag", "-l", "--format=%(contents:subject)", "v1.0.0") == "v1.0.0"
+
+
+def test_lightweight_is_available_but_must_be_asked_for(repo: Path):
+    code, out, err = _run(repo, "--tag", "v1.0.0", "--lightweight")
+    assert code == 0, err
+    assert _git(repo, "cat-file", "-t", "v1.0.0") == "commit"
+    assert "lightweight" in out.lower()
+
+
+def test_lightweight_with_a_message_is_refused(repo: Path):
+    """Asking for both is a contradiction, and silently dropping the message
+    is how a release ends up with a tag nobody can explain."""
+    code, _, err = _run(repo, "--tag", "v1.0.0", "--lightweight",
+                        "--message", "1.0.0: the first one")
+    assert code != 0
+    assert err.strip()
+    assert not _git(repo, "tag", "--list", "v1.0.0")
+
+
 def test_the_printed_line_names_the_commit_it_tagged(repo: Path):
     head = _git(repo, "rev-parse", "HEAD")
     code, out, _ = _run(repo, "--tag", "v1.0.0")
@@ -105,13 +155,6 @@ def test_a_tag_pointing_elsewhere_is_a_hard_failure(repo: Path):
     assert "v1.0.0" in err
     # the tag did NOT move
     assert _git(repo, "rev-parse", "v1.0.0^{commit}") != _git(repo, "rev-parse", "HEAD")
-
-
-def test_annotated_tags_are_supported_and_reported(repo: Path):
-    code, out, err = _run(repo, "--tag", "v1.0.0", "--message", "release one")
-    assert code == 0, err
-    assert "annotated" in out.lower()
-    assert _git(repo, "cat-file", "-t", "v1.0.0") == "tag"
 
 
 def test_an_annotated_rerun_on_the_same_commit_succeeds(repo: Path):
