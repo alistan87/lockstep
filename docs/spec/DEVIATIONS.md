@@ -1020,7 +1020,11 @@ file records implementation-level departures below that bar.
   neither inherited nor new. A served item skips the per-item scope
   baseline (it spawns nothing and cannot write). Hash composition
   unchanged (M3); the item hash is the same one the in-lineage per-item
-  cache keys on (r4 A3). Pinned by tests/test_seed.py (`_map_flow` tests).
+  cache keys on (r4 A3). One consequence, consistent with "nothing is
+  trusted but the hash": a descendant map that a heal cascade re-pended is
+  served again from the seed where its items' hashes still match — exactly
+  as a descendant NODE is, and unlike the in-lineage A3.4 clear, which is
+  what the seed's content-addressing replaces. Pinned by tests/test_seed.py (`_map_flow` tests).
   Restated in AMENDMENTS-r7 F2.
 
 - **2026-09-19 — `[driver] runs_dir` in lockstep.toml** (OPEN-WORK item 5;
@@ -1049,23 +1053,38 @@ file records implementation-level departures below that bar.
   upstream-response-mission-scale, the last accepted-and-unbuilt slices).
   Contrib and tests only; no engine change. (S2) `mission_view.conditions_line`
   under the headline — `blocking conditions: 1 scope violation, 2 contract
-  failures` — counted from the ENGINE's words (`CONDITION_WORDS`: the error
-  prefixes the engine writes, in render order; a failed map counts its
-  failed items; a blocked GATE is the ledger's story and is not a
-  condition; a failed record matching nothing is `other`, never dropped)
-  and rendered beside the ledger line on the board, the page and the pane
-  (`Get-ConditionsLine`, pinned to the same table). No condition acquires a
-  severity. (S3 view) `finding_trajectory` in the step drawer: consecutive
+  failures` — counted from the ENGINE's words (`CONDITION_WORDS`: the
+  error texts the engine writes, matched as substrings; a step blocked
+  BEHIND another — `upstream failed or blocked`, `gate <id> blocked:` — is
+  a dependency fact `stalled_behind` already counts, never a condition; a
+  blocked GATE counts only for the engine's own gate texts,
+  `GATE_CONDITION_WORDS` matched as prefixes, since a DECIDED block's error
+  is the verdict's reason in the model's words and is the ledger's story; a
+  map counts its failed items only when the map itself is failed or
+  blocked — an optional map's tolerated item blocked nothing; a failed
+  record matching nothing is `other`, never dropped) and rendered beside
+  the ledger line on the board, the page and the pane
+  (`Get-ConditionsLine`, both tables pinned). No condition acquires a
+  severity. The pre-commit review found the first cut counting every
+  blocked descendant as its own condition and matching `timed out` where
+  the engine writes `timeout`; both are the rules above. (S3 view) `finding_trajectory` in the step drawer: consecutive
   recorded results (`result-attempt<n>.json` … `result.json`) compared by
   finding IDENTITY — (category, file, digest of the whitespace-and-case
   normalized claim) — into new / persisting / resolved / severity changed;
-  `not comparable` when a side is not a findings shape; attempts labelled by
-  the journal's `attempt` cause (`corrective`, `heal round N`), `cause
-  unknown` on legacy runs, never inferred; never "better". (S4 view) the
+  `not comparable` when a side is not a findings shape, nothing at all when
+  no side is (a text step); attempts labelled by the journal's `attempt`
+  cause (`corrective`, `heal round N`) ONLY when the record's attempt count
+  equals the number of recorded results — `harness.execute` rotates a
+  result into the first free slot, so an attempt that left no result
+  shifts every later number, and then the pairs are labelled `result k`
+  with a line saying why (review finding B4); `cause unknown` on legacy
+  runs, never inferred; never "better". (S4 view) the
   agent block's `per attempt` line: observed tool activity per attempt from
-  `cost_report`'s existing `attempts_detail`, `not reported` per attempt for
-  a harness that cannot say — never `0`. The drawer's finding trajectory
-  reads the journal the render already parsed (`events` threaded through
-  `_drawers`/`node_drawer`/`node_detail`; S1.2's one-read rule holds).
-  Vocabulary added to COCKPIT-FOR-DOMAIN-EXPERTS. Pinned in
+  `cost_report`'s existing `attempts_detail`, numbered WITHIN each scope
+  (`item 2 #1`), `not reported` per attempt for a harness that cannot say —
+  never `0`. On the page the drawer's finding trajectory reads the journal
+  the render already parsed (`events` threaded through
+  `_drawers`/`node_drawer`/`node_detail`; S1.2's one-read rule holds
+  there); the TUI opens one drawer per keypress and reads it then.
+  Vocabulary for all three lines added to COCKPIT-FOR-DOMAIN-EXPERTS. Pinned in
   tests/test_mission_render.py.

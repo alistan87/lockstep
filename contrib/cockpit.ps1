@@ -586,11 +586,17 @@ function Get-ConditionsLine {
   $order = @(@('write scope violated', 'scope violation'),
              @('contract validation failed', 'contract failure'),
              @('provider limit/overload', 'provider limit'),
-             @('timed out', 'timeout'),
+             @('timeout', 'timeout'),
              @('approval auto-rejected', 'awaiting a person'),
+             @('approval rejected', 'rejected by a person'),
              @('cancelled', 'cancelled'))
+  $gateOrder = @(@('gate command timed out after', 'timeout'),
+                 @('no valid verdict emitted', 'no valid verdict'),
+                 @('cancelled', 'cancelled'))
+  $render = @('scope violation', 'contract failure', 'provider limit', 'timeout',
+              'no valid verdict', 'awaiting a person', 'rejected by a person', 'cancelled')
+  $invariant = @('awaiting a person', 'rejected by a person', 'other', 'cancelled', 'no valid verdict')
   $counts = @{}
-  $other = 0
   $tally = {
     param($err)
     foreach ($pair in $order) {
@@ -604,6 +610,19 @@ function Get-ConditionsLine {
   $script:__condOther = 0
   foreach ($prop in $State.nodes.PSObject.Properties) {
     $rec = $prop.Value
+    if ($rec.status -ne 'failed' -and $rec.status -ne 'blocked') { continue }
+    $err = "$($rec.error)"
+    # A step waiting BEHIND the condition is a dependency fact (stalled_behind).
+    if ($err.StartsWith('upstream failed or blocked') -or $err -match '^gate \S+ blocked:') { continue }
+    if ($rec.role -eq 'gate' -and $rec.status -eq 'blocked') {
+      foreach ($pair in $gateOrder) {
+        if ($err.StartsWith($pair[0])) {
+          if ($counts.ContainsKey($pair[1])) { $counts[$pair[1]]++ } else { $counts[$pair[1]] = 1 }
+          break
+        }
+      }
+      continue  # a decided block is the ledger's story
+    }
     $failedItems = @()
     if ($rec.PSObject.Properties['items'] -and $rec.items) {
       foreach ($ip in $rec.items.PSObject.Properties) {
@@ -614,18 +633,14 @@ function Get-ConditionsLine {
       foreach ($it in $failedItems) { & $tally "$($it.error)" }
       continue
     }
-    if ($rec.status -eq 'failed' -or $rec.status -eq 'blocked') {
-      if ($rec.role -eq 'gate' -and $rec.status -eq 'blocked') { continue }
-      & $tally "$($rec.error)"
-    }
+    & $tally $err
   }
   $other = $script:__condOther
   $parts = @()
-  foreach ($pair in $order) {
-    $w = $pair[1]
+  foreach ($w in $render) {
     if ($counts.ContainsKey($w) -and $counts[$w] -gt 0) {
       $n = $counts[$w]
-      if ($n -eq 1 -or $w -eq 'awaiting a person' -or $w -eq 'cancelled') { $parts += "$n $w" }
+      if ($n -eq 1 -or $invariant -contains $w) { $parts += "$n $w" }
       else { $parts += "$n ${w}s" }
     }
   }

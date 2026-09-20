@@ -89,7 +89,7 @@ def test_gc_and_active_read_the_key_from_the_cwd(tmp_path, git_repo, monkeypatch
     assert "kept" in capsys.readouterr().out
 
 
-def test_the_cockpit_resolves_exactly_as_the_driver(tmp_path):
+def test_the_cockpit_resolves_exactly_as_the_driver(tmp_path, capsys):
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "mission_view", Path(__file__).resolve().parents[1] / "contrib" / "mission_view.py")
@@ -101,6 +101,9 @@ def test_the_cockpit_resolves_exactly_as_the_driver(tmp_path):
     (repo / "lockstep.toml").write_text('[driver]\nruns_dir = "../r"\n', encoding="utf-8")
     assert mv.default_runs_root(repo) == repo / "../r"
     assert mv.default_runs_root(repo, "explicit") == Path("explicit")
-    # A broken toml is not the cockpit's problem: the default layout.
+    # A toml the DRIVER would refuse: the default layout, and the absence is
+    # NAMED — a silently wrong runs root would list the wrong runs as if
+    # nothing were amiss (review 2026-09-19).
     (repo / "lockstep.toml").write_text("[driver\n", encoding="utf-8")
     assert mv.default_runs_root(repo) == repo / "runs"
+    assert "lockstep.toml unreadable" in capsys.readouterr().err

@@ -115,10 +115,29 @@ and it is deliberately separate from the review-findings line: a **scope
 violation** (a step wrote outside the files it was allowed to touch, and the
 driver put them back), a **contract failure** (a step's answer did not have
 the shape it promised), a **provider limit** (the AI service refused or
-overloaded; wait and resume), a **timeout**, **awaiting a person** (a
-question parked for you), **cancelled**, or **other** (stopped for a reason
-the machine did not categorise — the step's own drawer has the words). None
-of these has a severity, and the page never invents one.
+overloaded; wait and resume), a **timeout**, **no valid verdict** (a
+checkpoint produced no readable decision), **awaiting a person** (a
+question parked for you), **rejected by a person** (someone said no at a
+checkpoint), **cancelled**, or **other** (stopped for a reason the machine
+did not categorise — the step's own drawer has the words). Steps merely
+waiting behind a stopped one are not counted here; they are the "waiting
+behind" number on the blocker card. A checkpoint that stopped the run with
+a real decision is not counted either — that is the review-findings line's
+story. None of these has a severity, and the page never invents one.
+
+Two more lines can appear inside a step's drawer, and only for a step that
+was tried more than once. **findings across attempts** compares what a
+reviewing step reported one try to the next: **new** (reported this time,
+not before), **persisting** (both times), **resolved** (before, not now),
+and **severity changed** (both times, rated differently). It never says a
+later try was "better". It says **not comparable** when one try's answer
+was not a findings list, names each try by the reason it happened
+(**corrective**, **heal round 1**, **retry**) when the record allows it,
+**cause unknown** when the run predates that record, and says so when it
+cannot line the tries up. In the agent block, **per attempt** lists the
+tool activity of each try, numbered within each map item; **not reported**
+there means the same as "not reported by this harness" above — the tool
+could not say, which is different from doing nothing.
 
 ### The page
 

@@ -77,7 +77,8 @@ python contrib\lane.py abandon <worktree> [--force]  # the discard path
 `start` owns the recipe so nobody improvises it: fresh worktree + branch
 (default `lane/<flow>-<stamp>`), `verify` against the worktree with the MAIN
 repo's config, then `run --repo-root <wt> --config <main>\lockstep.toml
---runs-dir <main>\runs --fresh --detach` — absolute paths throughout,
+--runs-dir <resolved> --fresh --detach` (the resolved root is the main
+repo's `[driver] runs_dir` when set, else `<main>\runs`) — absolute paths throughout,
 because gitignored files (`.venv`, `lockstep.toml`, `runs/`) do not exist in
 a fresh worktree and the detached driver's cwd is wherever lane.py ran.
 

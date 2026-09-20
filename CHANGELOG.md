@@ -51,6 +51,16 @@ The scope is the map's (`{args.NAME}` only; never `{item…}`).
 repo-hygiene demo declare `[]`. Closes
 ROADMAP 2026-08-12 ("the one unguardable mutator class").
 
+Two adversarial passes before the fix-up commit (engine/config and cockpit
+lenses; 16 findings, two blockers, both in the conditions line). The
+first cut counted every step blocked BEHIND a failure as its own
+condition, multiplying one problem by its fan-out, and matched `timed
+out` where the engine writes `timeout` on a node; the line now follows the
+engine's dependency texts and gate texts exactly, and an optional map's
+tolerated item no longer reads as blocking. The drawer's attempt labels
+refuse to guess when an attempt left no result; per-attempt tool counts
+are numbered within each map item; the guide names every new word.
+
 **Map items are seeded per item.** The E7 limit is withdrawn: the engine
 hands each item's composed hash to the seed after planning and before any
 spawn, so an unchanged item is served at zero budget and a changed one

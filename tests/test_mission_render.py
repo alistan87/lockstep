@@ -877,27 +877,49 @@ def test_condition_counts_use_the_engines_words_and_never_a_severity():
         "a": {"status": "failed", "error": "write scope violated: this step may only write src"},
         "b": {"status": "failed", "error": "contract validation failed twice: bad"},
         "c": {"status": "failed", "error": "contract validation failed: x"},
+        "t": {"status": "failed", "error": "timeout"},  # the engine's node-timeout word
         "d": {"status": "blocked", "role": "approval",
               "error": "approval auto-rejected (non-TTY stdin)"},
-        "g": {"status": "blocked", "role": "gate", "error": "block: no"},  # the ledger's story
+        "r": {"status": "blocked", "role": "approval", "error": "approval rejected"},
+        # A gate that DECIDED: its error is the verdict's reason, the model's
+        # words — even when those words say "timed out". The ledger's story.
+        "g": {"status": "blocked", "role": "gate", "error": "the suite timed out on CI"},
+        # A gate that never decided: the engine's own text, counted.
+        "g2": {"status": "blocked", "role": "gate", "error": "no valid verdict emitted"},
+        "g3": {"status": "blocked", "role": "gate",
+               "error": "gate command timed out after 5s — a timeout is not a verdict"},
+        # Steps waiting BEHIND the above: dependency facts, never conditions.
+        "x": {"status": "blocked", "error": "upstream failed or blocked"},
+        "y": {"status": "blocked", "error": "gate g3 blocked: gate command timed out after 5s"},
         "e": {"status": "failed", "error": "something the engine did not categorise"},
         "m": {"status": "failed", "error": "item 0 failed: ...",
               "items": {"0": {"status": "failed", "error": "provider limit/overload (no envelope)"},
                         "1": {"status": "done"}}},
+        # An OPTIONAL map tolerated its failed item and is done: blocked nothing.
+        "opt": {"status": "done",
+                "items": {"0": {"status": "failed", "error": "contract validation failed: y"}}},
         "ok": {"status": "done"},
     }}
     assert mv.condition_counts(state) == [
         ("scope violation", 1), ("contract failure", 2), ("provider limit", 1),
-        ("awaiting a person", 1), ("other", 1)]
+        ("timeout", 2), ("no valid verdict", 1), ("awaiting a person", 1),
+        ("rejected by a person", 1), ("other", 1)]
     assert mv.conditions_line(state) == (
         "blocking conditions: 1 scope violation, 2 contract failures, 1 provider limit, "
-        "1 awaiting a person, 1 other")
+        "2 timeouts, 1 no valid verdict, 1 awaiting a person, 1 rejected by a person, "
+        "1 other")
 
 
 def test_conditions_line_is_none_when_nothing_is_stopped():
     assert mv.conditions_line({"nodes": {"a": {"status": "done"}}}) is None
     assert mv.conditions_line(None) is None
-    assert mv.condition_counts({"nodes": {"g": {"status": "blocked", "role": "gate"}}}) == []
+    assert mv.condition_counts({"nodes": {"g": {"status": "blocked", "role": "gate",
+                                                "error": "block: two findings"}}}) == []
+    # One blocked gate with three steps behind it is ONE story, told elsewhere.
+    fan = {"nodes": {"g": {"status": "blocked", "role": "gate", "error": "reason"},
+                     **{f"d{i}": {"status": "blocked", "error": "gate g blocked: reason"}
+                        for i in range(3)}}}
+    assert mv.condition_counts(fan) == []
 
 
 def test_conditions_line_sits_beside_the_ledger_never_inside_it(tmp_path):
@@ -915,21 +937,26 @@ def test_conditions_line_sits_beside_the_ledger_never_inside_it(tmp_path):
 def test_the_condition_words_match_cockpit_ps1():
     text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
     assert "'blocking conditions: ' + ($parts -join ', ')" in text
-    m = re.search(
-        r"@\(@\('write scope violated', 'scope violation'\),\s*"
-        r"@\('contract validation failed', 'contract failure'\),\s*"
-        r"@\('provider limit/overload', 'provider limit'\),\s*"
-        r"@\('timed out', 'timeout'\),\s*"
-        r"@\('approval auto-rejected', 'awaiting a person'\),\s*"
-        r"@\('cancelled', 'cancelled'\)\)", text)
-    assert m, "cockpit.ps1's condition table no longer matches CONDITION_WORDS"
+    body = re.search(r"function Get-ConditionsLine \{(.*?)\nfunction ", text, re.S)
+    assert body, "cockpit.ps1 lost Get-ConditionsLine"
+
+    def ps_table(name: str) -> tuple:
+        # Scoped to the conditions function: Get-LedgerLine has an $order too.
+        m = re.search(r"\$" + name + r" = @\((.*?)\)\s*\n\s*\$", body.group(1), re.S)
+        assert m, f"cockpit.ps1 lost its ${name} table"
+        return tuple(tuple(re.findall(r"'([^']*)'", row))
+                     for row in re.findall(r"@\([^)]*\)", m.group(1)))
+    assert ps_table("order") == mv.CONDITION_WORDS
+    assert ps_table("gateOrder") == mv.GATE_CONDITION_WORDS
     assert mv.CONDITION_WORDS == (
         ("write scope violated", "scope violation"),
         ("contract validation failed", "contract failure"),
         ("provider limit/overload", "provider limit"),
-        ("timed out", "timeout"),
+        ("timeout", "timeout"),
         ("approval auto-rejected", "awaiting a person"),
+        ("approval rejected", "rejected by a person"),
         ("cancelled", "cancelled"))
+    assert "upstream failed or blocked" in text and "^gate \\S+ blocked:" in text
 
 
 def _findings_run(tmp_path, attempts: list, events: list | None = None):
@@ -992,12 +1019,37 @@ def test_agent_block_reports_tool_activity_per_attempt_and_never_zero(tmp_path, 
                        "attempts_detail": [
                            {"scope": None, "tools": {"read": 3, "bash": 2}},
                            {"scope": None, "tools": None},
-                           {"scope": "2", "tools": {}},
+                           {"scope": "item 2", "tools": {}},
+                           {"scope": "item 2", "tools": {"read": 1}},
                        ]}]}
     lines = mv.node_agent_lines(run, "n", usage=usage)
     per = [l for l in lines if l.strip().startswith("per attempt")]
-    assert per == ["    per attempt: 1: 5 (read 3, bash 2) | 2: not reported | 3[2]: 0"]
+    # Numbered within each scope, never a running index across items.
+    assert per == ["    per attempt: 1: 5 (read 3, bash 2) | 2: not reported | "
+                   "item 2 #1: 0 | item 2 #2: 1 (read 1)"]
     single = {"rows": [{"node": "n", "argv": {"binary": "pi"}, "tool_calls": 1,
                         "tools": {"read": 1}, "attempts_detail": [{"scope": None,
                                                                     "tools": {"read": 1}}]}]}
     assert not any("per attempt" in l for l in mv.node_agent_lines(run, "n", usage=single))
+
+
+def test_finding_trajectory_refuses_to_line_up_attempts_it_cannot(tmp_path):
+    """`harness.execute` rotates a result to the FIRST FREE slot, so an
+    attempt that left no result shifts every later number. When the record's
+    attempt count and the recorded results disagree, the pairs are labelled
+    by result and the line says why — never a guessed cause."""
+    f = [{"category": "bug", "file": "a.py", "claim": "x", "severity": "major"}]
+    run = _findings_run(tmp_path, [f, f], events=[
+        {"kind": "attempt", "node": "rev", "cause": "initial", "ordinal": 1},
+        {"kind": "attempt", "node": "rev", "cause": "auto-retry", "ordinal": 2},
+        {"kind": "attempt", "node": "rev", "cause": "corrective", "ordinal": 3},
+    ])
+    lines = mv.finding_trajectory(run, "rev", attempts=3)
+    assert lines == ["", "  findings across attempts",
+                     "    (attempt causes not shown: 3 attempts, 2 recorded results - an "
+                     "attempt that left no result shifts the numbering)",
+                     "    result 2 vs result 1: 0 new, 1 persisting, 0 resolved, "
+                     "0 severity changed"]
+    # A text step with two recorded results has nothing to compare: no line.
+    text = _findings_run(tmp_path / "t", ["first draft", "second draft"])
+    assert mv.finding_trajectory(text, "rev") == []

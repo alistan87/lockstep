@@ -103,7 +103,7 @@ The DE states an outcome. You pick or adapt a flow. Constraints:
 **Render the card first, then ask.** It spawns nothing:
 
 ```powershell
-python contrib\plan_card.py <flow> --runs-dir runs
+python contrib\plan_card.py <flow>          # runs root: [driver] runs_dir in lockstep.toml, else ./runs; --runs-dir overrides
 ```
 
 It writes `runs/plan-card.txt` and prints the shape of the work, the flow's own

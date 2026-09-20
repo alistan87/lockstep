@@ -977,9 +977,10 @@ def cmd_status(ns) -> int:
         source = (state.nodes[seeded[0]].seeded_from if seeded
                   else state.nodes[seeded_items[0][0]].items[str(seeded_items[0][1])].seeded_from)
         names = seeded + [f"{n}[{i}]" for n, i in seeded_items]
-        items_phrase = f" and {len(seeded_items)} map item(s)" if seeded_items else ""
-        print(f"seeded: {len(seeded)} node(s){items_phrase} served from {source} — "
-              f"{', '.join(names)}")
+        counted = [f"{len(seeded)} node(s)"] if seeded else []
+        if seeded_items:
+            counted.append(f"{len(seeded_items)} map item(s)")
+        print(f"seeded: {' and '.join(counted)} served from {source} — {', '.join(names)}")
     forced = sorted(
         n for n, r in state.nodes.items()
         if any("forced stale" in reason for reason in (r.invalidated_by or []))
@@ -1099,6 +1100,12 @@ EXAMPLE_TOML = '''# lockstep executor config (SPEC §8.2). An executor entry is 
 # any harness upgrade and on a weekly cadence.
 
 default = "claude-code"
+
+# Where run directories live when no --runs-dir is given (flag > this key >
+# ./runs). A relative value is relative to THIS file; the value below keeps
+# runs OUTSIDE the audited tree, which is the recommended shape.
+# [driver]
+# runs_dir = "../lockstep-runs"
 
 [executors.claude-code]                    # personal machine, Claude subscription
 argv = ["claude", "-p", "{prompt}", "--output-format", "json"]

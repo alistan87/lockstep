@@ -35,6 +35,7 @@ carries `item`; the map's own record never says "seeded".
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from .protocols import PlannedWork, RawResult, RenderCtx
@@ -86,6 +87,9 @@ class SeedExecutor:
         self.forced = forced or set()
         self.on_forced = on_forced
         self._forced_noted: set[str] = set()
+        # `serve_item` runs on item worker threads; the once-only note needs
+        # a lock or two items can both pass the check (review 2026-09-19).
+        self._noted_lock = threading.Lock()
         self.kind = inner.kind
         self.cacheable = inner.cacheable
         # A MISS runs for real, so the fallthrough keeps every capability of
@@ -155,8 +159,10 @@ class SeedExecutor:
         if not self.cacheable:
             return work
         if node.id in self.forced:
-            if node.id not in self._forced_noted:
+            with self._noted_lock:
+                first = node.id not in self._forced_noted
                 self._forced_noted.add(node.id)
+            if first:
                 self.log(f"seed: {node.id} forced stale (--force-stale) — runs for real")
                 if self.on_forced is not None:
                     self.on_forced(node.id)

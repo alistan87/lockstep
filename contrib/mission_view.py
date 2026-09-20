@@ -62,8 +62,14 @@ def default_runs_root(base: Path, flag: str | None = None) -> Path:
     base = Path(base)
     try:
         from lockstep.registry import load_config, resolve_runs_dir
+    except ImportError:
+        return base / "runs"  # no package: the pre-key layout, by construction
+    try:
         return resolve_runs_dir(load_config(base / "lockstep.toml"), None, base=base)
-    except Exception:  # ImportError, ConfigError, a broken toml: default layout
+    except Exception as e:  # a toml the DRIVER would refuse: say so, then default
+        print(f"lockstep.toml unreadable ({e}); using {base / 'runs'} - the driver "
+              f"refuses this config, so a run you expect elsewhere is not there",
+              file=sys.stderr)
         return base / "runs"
 
 
@@ -338,19 +344,47 @@ CONDITION_WORDS = (
     ("write scope violated", "scope violation"),
     ("contract validation failed", "contract failure"),
     ("provider limit/overload", "provider limit"),
-    ("timed out", "timeout"),
+    ("timeout", "timeout"),
     ("approval auto-rejected", "awaiting a person"),
+    ("approval rejected", "rejected by a person"),
     ("cancelled", "cancelled"),
 )
+# A BLOCKED gate's `error` is the verdict's own reason — the model's words —
+# when the gate decided, and that block is the ledger's story. Only the
+# engine's three gate texts are conditions, matched as PREFIXES so a reason
+# that merely mentions a timeout is never counted. Mirrored in cockpit.ps1.
+GATE_CONDITION_WORDS = (
+    ("gate command timed out after", "timeout"),
+    ("no valid verdict emitted", "no valid verdict"),
+    ("cancelled", "cancelled"),
+)
+CONDITION_RENDER_ORDER = (
+    "scope violation", "contract failure", "provider limit", "timeout",
+    "no valid verdict", "awaiting a person", "rejected by a person", "cancelled",
+)
+# The engine's two dependency texts: a record carrying one is a step waiting
+# behind the real condition, which `stalled_behind` already counts. Counting
+# it here would multiply one problem by its fan-out (review 2026-09-19, B1).
+_DEPENDENCY_PREFIXES = ("upstream failed or blocked", "gate ")
+
+
+def _is_dependency_error(error: str) -> bool:
+    return error.startswith("upstream failed or blocked") or bool(
+        re.match(r"gate \S+ blocked:", error))
 
 
 def condition_counts(state: dict | None) -> list[tuple[str, int]]:
-    """[(word, n)] over every failed or blocked node and every failed map
-    item, in CONDITION_WORDS order, zero counts omitted. One condition per
-    record: the FIRST prefix found in its error, so a corrective that also
-    violated scope counts once. A failed record whose error matches nothing
-    is counted as `other` — never dropped, because a count that skips what
-    it cannot name reads as "nothing else is wrong"."""
+    """[(word, n)] over the records that ARE the condition, in render order,
+    zero counts omitted. One condition per record: the FIRST needle found in
+    its error, so a corrective that also violated scope counts once. Rules,
+    each the engine's own distinction: a step blocked BEHIND another
+    (`upstream failed or blocked`, `gate <id> blocked:`) is a dependency
+    fact, not a condition; a blocked gate counts only for the engine's own
+    gate texts (a decided block is the ledger's story); a map counts its
+    failed items only when the MAP itself is failed or blocked (an optional
+    map's tolerated item, or a map paused by a budget, blocked nothing); a
+    failed record matching nothing is `other` — never dropped, because a
+    count that skips what it cannot name reads as "nothing else is wrong"."""
     nodes = ((state or {}).get("nodes") or {})
     counts: dict[str, int] = {}
     other = 0
@@ -364,7 +398,16 @@ def condition_counts(state: dict | None) -> list[tuple[str, int]]:
         other += 1
 
     for rec in nodes.values():
-        if not isinstance(rec, dict):
+        if not isinstance(rec, dict) or rec.get("status") not in ("failed", "blocked"):
+            continue
+        error = str(rec.get("error") or "")
+        if _is_dependency_error(error):
+            continue
+        if rec.get("role") == "gate" and rec.get("status") == "blocked":
+            for prefix, word in GATE_CONDITION_WORDS:
+                if error.startswith(prefix):
+                    counts[word] = counts.get(word, 0) + 1
+                    break
             continue
         items = rec.get("items") or {}
         failed_items = [i for i in items.values()
@@ -373,11 +416,8 @@ def condition_counts(state: dict | None) -> list[tuple[str, int]]:
             for i in failed_items:
                 tally(str(i.get("error") or ""))
             continue  # the map's own error restates its first failed item
-        if rec.get("status") in ("failed", "blocked"):
-            if rec.get("role") == "gate" and rec.get("status") == "blocked":
-                continue  # a gate that DECIDED is the ledger's story, not a condition
-            tally(str(rec.get("error") or ""))
-    out = [(word, counts[word]) for _, word in CONDITION_WORDS if counts.get(word)]
+        tally(error)
+    out = [(word, counts[word]) for word in CONDITION_RENDER_ORDER if counts.get(word)]
     if other:
         out.append(("other", other))
     return out
@@ -392,7 +432,8 @@ def conditions_line(state: dict | None) -> str | None:
         return None
     parts = []
     for word, n in counts:
-        if n == 1 or word in ("awaiting a person", "other", "cancelled"):
+        if n == 1 or word in ("awaiting a person", "rejected by a person", "other",
+                              "cancelled", "no valid verdict"):
             parts.append(f"{n} {word}")
         else:
             parts.append(f"{n} {word}s")
@@ -884,13 +925,23 @@ def _attempt_causes(run_dir: Path, node_id: str, events: list[dict] | None) -> d
 
 
 def finding_trajectory(run_dir: Path, node_id: str, *,
-                       events: list[dict] | None = None) -> list[str]:
+                       events: list[dict] | None = None,
+                       attempts: int | None = None) -> list[str]:
     """S3's view half (2026-09-19): how this step's findings moved between
-    consecutive attempts — `attempt 2 (corrective) vs attempt 1: 1 new, 2
-    persisting, 1 resolved, 0 severity changed`. Counts over finding
-    IDENTITY; `not comparable` when either side is not a findings shape.
-    Never says a later attempt is "better". [] with fewer than two recorded
-    results, so an ordinary step's drawer grows nothing."""
+    consecutive recorded results — `attempt 2 (corrective) vs attempt 1: 1
+    new, 2 persisting, 1 resolved, 0 severity changed`. Counts over finding
+    IDENTITY; `not comparable` when one side is not a findings shape; []
+    when NO side is (a text step), or with fewer than two recorded results,
+    so an ordinary step's drawer grows nothing. Never says a later attempt
+    is "better".
+
+    Labels are attempt causes ONLY when the recorded results can be matched
+    to attempts exactly — `harness.execute` rotates a result to the first
+    free `result-attempt<n>` slot, so an attempt that left no result shifts
+    every later number; when `attempts` (the record's count) differs from the
+    number of recorded results, the pairs are labelled `result k` and the
+    line says why (review 2026-09-19, B4). A missing journal reads
+    `cause unknown`, never inferred."""
     run_dir = Path(run_dir)
     phase = run_dir / "phases" / node_id
     rotated: list[tuple[int, Path]] = []
@@ -909,21 +960,32 @@ def finding_trajectory(run_dir: Path, node_id: str, *,
             break
     if len(files) < 2:
         return []
+    parsed = []
+    for p in files:
+        try:
+            parsed.append(_findings_of(p.read_text(encoding="utf-8")))
+        except OSError:
+            parsed.append(None)
+    if all(x is None for x in parsed):
+        return []  # a text step, not a findings step: nothing to compare
     causes = _attempt_causes(run_dir, node_id, events)
+    exact = attempts is None or attempts == len(files)
 
     def label(k: int) -> str:
+        if not exact:
+            return f"result {k}"
         cause = causes.get(k)
         if cause is None:
-            return f"attempt {k}" + (" (cause unknown)" if not causes else "")
+            return f"attempt {k} (cause unknown)"
         return f"attempt {k}" if cause == "initial" else f"attempt {k} ({cause})"
 
     out = ["", "  findings across attempts"]
+    if not exact:
+        out.append(f"    (attempt causes not shown: {attempts} attempts, "
+                   f"{len(files)} recorded results - an attempt that left no "
+                   f"result shifts the numbering)")
     for k in range(1, len(files)):
-        try:
-            prev = _findings_of(files[k - 1].read_text(encoding="utf-8"))
-            cur = _findings_of(files[k].read_text(encoding="utf-8"))
-        except OSError:
-            prev = cur = None
+        prev, cur = parsed[k - 1], parsed[k]
         head = f"    {label(k + 1)} vs {label(k)}: "
         if prev is None or cur is None:
             out.append(head + "not comparable (a side is not a findings shape)")
@@ -993,7 +1055,8 @@ def node_detail(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
         # the rotated result-attempt<n>.json files. Say which one this is.
         out += ["", "  latest verdict (lossy - per-round truth is in the rotated files)",
                 f"    {verdict}"]
-    out += finding_trajectory(run_dir, node_id, events=events)
+    out += finding_trajectory(run_dir, node_id, events=events,
+                              attempts=rec.get("attempts"))
 
     # Sizes are stat()ed inside the guard for the same reason as newest_run:
     # the engine ROTATES per-attempt files, so a name listed a moment ago can be
@@ -1109,16 +1172,23 @@ def node_agent_lines(run_dir: Path, node_id: str, *, rec: dict | None = None,
         # (persona, context, argv, by digest) is the drawer's hash-parts table.
         # The honesty rule per attempt, as for the total: never "0" for a
         # harness that cannot report.
+        # Numbered WITHIN each scope: cost_report concatenates the node's
+        # logs and then every item's, so a running index would read item
+        # 1's first attempt as "attempt 3" (review 2026-09-19, B5).
         per = []
-        for n, d in enumerate(attempts, 1):
-            scope = f"[{d['scope']}]" if d.get("scope") else ""
+        seen: dict[str, int] = {}
+        for d in attempts:
+            scope = str(d.get("scope") or "")
+            seen[scope] = seen.get(scope, 0) + 1
+            n = seen[scope]
+            head = f"{scope} #{n}" if scope else f"{n}"
             t = d.get("tools")
             if t is None:
-                per.append(f"{n}{scope}: not reported")
+                per.append(f"{head}: not reported")
             else:
                 inner = ", ".join(f"{k} {v}" for k, v in
                                   sorted(t.items(), key=lambda kv: (-kv[1], kv[0])))
-                per.append(f"{n}{scope}: {sum(t.values())}" + (f" ({inner})" if inner else ""))
+                per.append(f"{head}: {sum(t.values())}" + (f" ({inner})" if inner else ""))
         out.append(line("per attempt", " | ".join(per)))
     if row.get("turns") is not None:
         out.append(line("turns", f"{row['turns']} (a turn is a model reply, "
