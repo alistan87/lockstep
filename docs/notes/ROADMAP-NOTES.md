@@ -301,6 +301,10 @@ a warning that is wrong on the flow it teaches is one people learn to skip).
   contract but raw stdout contains a longer near-object, embed the raw text
   (or the longest decode prefix) in the corrective fence instead. Needs care:
   the fence must stay within max_interp_chars and the §7 fencing contract.
+  **RESOLVED 2026-09-09** as throughput-parity C3 (DEVIATIONS 2026-09-09,
+  "longest near-object"): the corrective fence embeds the raw channel's
+  longest near-object when extraction collapsed to inner rubble. Marked
+  here 2026-09-19; the entry had been left reading as open.
 
 - **2026-08-16 (fleet build, concurrent-orchestration work order): three
   seams recorded, none built.** (1) **Cross-run exclusive tokens** — r7
