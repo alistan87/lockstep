@@ -7,8 +7,9 @@ status: current
 # Open work, evaluated and ranked (2026-09-19)
 
 > **Progress:** items 1, 2 and 4, then 3, 5 and 7, were built the same day
-> (CHANGELOG "Unreleased"); their rows are marked BUILT and kept for the
-> record. Item 6 (persona composition) stays parked on its trigger.
+> and shipped in **0.17.0**; their rows are marked BUILT and kept for the
+> record. Item 6 (persona composition) stays parked on its trigger, so the
+> ranked work still open starts at item 8.
 
 **What this is.** The actionable open items recorded across
 `ROADMAP-NOTES.md`, `LESSONS-TO-MECHANISMS.md`, the proposals index, and

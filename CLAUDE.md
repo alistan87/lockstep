@@ -113,7 +113,7 @@ pwsh -File contrib\cockpit.ps1 -RunDir <run> -Role why -Node <id>   # why did th
 - `executors/` — `harness.py` (headless agent subprocess), `shell.py`, `fake.py` (test double), `flow.py` (composition: a saved flow as one node; child = real run under `<run>/children/`), `proc.py` (spawn + kill_tree; Windows Job Object containment on top of taskkill)
 - `workspace.py` — GitWorkspace (temp-index write-tree snapshots AND restores; restore never deletes; `staged_paths`/`unstage` for quarantine), NullWorkspace
 - `state.py`, `store.py` — records, hash composition, events.jsonl, lockfile, run dirs; `trace_status` (the dict `verify_trace`'s frozen 4-tuple is a view of)
-- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine; `_writes_of` is the ONE reader of a
+- `roles.py` — the engine: waves, exclusive tokens, lineage-head resume, gates, heal cascade, map, approvals, budgets, write-scope quarantine (per ITEM on a map, inside the `tree` token each write-capable item already holds); `_writes_of` is the ONE reader of a
   declared scope (quarantine, dirty preflight, heal text, rollback warning)
 - `repair.py` — deletion-only JSON repair + the file channel's single-value
   salvage (C2/C3; never synthesizes a closer, refuses multi-value files)
@@ -216,6 +216,14 @@ a feature over adding a dependency. Full pytest after every change.
   control on this machine — and discovered skills into headless spawns, none
   of it in `input_hash`. pi 0.83.0 has no `--persona` flag; leave
   `persona_flag` unset so the driver prepends the persona body (§8.4).
+- The claude-code stanza closes the same channel with `--safe-mode` (verified
+  against claude 2.1.270, five live controls): a headless `claude -p` spawn
+  auto-loads `CLAUDE.md` from cwd and its parents AND every `.claude/skills/*`,
+  and `--safe-mode` reduces that to none of either with subscription auth
+  intact. `--bare` restricts auth and `--disable-slash-commands` leaves
+  CLAUDE.md loaded, so neither substitutes. Personas and `spec.context` are now
+  the ONLY instruction channels into a claude node, and both are hashed.
+  Flipping it in a live `lockstep.toml` re-bills claude nodes once, by design.
 - A persona that never mutates by contract says `readonly: true` in its
   front-matter (`reviewer.md`, `arbiter.md`); `lint-persona-not-readonly` then
   catches a node wearing it while declaring neither `spec.readonly` nor
@@ -236,6 +244,13 @@ a feature over adding a dependency. Full pytest after every change.
   run, launched via `contrib\lane.py`; `gc.auto` stays 0 in this repo
   (snapshot trees are unreferenced loose objects). The model is
   `docs/guides/FLEET-OPERATIONS.md`.
+- Where runs live is config: `--runs-dir`, else `[driver] runs_dir` in
+  `lockstep.toml` (relative to THAT file), else `./runs` — one rule for the
+  driver, `gc`, `active`, `doctor` and every cockpit tool. The example
+  recommends pointing it outside the audited tree, which retires the M7
+  warning class below; the default did not move, and the key is hash-neutral
+  except for `kind:"flow"` children, which re-bill once on the whole-file
+  digest.
 - `runs/` holds prompts, diffs, and model output: sensitive, gitignored,
   never committed. `lockstep.toml` is local (gitignored); the committed
   template is `lockstep.toml.example`.

@@ -3,7 +3,7 @@ type: plan
 title: "Upstream response: MISSION scale, blocker intelligence, and execution provenance"
 description: Point-by-point disposition of the downstream MISSION feature request filed against lockstep 0.13.0 — one accepted P0 (incremental projections, gated behind a measurement phase), two accepted with scope reductions, one counter-proposal (journal attempt events instead of a new per-attempt manifest artifact), and answers to all five upstream questions. Every source-level claim in the report was verified before classification; all five were accurate.
 resource: docs/proposals/upstream-response-mission-scale.md
-status: S1 (1-5) + S2 blocker-path view + S3 engine half BUILT through 0.16.0; the rest of the S2/S4 views open
+status: S1-S4 BUILT through 0.17.0; only the diagnostics-export follow-up stays deferred
 upstream_baseline: "lockstep 0.13.0 (9bee0c4)"
 ---
 
@@ -324,9 +324,25 @@ a dependency fact, never a schedule estimate, no invented severity. The
 same batch made a vanished driver render as "stopped unexpectedly" instead
 of a healthy "running" over a corpse.
 
-**Still open:** the rest of the S2 view (condition counts beside the
-ledger line) and the S4 view over the S3 attempt events the engine already
-journals.
+**Closed in 0.17.0: the last S2, S3 and S4 views.** The board's
+`blocking conditions` line counts what the engine itself said went wrong,
+in the engine's own categories, beside the review-findings line and never
+inside it — and it follows the engine's dependency and gate texts exactly,
+so a step blocked BEHIND a failure is stalled_behind's story and is not
+re-counted as its own condition (the first cut multiplied one problem by
+its fan-out, which is the inferred-severity failure wearing a different
+hat). The step drawer gained `findings across attempts` — consecutive
+recorded results compared by finding identity into new, persisting,
+resolved and severity changed, `not comparable` when a side is not a
+findings shape, attempts labelled by the journal's recorded cause and
+never by inference — and the agent block gained a per-attempt
+tool-activity line that says `not reported` rather than `0`. The S3
+counter-proposal held up in construction: the `kind:"attempt"` events
+carried every label the view needed, and no per-attempt manifest artifact
+was required.
+
+**Nothing in S1-S4 is open.** The diagnostics-export follow-up remains
+deferred by agreement.
 
 **Still worth having from the reporter:** `mission_bench.py --runs-root
 <runs> --json` from the slow machine. Not to choose what to build — the

@@ -6,7 +6,25 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
-## Unreleased
+## 0.17.0 — 2026-09-20
+
+**The open-work release.** `docs/notes/OPEN-WORK.md` ranked every
+actionable item recorded across the roadmap notes, the lessons file, the
+proposals index, and the deferral sections of the adopted proposals — 23
+items in three tiers, plus a second list of recorded seams that are
+deliberately not ranked. Six of the seven ranked as worth doing were then
+built in rank order across three commits and four adversarial review
+passes (39 findings, two blockers, every confirmed one folded in); the
+ledger itself took two more passes before it was trusted to rank anything
+(22 findings). Item 6, persona composition, stays parked on its trigger,
+and the tiers say in plain words why every deferred item is deferred.
+
+Two consequences beyond the item list. The upstream MISSION request is
+**closed**: S1 through S4 are built, and the response document's "still
+open" section is now empty. And the claude-code stanza no longer carries
+an unhashed instruction channel, which was the last harness where
+`explain`, `--seed` and `--replay` could be quietly wrong about what a node
+was told.
 
 The top three of `docs/notes/OPEN-WORK.md`, built in order, then two
 adversarial review passes before commit (engine and spec lenses; 23
