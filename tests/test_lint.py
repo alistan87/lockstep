@@ -518,3 +518,20 @@ def test_ledger_gate_healing_with_rollback_erases_its_own_memory():
 
     assert "lint-ledger-rollback" in codes(lint_flow(flow(True)))
     assert "lint-ledger-rollback" not in codes(lint_flow(flow(False)))
+
+
+def test_v1_missing_write_scope_fires_on_an_unscoped_writing_map():
+    """Maps joined the lint on 2026-09-19, the day they could declare a scope
+    (per-item baselines). A readonly map, and a map that declares, stay quiet."""
+    def flow_with(spec):
+        return tg({"name": "v1m", "nodes": [
+            {"id": "src", "kind": "harness", "output": "json", "contract": "PathManifest",
+             "spec": {"task": "list", "writes": []}},
+            {"id": "m", "role": "map", "kind": "harness", "final": True, "concurrency": 1,
+             "depends_on": ["src"], "over": "{steps.src.json.files}", "spec": spec},
+        ]})
+    assert "lint-missing-write-scope" in codes(lint_flow(flow_with({"task": "{item}"})))
+    assert "lint-missing-write-scope" not in codes(
+        lint_flow(flow_with({"task": "{item}", "writes": ["src"]})))
+    assert "lint-missing-write-scope" not in codes(
+        lint_flow(flow_with({"task": "{item}", "readonly": True})))

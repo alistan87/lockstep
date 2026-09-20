@@ -358,16 +358,27 @@ def test_verify_cli_accepts_shared_config(tmp_path):
     ) == EXIT_OK
 
 
-def test_declared_empty_write_scope_is_verified_not_skipped(tmp_path):
-    # V1 presence-keying: writes: [] is an enforced declaration now, so the
-    # map-level error must fire for it exactly as for a non-empty scope.
+def test_declared_empty_write_scope_on_a_map_is_accepted(tmp_path):
+    # V1 presence-keying: writes: [] is an enforced declaration. Until
+    # 2026-09-19 a map could not carry one at all (`write-scope-on-map`); now
+    # the engine checks each item against its own baseline, so the verifier
+    # accepts the declaration on a map exactly as on a work node — and the
+    # grammar checks still apply to it.
     got = codes(flow([
         {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest", "spec": {}},
         {"id": "m", "role": "map", "kind": "fake", "final": True, "concurrency": 1,
          "depends_on": ["src"], "over": "{steps.src.json.files}",
          "spec": {"task": "{item}", "writes": []}},
     ]), tmp_path)
-    assert "write-scope-on-map" in got
+    assert "write-scope-on-map" not in got
+    assert not [c for c in got if c.startswith("bad-write-scope")], got
+    escaping = codes(flow([
+        {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest", "spec": {}},
+        {"id": "m", "role": "map", "kind": "fake", "final": True, "concurrency": 1,
+         "depends_on": ["src"], "over": "{steps.src.json.files}",
+         "spec": {"task": "{item}", "writes": ["../out"]}},
+    ]), tmp_path)
+    assert "bad-write-scope" in escaping
 
 
 def test_on_exhausted_rules(tmp_path):

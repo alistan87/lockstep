@@ -13,5 +13,6 @@ The contract, and the material that qualifies it: the spec and its adopted amend
 | [AMENDMENTS-r4.md](AMENDMENTS-r4.md) | `amendment` | current | Lockstep spec — Revision 4 amendments |
 | [AMENDMENTS-r5.md](AMENDMENTS-r5.md) | `amendment` | current | Lockstep spec — Revision 5 amendments |
 | [AMENDMENTS-r6.md](AMENDMENTS-r6.md) | `amendment` | current | Lockstep spec — Revision 6 amendments |
+| [AMENDMENTS-r7.md](AMENDMENTS-r7.md) | `amendment` | current | Lockstep spec — Revision 7 amendments |
 | [DEVIATIONS.md](DEVIATIONS.md) | `register` | current | Deviations log |
 | [SPEC.md](SPEC.md) | `specification` | current | Lockstep — a harness-agnostic driver for headless coding agents |

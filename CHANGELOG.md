@@ -1,10 +1,55 @@
 # Changelog
 
 The spec and its amendments are the authority on behaviour
-(`docs/spec/SPEC.md` + `AMENDMENTS-r4/r5/r6`, later wins);
+(`docs/spec/SPEC.md` + `AMENDMENTS-r4/r5/r6/r7`, later wins);
 `docs/spec/DEVIATIONS.md` records implementation-level departures. This file
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
+
+## Unreleased
+
+The top three of `docs/notes/OPEN-WORK.md`, built in order, then two
+adversarial review passes before commit (engine and spec lenses; 23
+findings, no blockers, every confirmed one folded in). Two of them were
+engine fixes worth naming: a heal round used to reset a map item's
+attempt counter, so round 1's quarantine evidence overwrote round 0's
+(the counter now survives the reset, as a work node's always did); and a
+cancelled attempt that left out-of-scope writes was billed a corrective
+re-spawn that r6 C3 says it must not consume — the quarantine still runs,
+the corrective no longer does, on the single-node path and the item path
+alike.
+
+**The claude-code stanza closes its unhashed instruction channel.** Five
+live controls from this repo root (claude 2.1.270): a baseline headless
+spawn loaded this repo's `CLAUDE.md` and all five of its `.claude/skills`;
+`--safe-mode` reduced that to none of either, with subscription auth intact
+and a writing spawn under `acceptEdits` still saving its file.
+`--disable-slash-commands` dropped the skills but left `CLAUDE.md` loaded;
+`--bare` stays rejected (it restricts auth). `lockstep.toml.example` carries
+the flag and the controls; DEVIATIONS 2026-09-19 records it. Your live
+`lockstep.toml` is yours to flip — it re-bills claude nodes once, by design.
+
+**AMENDMENTS-r7.** A delta amendment, adopted, that restates into spec text
+what DEVIATIONS had been carrying as "an r7 amendment should state this":
+`spec.writes` and the quarantine, persisted heal and steer text, raw string
+leaves in shell argv, the argv-length guard, the fingerprint part list as
+composed, cross-lineage seeding, the recorded run root, the journal hash
+chain, the readonly footer's fresh-execution rule, `heal.on_exhausted`,
+shell nodes on the `tree` token, and the stanza's duty to close harness
+auto-discovery. Every section names the deviation it restates; none
+changes behaviour. Authority order is now r7 > r6 > r5 > r4 > SPEC.
+
+**Maps can declare a write scope.** `write-scope-on-map` is gone: every
+write-capable item already serialized on the `tree` token, so the engine
+takes a baseline per ITEM inside it and runs the single-node sequence on
+each — diff, quarantine, one corrective re-spawn, touched evidence — with
+the item's own attempt counter, evidence under `phases/<map>/items/<i>/`,
+`item` on the journal lines, and the four evidence fields on `ItemRecord`.
+The scope is the map's (`{args.NAME}` only; never `{item…}`).
+`lint-missing-write-scope` now covers maps; `codemod-apply` declares
+`["**"]` with its rationale; `triage-intake`, `map-summarize` and the
+repo-hygiene demo declare `[]`. Closes
+ROADMAP 2026-08-12 ("the one unguardable mutator class").
 
 ## 0.16.0 — 2026-09-12
 

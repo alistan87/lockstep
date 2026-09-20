@@ -125,6 +125,14 @@ class ItemRecord(BaseModel):
     hash_parts: dict[str, str] | None = None
     # C2 (DEVIATIONS 2026-09-09): see PhaseRecord.repaired.
     repaired: bool = False
+    # Per-item write-scope evidence (2026-09-19): the same four fields
+    # PhaseRecord carries, because a map's items now each get a baseline and a
+    # diff of their own inside the tree token. Additive with None defaults so
+    # every recorded state.json loads unchanged.
+    touched_count: int | None = None
+    touched_path: str | None = None
+    tree_before: str | None = None
+    tree_after: str | None = None
 
 
 class PhaseRecord(BaseModel):

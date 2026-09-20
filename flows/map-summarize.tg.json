@@ -28,6 +28,7 @@
       "over": "{steps.discover.json.files}",
       "spec": {
         "task": "Summarize the purpose of the file {item} in two sentences.",
+        "writes": [],
         "readonly": false
       },
       "output": "text",

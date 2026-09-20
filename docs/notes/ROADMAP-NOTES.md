@@ -216,6 +216,13 @@ items); until then the honest guidance is the factory pattern: readonly items
 that EMIT orders + one serialized, scoped applier. A lint was considered and
 rejected — it would fire on the canonical codemod-apply flow (the W2 rule:
 a warning that is wrong on the flow it teaches is one people learn to skip).
+**RESOLVED 2026-09-19** (DEVIATIONS 2026-09-19): every write-capable item
+already serialized on the `tree` token, so the engine now takes a baseline
+per ITEM inside it and runs the whole single-node sequence — diff,
+quarantine, one corrective, touched evidence — on `items/<i>/`.
+`write-scope-on-map` is gone, `lint-missing-write-scope` covers maps, and
+codemod-apply declares `["**"]` with its rationale, which is what made the
+lint admissible.
 
 - **2026-09-10 (work-machine report): the mission page's full render does
   O(everything) work, three ways, and all three grow with weeks of use.**

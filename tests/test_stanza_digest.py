@@ -37,8 +37,11 @@ RECORDED = {
     # claude-code moved 2026-09-09 when B1 added --exclude-dynamic-system-
     # prompt-sections to its argv — a DELIBERATE one-time re-bill (argv is
     # hashed by design); claude-code-resilient is B2, new the same day.
-    "claude-code": "1d7bf5a51c60a9e1e51154d182d548e254ab0832beb8779cc398d07c780f58b4",
-    "claude-code-resilient": "a02b9a623ac5f41843f5e754d95e43541c8f08cc987eb39579dfc90e74200957",
+    # 2026-09-19: `--safe-mode` joined both claude argv templates (DEVIATIONS
+    # 2026-09-19) — argv is hashed by design, so this is the deliberate
+    # one-time re-bill the stanza comment states, not drift.
+    "claude-code": "0225f2dfbf509bd39c878a9507e13738622d1cca9b45acfff9832d5fc98d19f8",
+    "claude-code-resilient": "a5c632fed5e2853a75472a921ddf3763b1d06e930f598a846a785918699cf75e",
     "copilot-cli": "b9e3e42caca5cd483b011292965882cd7e71b32be5e196c75984e6928ebabd1c",
     "local-best": "9ef94850d9f1cb3ba33a665eb55e2e420fd5c775781c2135586db437cef8ba67",
     "local-coder": "8f8459854d19e533ac3700f21c5a22dadfa406879178e1b05ed846b5606bdf8e",

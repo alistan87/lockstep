@@ -8,7 +8,7 @@ resource: docs/guides/FLOW-AUTHORING.md
 For any agent or human writing `*.tg.json` flows. Harness-agnostic: nothing
 here assumes which coding agent authored the flow or which executor runs it.
 Authoritative grammar: `docs/spec/SPEC.md` §4–§7 as amended by
-`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, `docs/spec/AMENDMENTS-r6.md`
+`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, `docs/spec/AMENDMENTS-r6.md`, `docs/spec/AMENDMENTS-r7.md`
 (later revision wins). This file is the distilled
 working subset.
 
@@ -801,11 +801,18 @@ What to know before you declare one:
 - **`verify` warns `write-scope-unenforced`** when the node holds no `tree`
   token — today that means a `readonly` node. Every other write-capable kind,
   shell included, takes the token, so its scope is enforced.
-- **Not on a map node** — `write-scope-on-map` is a hard error: the items share
-  one tree and one diff.
+- **On a map node the scope is the map's and the check is per item.** Every
+  write-capable item holds the `tree` token, so the engine takes a baseline
+  for THAT item inside it and diffs the item on its own: item 2 is never
+  accused of item 1's write, and a violation quarantines exactly the item that
+  made it (its evidence under `phases/<node>/items/<i>/`, its own corrective
+  re-spawn, the map failing through `item N failed`). The scope may name
+  `{args.NAME}` only, never `{item…}` — a scope the array can widen is not a
+  permit. (Until 2026-09-19 this was the hard error `write-scope-on-map`.)
 - On success the in-scope changed paths are written to
-  `phases/<node>/touched-<attempt>.txt`, with a count and that path on the
-  record — useful evidence at an approval over a large change.
+  `phases/<node>/touched-<attempt>.txt` (`items/<i>/` for a map item), with a
+  count and that path on the record — useful evidence at an approval over a
+  large change.
 - **A declared scope buys three more behaviours.** A heal re-run's prompt
   RESTATES the target's own scope (gate findings naming out-of-scope files
   otherwise read as authorization to go fix them); a fresh `run` refuses when
@@ -815,11 +822,13 @@ What to know before you declare one:
   rollback names any path it restored that no target declared
   (`restored-undeclared`) — the signal that a mid-run out-of-band edit was
   reverted.
-- **A map node cannot have one** (`write-scope-on-map`), and that is the one
-  unguardable mutator class: the items share a tree and a diff, so there is
-  nothing per-item to enforce and no quarantine. The pattern that works is the
-  factory one — readonly map items that EMIT orders, then one serialized,
-  scoped applier node.
+- **A writing map without one draws `lint-missing-write-scope`** like any
+  other mutator (since 2026-09-19). When the item set decides the files — a
+  codemod applier whose orders each name their own file — the honest
+  declaration is `["**"]` plus `writes_rationale` saying so
+  (`flows/factory/codemod-apply.tg.json`). The factory pattern — readonly map
+  items that EMIT orders, then one serialized, scoped applier — is still the
+  better shape whenever the applier's scope CAN be named.
 
 
 **Retry on a request-metered subscription.** The harness default —

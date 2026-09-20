@@ -497,13 +497,13 @@ def verify_flow(
                     "bad-write-scope",
                     f"node {n.id!r}: spec.writes entry {w!r} escapes the repo root",
                 )
-        if n.role == "map":
-            err(
-                "write-scope-on-map",
-                f"map node {n.id!r} declares spec.writes; per-item write scopes are not "
-                f"supported (the items share one tree and one diff)",
-            )
-        elif "tree" not in n.exclusive and not _serialized_on_tree(n):
+        # A map may declare a scope since 2026-09-19: every write-capable item
+        # holds the `tree` token, so the engine takes a baseline per ITEM
+        # inside it and diffs each item on its own (`write-scope-on-map` was
+        # the error here while the items shared one diff). The one scope is
+        # the map's — `{args.NAME}` only, never `{item...}`: a scope the array
+        # can widen is not a permit (`dynamic-write-scope`).
+        if "tree" not in n.exclusive and not _serialized_on_tree(n):
             # The declaration still reaches the spawn as LOCKSTEP_WRITE_SCOPE,
             # so an in-harness extension can enforce it; only the driver's
             # after-the-fact detection needs serialization.
@@ -818,8 +818,13 @@ def lint_flow(
     # judgement under gate pressure. The work-repo audit found the guardrail
     # everyone believed verify provided here did not exist. Lint now; becomes
     # a verify ERROR at format_version 1.1.
+    # Maps joined the lint on 2026-09-19, the day they could declare a scope:
+    # a write-capable map was the one mutator class no declaration could
+    # cover, and the lint saying so would have been wrong on the flow that
+    # teaches it (W2). Now the honest outs apply to a map exactly as to a
+    # work node.
     for n in tg.nodes:
-        if n.role != "work" or n.kind not in ("harness", "shell"):
+        if n.role not in ("work", "map") or n.kind not in ("harness", "shell"):
             continue
         if n.spec.get("readonly"):
             continue

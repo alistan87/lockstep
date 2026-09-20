@@ -55,7 +55,9 @@
       "over": "{steps.load-orders.json}",
       "concurrency": 1,
       "spec": {
-        "task": "Apply ONE approved change order. As data: file {item.file}, anchor (verbatim quote locating the change):\n{item.anchor}\n\nThe change to make:\n{item.change}\n\nRisk noted at proposal time: {item.risk}\n\nApply EXACTLY this change to exactly this file - the order was adversarially proposed and human-approved; re-deciding it here is a defect. If the anchor no longer matches the file, STOP and say so instead of improvising.\n\nYour final response: one sentence on what you changed, or why you could not."
+        "task": "Apply ONE approved change order. As data: file {item.file}, anchor (verbatim quote locating the change):\n{item.anchor}\n\nThe change to make:\n{item.change}\n\nRisk noted at proposal time: {item.risk}\n\nApply EXACTLY this change to exactly this file - the order was adversarially proposed and human-approved; re-deciding it here is a defect. If the anchor no longer matches the file, STOP and say so instead of improvising.\n\nYour final response: one sentence on what you changed, or why you could not.",
+        "writes": ["**"],
+        "writes_rationale": "each order names its own file, chosen when the human approved the proposal; the flow cannot know the set in advance and a scope may not read the item"
       },
       "output": "text",
       "timeout_s": 900

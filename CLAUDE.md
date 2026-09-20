@@ -9,9 +9,10 @@ as it does (caching, gates, healing, the spawn contract, resume) — read it
 before changing engine behaviour or authoring a flow.
 
 **The spec is authoritative:** `docs/spec/SPEC.md` (revision 3) as amended by
-`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, and `docs/spec/AMENDMENTS-r6.md`
-(all adopted; the LATER
-revision wins wherever documents disagree: r6 > r5 > r4 > SPEC).
+`docs/spec/AMENDMENTS-r4.md`, `docs/spec/AMENDMENTS-r5.md`, `docs/spec/AMENDMENTS-r6.md`,
+and `docs/spec/AMENDMENTS-r7.md` (all adopted; the LATER
+revision wins wherever documents disagree: r7 > r6 > r5 > r4 > SPEC; r7 is a
+restatement of recorded deviations into spec text and changes no behaviour).
 Implementation-level departures are logged in `docs/spec/DEVIATIONS.md` — check it
 before reporting a spec mismatch. **SPEC §15's open question is answered**
 (owner, 2026-08-10): lockstep is a build-loop tool AND a future domain runtime,

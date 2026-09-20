@@ -1032,7 +1032,12 @@ class Engine:
                         node, phase_dir, scope, scope_ref, in_scope, violations,
                         staged_before, after,
                     )
-                    if clean and getattr(executor, "supports_corrective_respawn", False):
+                    if raw.error == "cancelled":
+                        # r6 C3: a cancelled node consumes no corrective. The
+                        # quarantine still happened (it spawns nothing), and
+                        # the record says both things in order.
+                        scope_error = "cancelled\n" + scope_error
+                    elif clean and getattr(executor, "supports_corrective_respawn", False):
                         # G1b: ONE corrective re-spawn from the restored tree.
                         # Inside the token, like the quarantine itself — the
                         # re-spawn writes files. Only after a CLEAN rollback:
@@ -1136,15 +1141,16 @@ class Engine:
                  "ms": round((time.perf_counter() - t0) * 1000)},
             )
 
-    def _scope_baseline(self, node: Node) -> SnapshotRef | None:
+    def _scope_baseline(self, node: Node, label: str | None = None) -> SnapshotRef | None:
         """Baseline for write-scope detection. A non-git tree cannot diff, so
         detection is off there — the same honest limitation M6 states for
-        external-edit detection."""
+        external-edit detection. `label` names a map ITEM in the timing line
+        (`m[3]`), since each item takes its own baseline."""
         try:
-            return self._timed_ws(node.id, "scope-baseline", self.workspace.snapshot)
+            return self._timed_ws(label or node.id, "scope-baseline", self.workspace.snapshot)
         except WorkspaceError:
             self.log(
-                f"write scope: {node.id!r} declares one, but this workspace cannot "
+                f"write scope: {label or node.id!r} declares one, but this workspace cannot "
                 f"snapshot (not a git tree) — detection is off for this node"
             )
             return None
@@ -1167,11 +1173,11 @@ class Engine:
         prefix = str(rel).replace("\\", "/").strip("/") + "/"
         return [p for p in paths if not p.replace("\\", "/").startswith(prefix)]
 
-    def _after_snapshot(self, node: Node) -> SnapshotRef | None:
+    def _after_snapshot(self, node: Node, label: str | None = None) -> SnapshotRef | None:
         """The tree this node left. Same limitation as the baseline: a non-git
         tree cannot snapshot, and then there is nothing to compare or record."""
         try:
-            return self._timed_ws(node.id, "scope-after", self.workspace.snapshot)
+            return self._timed_ws(label or node.id, "scope-after", self.workspace.snapshot)
         except WorkspaceError:
             return None
 
@@ -1196,18 +1202,24 @@ class Engine:
     def _scope_violations(self, since: SnapshotRef, scope: list[str]) -> list[str]:
         return self._scope_changes(since, scope)[1]
 
-    def _record_touched(self, node: Node, phase_dir: Path, in_scope: list[str]) -> None:
+    def _record_touched(self, node: Node, phase_dir: Path, in_scope: list[str],
+                        item: tuple[int, ItemRecord] | None = None) -> None:
         """Write the in-scope changed-path list beside the attempt and record a
         COUNT plus its path — never the list itself (`FileStore.record` rewrites
         all of state.json on every call). Attempt-scoped, because `phase_dir`
-        survives resume and heal rounds."""
+        survives resume and heal rounds. For a map item the evidence lands on
+        the ItemRecord and under `items/<i>/`."""
         rec = self._rec(node.id)
-        name = f"touched-{rec.attempts}.txt"
+        target = item[1] if item is not None else rec
+        name = f"touched-{target.attempts}.txt"
         (phase_dir / name).write_text(
             "".join(f"{p}\n" for p in in_scope), encoding="utf-8"
         )
-        rec.touched_count = len(in_scope)
-        rec.touched_path = f"phases/{node.id}/{name}"
+        target.touched_count = len(in_scope)
+        target.touched_path = (
+            f"phases/{node.id}/items/{item[0]}/{name}" if item is not None
+            else f"phases/{node.id}/{name}"
+        )
         self.store.record(rec)
 
     def _quarantine(
@@ -1220,6 +1232,7 @@ class Engine:
         violations: list[str],
         staged_before: set[str],
         current: SnapshotRef | None = None,
+        item: tuple[int, ItemRecord] | None = None,
     ) -> tuple[str, bool]:
         """Preserve the blocked attempt, put the tree back, say what happened to
         every path. Returns (failure message, rollback-completed-cleanly) — the
@@ -1237,9 +1250,16 @@ class Engine:
         attempt 1 exists to leave.
 
         In-scope writes are left exactly as they are.
+
+        `item` = (index, ItemRecord) for a map item: the attempt counter, the
+        evidence path and the journal line are the item's, and the map's own
+        record is never touched here — the map fails through its item.
         """
         rec = self._rec(node.id)
-        stem = f"out-of-scope-{rec.attempts}"
+        target = item[1] if item is not None else rec
+        label = f"{node.id}[{item[0]}]" if item is not None else node.id
+        rel_dir = f"phases/{node.id}/items/{item[0]}" if item is not None else f"phases/{node.id}"
+        stem = f"out-of-scope-{target.attempts}"
         patch_name = f"{stem}.patch"
         discard = phase_dir / stem
         outcomes: list[tuple[str, str]] = []
@@ -1280,10 +1300,10 @@ class Engine:
                 failure = f"{failure + '; ' if failure else ''}index not reset: {e}"
 
         for p, outcome in outcomes:
-            append_event(
-                self.store.run_dir,
-                {"node": node.id, "status": "quarantined", "path": p, "outcome": outcome},
-            )
+            ev = {"node": node.id, "status": "quarantined", "path": p, "outcome": outcome}
+            if item is not None:
+                ev["item"] = item[0]
+            append_event(self.store.run_dir, ev)
         # As heal does after ITS restore: refresh the lineage head, or a
         # crash-then-resume reads the rollback as external edits.
         try:
@@ -1293,10 +1313,11 @@ class Engine:
             pass
 
         lines = [
-            f"write scope violated: this step may only write "
+            f"write scope violated: {'item ' + label if item is not None else 'this step'} "
+            f"may only write "
             f"{', '.join(scope) if scope else 'nothing (declared writes: [])'} "
             f"but wrote {', '.join(violations)}",
-            f"the blocked attempt is preserved at phases/{node.id}/{patch_name}",
+            f"the blocked attempt is preserved at {rel_dir}/{patch_name}",
         ]
         lines += [f"  {p} — {outcome}" for p, outcome in outcomes]
         if operators:
@@ -1361,6 +1382,7 @@ class Engine:
         scope_ref: SnapshotRef,
         staged_before: set[str],
         first_error: str,
+        item: tuple[int, ItemRecord] | None = None,
     ) -> tuple[RawResult, str | None]:
         """Exactly one corrective re-spawn after a write-scope quarantine (G1b),
         symmetric with the contract-violation shape: bounded (this method never
@@ -1374,9 +1396,14 @@ class Engine:
         quarantine restored every out-of-scope path to it, in-scope writes from
         attempt 1 are legal against it by definition, and `tree_before` keeps
         describing the pre-attempt tree so `node_diff` brackets the node's
-        total surviving change, not just the corrective's."""
+        total surviving change, not just the corrective's.
+
+        For a map item (`item` = (index, ItemRecord)) the attempt counter,
+        the journal ordinal and the tree pair are the item's."""
         rec = self._rec(node.id)
-        patch_path = phase_dir / f"out-of-scope-{rec.attempts}.patch"
+        target = item[1] if item is not None else rec
+        label = f"{node.id}[{item[0]}]" if item is not None else node.id
+        patch_path = phase_dir / f"out-of-scope-{target.attempts}.patch"
         try:
             patch_text = patch_path.read_text(encoding="utf-8")
         except OSError:  # pragma: no cover — quarantine reported clean, so it wrote
@@ -1388,27 +1415,34 @@ class Engine:
         try:
             self._spend_spawn(corrective)
         except BudgetTripped:
-            rec.error = f"{first_error}\n(budget tripped before the scope-corrective re-spawn)"
+            target.error = f"{first_error}\n(budget tripped before the scope-corrective re-spawn)"
             raise
-        append_event(self.store.run_dir, {"node": node.id, "status": "scope-corrective-respawn"})
-        self._journal_attempt(node, corrective, "scope-corrective")
+        ev = {"node": node.id, "status": "scope-corrective-respawn"}
+        if item is not None:
+            ev["item"] = item[0]
+        append_event(self.store.run_dir, ev)
+        self._journal_attempt(
+            node, corrective, "scope-corrective",
+            item_index=item[0] if item is not None else None,
+            ordinal=(target.attempts + 1) if item is not None else None,
+        )
         self.log(
-            f"[{node.id}] write scope violated — one corrective re-spawn from the "
+            f"[{label}] write scope violated — one corrective re-spawn from the "
             f"restored tree (declared scope restated, reverted patch embedded)"
         )
         raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
-        rec.attempts += 1
+        target.attempts += 1
         self.store.record(rec)
         if (phase_dir / "CANCELLED").exists():
             return raw2, "cancelled"  # r6 C3 covers corrective re-spawns
-        after2 = self._after_snapshot(node)
+        after2 = self._after_snapshot(node, label)
         in_scope2, violations2 = self._scope_changes(
-            scope_ref, scope, label=node.id, current=after2
+            scope_ref, scope, label=label, current=after2
         )
         if violations2:
             msg2, _ = self._quarantine(
                 node, phase_dir, scope, scope_ref, in_scope2, violations2,
-                staged_before, after2,
+                staged_before, after2, item=item,
             )
             return raw2, (
                 "the corrective re-spawn ALSO violated the write scope — no further "
@@ -1416,8 +1450,8 @@ class Engine:
             )
         if not raw2.timed_out and raw2.exit_code == 0 and raw2.result_text is not None:
             if after2 is not None:
-                rec.tree_after = after2.ref
-            self._record_touched(node, phase_dir, in_scope2)
+                target.tree_after = after2.ref
+            self._record_touched(node, phase_dir, in_scope2, item=item)
         return raw2, None
 
     def _maybe_snapshot(self, node: Node) -> None:
@@ -2166,7 +2200,15 @@ class Engine:
                 # prompt doesn't reference the restored content could hash-match
                 # and wrongly skip. (Caught by the audit-spec arbiter gate.)
                 if self.tg.node(nid).role == "map":
-                    nrec.items = {}
+                    # Keep each item's ATTEMPT COUNTER, clear everything else.
+                    # A work node's counter never resets across heal rounds,
+                    # which is what makes `out-of-scope-<n>` / `touched-<n>`
+                    # names unique; a reset here let heal round 1's item
+                    # quarantine overwrite round 0's preserved attempt
+                    # (adversarial review 2026-09-19, finding 1).
+                    nrec.items = {
+                        k: ItemRecord(attempts=v.attempts) for k, v in nrec.items.items()
+                    }
                 self.store.mutate(
                     lambda st, _nid=nid, _r=round_n: st.heal_pending.__setitem__(_nid, _r))
                 self.store.record(nrec)
@@ -2228,6 +2270,9 @@ class Engine:
                     irec = rec.items.get(str(i))
                     if irec is not None and irec.status == "running":
                         irec.status = "pending"
+                        # As the single-node path does: a pending item with a
+                        # stale "budget tripped" error string reads as failed.
+                        irec.error = None
             except Exception as e:
                 with items_guard:
                     irec = rec.items.get(str(i)) or ItemRecord()
@@ -2241,6 +2286,11 @@ class Engine:
         # saw `heal_pending` - so healed items journalled `initial`, identical
         # to round 0's, and the map's entry was popped by nobody.
         map_heal_round = self._peek_heal_round(node.id)
+        # Presence-keyed like `_run_node` (V1): `writes: []` on a map means
+        # every item writes nothing. Resolved ONCE here through `_writes_of`,
+        # the one reader of a declared scope.
+        map_has_scope = "writes" in node.spec
+        map_scope = self._writes_of(node)
 
         def _run_item_inner(i: int, item) -> None:
             with items_guard:
@@ -2275,12 +2325,57 @@ class Engine:
             self.store.record(rec)
             tokens = sorted(set(node.exclusive) | set(work.exclusive))
             locks = self._acquire(tokens)  # items inherit the node's tokens:
+            # Per-item write scope (2026-09-19): the map's ONE declared scope,
+            # checked per item against a baseline taken for THAT item inside
+            # the token — the same sequence `_run_node` runs, for the same
+            # reason it runs inside the token there. Before this, a map could
+            # not declare a scope at all (`write-scope-on-map`): the items
+            # shared one diff, and the class was the one quarantine could not
+            # guard (ROADMAP 2026-08-12).
+            label = f"{node.id}[{i}]"
+            scope_ref = None
+            scope_error: str | None = None
+            staged_before: set[str] = set()
             try:  # a tree-mutating map is inherently serial (SPEC §9.3)
                 self._maybe_snapshot(node)
+                if map_has_scope and "tree" in tokens:
+                    scope_ref = self._scope_baseline(node, label)
+                    if scope_ref is not None:
+                        staged_before = self.workspace.staged_paths()
+                        irec.tree_before = scope_ref.ref
+                        irec.tree_after = None  # the pair describes ONE attempt
+                        self.store.record(rec)
                 raw = self._item_execute(node, executor, work, phase_dir, irec, i,
                                          heal_round=map_heal_round)
+                if scope_ref is not None and raw is not None:
+                    after = self._after_snapshot(node, label)
+                    in_scope, violations = self._scope_changes(
+                        scope_ref, map_scope, label=label, current=after
+                    )
+                    if violations:
+                        scope_error, clean = self._quarantine(
+                            node, phase_dir, map_scope, scope_ref, in_scope, violations,
+                            staged_before, after, item=(i, irec),
+                        )
+                        if raw.error == "cancelled":
+                            scope_error = "cancelled\n" + scope_error  # r6 C3, as above
+                        elif clean and getattr(executor, "supports_corrective_respawn", False):
+                            raw, scope_error = self._scope_corrective(
+                                node, executor, work, phase_dir, map_scope, scope_ref,
+                                staged_before, scope_error, item=(i, irec),
+                            )
+                    elif not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None:
+                        if after is not None:
+                            irec.tree_after = after.ref
+                        self._record_touched(node, phase_dir, in_scope, item=(i, irec))
             finally:
                 self._release(locks)
+            if scope_error is not None:
+                irec.status = "failed"
+                irec.error = scope_error
+                errors[i] = scope_error
+                self.store.record(rec)
+                return
             ok = raw is not None and not raw.timed_out and raw.exit_code == 0 and raw.result_text is not None
             if not ok:
                 irec.status = "failed"

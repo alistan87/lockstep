@@ -10,20 +10,28 @@
 #   docs/guides/FLOW-AUTHORING.md      - how to write a *.tg.json (node model,
 #                                 verifier trip-wires, interpolation, heal)
 #   flows/starter/README.md     - seven verified template flows + caveats
-# Authoritative spec: docs/spec/SPEC.md + AMENDMENTS r4-r6 (later wins);
+# Authoritative spec: docs/spec/SPEC.md + AMENDMENTS r4-r7 (later wins);
 # pi extension rules: docs/spec/ADDENDUM-A-pi-hooks.md.
 
 default = "claude-code"
 
 [executors.claude-code]                    # personal machine, Claude subscription
-# Claude Code auto-loads CLAUDE.md (cwd + parents) into every -p spawn — an
-# unhashed instruction channel, same class as pi's AGENTS.md discovery (see the
-# pi stanza below). `--bare` disables the auto-discovery but is NOT a drop-in:
-# per `claude --help` it also restricts auth to ANTHROPIC_API_KEY (OAuth and
-# keychain are never read), so it breaks a subscription-backed stanza like this
-# one. Until you have verified a shape that works on your install, treat a
-# repo-root CLAUDE.md as part of every node's prompt that `explain` cannot
-# see, and keep node rules in personas/ and spec.context, which are hashed.
+# --safe-mode (verified against claude 2.1.270 on 2026-09-19, five live
+# controls from this repo root): Claude Code auto-loads CLAUDE.md (cwd +
+# parents) AND every `.claude/skills/*` into a headless -p spawn — an
+# unhashed instruction channel, same class as pi's AGENTS.md discovery (see
+# the pi stanza below). The baseline control saw this repo's CLAUDE.md and
+# all five of its skills; `--safe-mode` reduced that to NONE of either, with
+# subscription auth intact and a writing spawn under acceptEdits still
+# saving its file. What it does NOT remove: the skills bundled with the
+# harness itself (code-review, loop, …), which are the harness's own
+# behaviour, like its version — recorded, not hashable. Rejected shapes:
+# `--bare` also restricts auth to ANTHROPIC_API_KEY (breaks this stanza);
+# `--disable-slash-commands` drops the skills but leaves CLAUDE.md loaded;
+# `--setting-sources ""` behaves like --safe-mode but by inference, not by
+# its documented contract. Adding the flag re-bills claude nodes once
+# (argv is hashed, by design). Keep node rules in personas/ and
+# spec.context, which are hashed — now the ONLY instruction channels.
 # --permission-mode acceptEdits: a headless -p spawn auto-denies its own tool
 # permission prompts — without a permission mode, a WRITING node "succeeds" at
 # drafting and fails at saving the file (observed live on release-cut's
@@ -44,7 +52,7 @@ default = "claude-code"
 # only after a baseline run has recorded the `cache:` line to compare
 # against, and re-run `lockstep doctor` after flipping.
 argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits",
-        "--exclude-dynamic-system-prompt-sections"]
+        "--exclude-dynamic-system-prompt-sections", "--safe-mode"]
 prompt_via = "argv"                        # "argv" | "stdin"
 json_field = "result"                      # unwrap this envelope field; omit for raw
 persona_flag = []                          # empty => prepend persona body to the prompt
@@ -74,7 +82,8 @@ readonly_argv = ["--disallowed-tools", "Edit,Write,NotebookEdit,Bash"]  # for sp
 # retry posture stays the default everywhere else.
 [executors.claude-code-resilient]
 argv = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits",
-        "--exclude-dynamic-system-prompt-sections", "--fallback-model", "claude-sonnet-5"]
+        "--exclude-dynamic-system-prompt-sections", "--safe-mode",
+        "--fallback-model", "claude-sonnet-5"]
 prompt_via = "argv"
 json_field = "result"
 persona_flag = []

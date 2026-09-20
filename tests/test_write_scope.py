@@ -554,18 +554,209 @@ def test_verify_no_longer_warns_for_a_shell_node():
     assert "write-scope-unenforced" not in _codes(flow)
 
 
-def test_verify_rejects_writes_on_a_map_node():
-    flow = {
+def _map_flow(writes, *, write_files=None, write_files_by_attempt=None, items=("a", "b"),
+              readonly=False):
+    """A map whose items all run the same fake write map. `writes=None` omits
+    the key (unconstrained); a list — including [] — declares the map's scope,
+    checked per ITEM against a baseline taken for that item."""
+    spec: dict = {"task": "t {item}", "outputs": ["x"]}
+    if write_files is not None:
+        spec["write_files"] = write_files
+    if write_files_by_attempt is not None:
+        spec["write_files_by_attempt"] = write_files_by_attempt
+    if writes is not None:
+        spec["writes"] = writes
+    if readonly:
+        spec["readonly"] = True
+    return {
         "name": "scope-map",
         "nodes": [
             {"id": "s", "kind": "fake", "output": "json", "contract": "PathManifest",
-             "spec": {"outputs": [{"files": ["a"], "notes": ""}]}},
+             "spec": {"outputs": [{"files": list(items), "notes": ""}], "writes": []}},
             {"id": "m", "role": "map", "kind": "fake", "final": True, "depends_on": ["s"],
-             "over": "{steps.s.json.files}",
-             "spec": {"task": "t {item}", "outputs": ["x"], "writes": ["src"]}},
+             "over": "{steps.s.json.files}", "concurrency": 1, "spec": spec},
         ],
     }
-    assert "write-scope-on-map" in _codes(flow)
+
+
+def test_verify_accepts_writes_on_a_map_node():
+    """Reversed 2026-09-19: `write-scope-on-map` was the error while the items
+    shared one diff. Each item now gets its own baseline inside the tree
+    token, so a map declares a scope like any other mutator."""
+    assert "write-scope-on-map" not in _codes(_map_flow(["src"]))
+
+
+def test_verify_warns_when_a_map_scope_cannot_be_enforced():
+    """A readonly map's items hold no `tree` token, so the per-item diff would
+    be unsound — the same advisory a readonly work node gets."""
+    assert "write-scope-unenforced" in _codes(_map_flow(["src"], readonly=True))
+
+
+class TestMapScope:
+    """Per-item write scopes (ROADMAP 2026-08-12, built 2026-09-19): the map's
+    one declared scope, enforced per item. Every item takes its own baseline
+    and after-snapshot inside the token, so item 1's writes are never
+    attributed to item 2 and a violation quarantines exactly the item that
+    made it."""
+
+    def test_in_scope_items_pass_and_record_touched_paths(self, tmp_path, git_repo):
+        h = build(tmp_path, _map_flow(["src"], write_files={"src/a.py": "x"}), git_repo)
+        assert h.engine.run() == 0
+        rec = load_state(h.run_dir).nodes["m"]
+        assert rec.status == "done", rec.error
+        for i in ("0", "1"):
+            irec = rec.items[i]
+            assert irec.status == "done"
+            assert irec.tree_before and irec.tree_after
+            assert irec.touched_path == f"phases/m/items/{i}/touched-1.txt"
+        # Item 0 created the file; item 1 rewrote it with identical bytes, so
+        # against ITS baseline nothing changed — the diff is per item.
+        assert rec.items["0"].touched_count == 1
+        assert rec.items["1"].touched_count == 0
+        assert (h.run_dir / "phases" / "m" / "items" / "0" / "touched-1.txt").read_text() == "src/a.py\n"
+
+    def test_an_out_of_scope_item_is_quarantined_and_fails_the_map(self, tmp_path, git_repo):
+        from lockstep.state import read_events
+        h = build(tmp_path, _map_flow(["src"], write_files={"docs/leak.md": "x"}), git_repo)
+        assert h.engine.run() == 3
+        rec = load_state(h.run_dir).nodes["m"]
+        assert rec.status == "failed"
+        assert "item 0 failed" in (rec.error or "")
+        assert "write scope violated: item m[0]" in (rec.error or "")
+        irec = rec.items["0"]
+        assert irec.status == "failed"
+        assert "docs/leak.md" in (irec.error or "")
+        # The evidence is the ITEM's, attempt-scoped, under items/<i>/ —
+        # and the fake re-offends on its corrective, so both rounds leave one.
+        item_dir = h.run_dir / "phases" / "m" / "items" / "0"
+        assert (item_dir / "out-of-scope-1.patch").exists()
+        assert (item_dir / "out-of-scope-1" / "docs" / "leak.md").exists()
+        assert "items/0/out-of-scope-2.patch" in (irec.error or "")
+        assert not (git_repo / "docs" / "leak.md").exists()
+        assert irec.tree_after is None, "a quarantined attempt left no tree"
+        # Item 1 runs after item 0 fails (errors are collected, §9.3) and
+        # re-offends against ITS OWN baseline, so both items quarantine, and
+        # every journal line says which item.
+        evs = [e for e in read_events(h.run_dir) if e.get("status") == "quarantined"]
+        assert evs and all(e.get("node") == "m" for e in evs)
+        assert {e.get("item") for e in evs} == {0, 1}
+        assert rec.items["1"].status == "failed"
+
+    def test_the_corrective_is_per_item_and_recovers(self, tmp_path, git_repo):
+        from conftest import calls_of
+        flow = _map_flow(["src"], write_files_by_attempt=[
+            {"docs/leak.md": "x", "src/a.py": "good"},
+            {"src/a.py": "good2"},
+        ], items=("only",))
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 0
+        rec = load_state(h.run_dir).nodes["m"]
+        assert rec.status == "done", rec.error
+        irec = rec.items["0"]
+        assert irec.status == "done" and irec.attempts == 2
+        assert irec.tree_before and irec.tree_after
+        assert irec.touched_path == "phases/m/items/0/touched-2.txt"
+        assert not (git_repo / "docs" / "leak.md").exists()
+        assert (git_repo / "src" / "a.py").read_text(encoding="utf-8") == "good2"
+        calls = calls_of(h, "m")
+        assert len(calls) == 2 and calls[1].corrective
+        assert "ONLY these paths (spec.writes): src" in calls[1].prompt
+        # The map's own attempt counter is untouched: the item carried it.
+        assert rec.attempts == 0
+
+    def test_declared_empty_scope_blocks_every_item_write(self, tmp_path, git_repo):
+        h = build(tmp_path, _map_flow([], write_files={"src/a.py": "x"}, items=("one",)), git_repo)
+        assert h.engine.run() == 3
+        rec = load_state(h.run_dir).nodes["m"]
+        assert "declared writes: []" in (rec.items["0"].error or "")
+
+    def test_no_declaration_means_no_per_item_check(self, tmp_path, git_repo):
+        h = build(tmp_path, _map_flow(None, write_files={"docs/free.md": "x"}), git_repo)
+        assert h.engine.run() == 0
+        rec = load_state(h.run_dir).nodes["m"]
+        assert rec.items["0"].tree_before is None and rec.items["0"].touched_path is None
+
+    def test_each_item_is_measured_against_its_own_baseline(self, tmp_path, git_repo):
+        """The fake's attempt counter is per NODE, so `write_files_by_attempt`
+        indexes across the map's spawns: item 0 writes src/a.py, item 1 writes
+        src/b.py, item 2 writes nothing. With ONE baseline for the whole map,
+        item 1's list would carry src/a.py and item 2's both — per-item
+        baselines make each list exactly that item's own writes."""
+        h = build(tmp_path, _map_flow(["src"], write_files_by_attempt=[
+            {"src/a.py": "x"}, {"src/b.py": "y"}, {},
+        ], items=("a", "b", "c")), git_repo)
+        assert h.engine.run() == 0
+        items = h.run_dir / "phases" / "m" / "items"
+        assert (items / "0" / "touched-1.txt").read_text() == "src/a.py\n"
+        assert (items / "1" / "touched-1.txt").read_text() == "src/b.py\n"
+        assert (items / "2" / "touched-1.txt").read_text() == ""
+        rec = load_state(h.run_dir).nodes["m"]
+        assert [rec.items[str(i)].touched_count for i in range(3)] == [1, 1, 0]
+
+    def test_a_parallel_map_still_attributes_per_item(self, tmp_path, git_repo):
+        """concurrency > 1: the items hold `tree` and serialize on it, and the
+        whole check sits inside the token — so three items on a pool are
+        still measured one at a time against their own baselines."""
+        flow = _map_flow(["src"], write_files_by_attempt=[
+            {"src/a.py": "x"}, {"src/b.py": "y"}, {"src/c.py": "z"},
+        ], items=("a", "b", "c"))
+        flow["nodes"][1]["concurrency"] = 3
+        h = build(tmp_path, flow, git_repo, max_workers=3)
+        assert h.engine.run() == 0
+        rec = load_state(h.run_dir).nodes["m"]
+        assert all(rec.items[str(i)].touched_count == 1 for i in range(3))
+        seen = set()
+        for i in range(3):
+            seen |= set((h.run_dir / "phases" / "m" / "items" / str(i) / "touched-1.txt")
+                        .read_text().split())
+        assert seen == {"src/a.py", "src/b.py", "src/c.py"}
+
+    def test_heal_rounds_keep_each_items_evidence(self, tmp_path, git_repo):
+        """A heal round clears the map's item records (A3.4) but must KEEP
+        each item's attempt counter: the counter names `out-of-scope-<n>`
+        and `touched-<n>`, and a reset let round 1's quarantine overwrite
+        round 0's preserved attempt (adversarial review 2026-09-19)."""
+        from test_heal import BLOCK, PASS
+        flow = _map_flow(["src"], write_files_by_attempt=[
+            {"docs/leakA.md": "a", "src/a.py": "1"},   # round 0, attempt 1: leaks A
+            {"src/a.py": "1"},                          # its corrective: clean
+            {"docs/leakB.md": "b", "src/a.py": "2"},   # heal round, attempt 3: leaks B
+            {"src/a.py": "2"},                          # its corrective: clean
+        ], items=("only",))
+        flow["nodes"][1]["final"] = False
+        flow["nodes"] += [
+            {"id": "gate", "role": "gate", "kind": "fake", "depends_on": ["m"],
+             "output": "json", "contract": "Verdict",
+             "heal": {"max_rounds": 1, "targets": ["m"], "rollback": True},
+             "spec": {"outputs": [BLOCK, PASS], "readonly": True}},
+            {"id": "after", "kind": "fake", "depends_on": ["gate"], "final": True,
+             "spec": {"outputs": ["ok"], "readonly": True}},
+        ]
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 0
+        st = load_state(h.run_dir)
+        assert st.verdicts["gate"] == "pass"
+        irec = st.nodes["m"].items["0"]
+        assert irec.attempts == 4, "the counter survived the heal round"
+        item_dir = h.run_dir / "phases" / "m" / "items" / "0"
+        assert "leakA" in (item_dir / "out-of-scope-1.patch").read_text(encoding="utf-8")
+        assert "leakB" in (item_dir / "out-of-scope-3.patch").read_text(encoding="utf-8")
+        assert (item_dir / "out-of-scope-1" / "docs" / "leakA.md").exists()
+        assert (item_dir / "out-of-scope-3" / "docs" / "leakB.md").exists()
+        assert irec.touched_path == "phases/m/items/0/touched-4.txt"
+
+    def test_a_cancelled_item_is_quarantined_but_gets_no_corrective(self, tmp_path, git_repo):
+        """r6 C3: a cancelled attempt consumes no corrective re-spawn. The
+        quarantine still happens (it spawns nothing) and the record says both."""
+        from conftest import calls_of
+        flow = _map_flow(["src"], write_files={"docs/leak.md": "x"}, items=("only",))
+        flow["nodes"][1]["spec"]["write_phase_files"] = {"CANCELLED": ""}
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 3
+        irec = load_state(h.run_dir).nodes["m"].items["0"]
+        assert (irec.error or "").startswith("cancelled\nwrite scope violated")
+        assert not (git_repo / "docs" / "leak.md").exists()
+        assert len(calls_of(h, "m")) == 1, "no corrective after a cancel"
 
 
 def test_dirty_scope_preflight_refuses_overlap(tmp_path, git_repo):
@@ -830,6 +1021,22 @@ class TestScopeCorrective:
         assert "ONLY these paths (spec.writes): src" in calls[1].prompt
         # node_diff's pair brackets the node's total surviving change.
         assert rec.tree_before and rec.tree_after
+
+    def test_a_cancelled_node_is_quarantined_but_gets_no_corrective(self, tmp_path, git_repo):
+        """r6 C3: "a cancelled node consumes no retries and no corrective
+        re-spawn". The quarantine still runs — it spawns nothing and an
+        out-of-scope write left by a cancelled attempt is still a violation —
+        and the error names the cancel first (adversarial review 2026-09-19)."""
+        from conftest import calls_of
+        flow = _flow(["src"], write_files={"docs/leak.md": "x"})
+        flow["nodes"][0]["spec"]["write_phase_files"] = {"CANCELLED": ""}
+        h = build(tmp_path, flow, git_repo)
+        assert h.engine.run() == 3
+        rec = load_state(h.run_dir).nodes["w"]
+        assert (rec.error or "").startswith("cancelled\nwrite scope violated")
+        assert not (git_repo / "docs" / "leak.md").exists()
+        assert len(calls_of(h, "w")) == 1, "no corrective after a cancel"
+        assert load_state(h.run_dir).token_spawns == 1
 
     def test_a_second_violation_is_terminal(self, tmp_path, git_repo):
         from conftest import calls_of

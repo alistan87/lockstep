@@ -934,3 +934,71 @@ file records implementation-level departures below that bar.
   (M3), pinned by a test asserting a resumed node neither re-runs nor
   re-hashes. Legacy runs have no `attempt` events and read as cause
   unknown, displayed, never inferred. Pinned by tests/test_attempt_events.py.
+
+- **2026-09-19 — the claude-code stanzas carry `--safe-mode`** (OPEN-WORK
+  item 1; the claude twin of the 2026-08-14 pi entry). Five live controls
+  from this repo root against claude 2.1.270 (`claude --version`), headless `-p` with the
+  stanza's own flags: the BASELINE loaded this repo's root `CLAUDE.md` and
+  all five of its `.claude/skills` into the spawn — an unhashed instruction
+  channel, exactly the class the pi flags close. `--safe-mode` (documented
+  as "all customizations disabled", CLAUDE.md and skills named) reduced
+  that to NONE of either, kept subscription auth, and the fifth control showed
+  a writing spawn under `acceptEdits` still saving its file; `lockstep
+  doctor` passed a config holding the example stanza VERBATIM on both the
+  plain and the `readonly_argv` probe (`runs/doctor-record.json` records
+  stanza digest `0225f2df…`, the value `tests/test_stanza_digest.py` pins). Rejected: `--disable-slash-commands` dropped the skills but left
+  `CLAUDE.md` loaded; `--setting-sources ""` matched `--safe-mode` but by
+  inference, not contract; `--bare` restricts auth (unchanged). The residue
+  is stated rather than hidden: the harness's own bundled skills
+  (code-review, loop, …) remain visible and are the harness's behaviour,
+  like its version — recorded, not hashable. `lockstep.toml.example` only;
+  a live `lockstep.toml` re-bills its claude nodes once through the stanza
+  digest when flipped (r5 B1 working, not changing). Hash composition
+  unchanged; no frozen surface. Restated as spec text in AMENDMENTS-r7 E5.
+
+- **2026-09-19 — maps may declare `spec.writes`; the scope is checked per
+  ITEM** (OPEN-WORK item 3; closes ROADMAP 2026-08-12 "the one unguardable
+  mutator class"). `write-scope-on-map` was the §6 error while a map's
+  items shared one diff. Every write-capable item already serializes on the
+  `tree` token (a tree-mutating map is inherently serial, §9.3), so
+  `_run_map` now takes a baseline for THAT item inside the token and runs
+  the exact `_run_node` sequence on it: after-snapshot, diff, quarantine,
+  one G1b corrective (harness kinds), touched evidence. The item's own
+  attempt counter names the artifacts (`items/<i>/out-of-scope-<n>.patch`,
+  `touched-<n>.txt`) and drives the `attempt` journal ordinal; `quarantined`
+  and `scope-corrective-respawn` journal lines carry `item`; `ItemRecord`
+  gains `touched_count`, `touched_path`, `tree_before`, `tree_after`
+  (additive, None defaults, every recorded state.json loads). The map's own
+  record is untouched — the map fails through `item N failed` as for any
+  item failure. The scope is the MAP's and reads `{args.NAME}` only, never
+  `{item…}` (`dynamic-write-scope`): a scope the array can widen is not a
+  permit. A `readonly` map draws `write-scope-unenforced`, and
+  `lint-missing-write-scope` now covers write-capable maps — admissible
+  because the flow that teaches it can comply: `codemod-apply` declares
+  `["**"]` with the rationale that each approved order names its own file;
+  `triage-intake`, `map-summarize` and `repo-hygiene-demo` declare `[]`.
+  Not done: per-item scopes (`{item.file}`), which would need per-item
+  render of a permit the graph controls; `node_diff --item`. Two fixes
+  from the pre-commit adversarial review: heal invalidation (A3.4) now
+  KEEPS each item's attempt counter while clearing the rest of the item
+  record — the counter names the attempt-scoped evidence, and a reset let
+  a heal round overwrite the previous round's patch; and a CANCELLED
+  attempt (r6 C3) is still quarantined but no longer spends the scope
+  corrective, on both the single-node and the item path (the single-node
+  path had this defect before this entry). Pinned by
+  `tests/test_write_scope.py::TestMapScope` and the two `cancelled` tests.
+  Restated in AMENDMENTS-r7 D4.
+
+- **2026-09-19 — AMENDMENTS-r7 adopted as a restatement** (OPEN-WORK item
+  2). Every section names the entry here it restates; behaviour, hash
+  composition and exit codes are unchanged, and this register keeps every
+  entry — it is the evidence, r7 is the contract. Authority order is now
+  r7 > r6 > r5 > r4 > SPEC. A delta file, deliberately: `audit-spec` audits
+  the layered form and `selftest-replay` checks `SPEC.md` by heading. Two
+  places where writing r7 found THIS register looser than the code, and
+  r7 follows the code: the 2026-08-11 entry says `restored-undeclared`
+  compares against the heal targets' union — the code compares against
+  the union of every declared scope in the flow (r7 D5); and the 2026-08-11
+  lint text implies `writes_rationale` is required — it is advisory (r7
+  D1). The r7 text was itself adversarially reviewed against the code
+  before adoption (17 findings, all folded in).

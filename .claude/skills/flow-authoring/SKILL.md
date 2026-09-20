@@ -353,8 +353,8 @@ now with a second reason.
 
 Verification: absolute or escaping entries are `bad-write-scope`; an entry
 referencing anything but `{args.NAME}` is `dynamic-write-scope`; a map node
-declaring one is the hard error `write-scope-on-map` (the items share one tree
-and one diff); a `readonly` node gets the advisory `write-scope-unenforced`,
+may declare one (checked per ITEM against that item's own baseline, evidence
+under `items/<i>/`; the scope never reads `{item…}`); a `readonly` node gets the advisory `write-scope-unenforced`,
 because it holds no `tree` token and the diff would be unsound. Every other
 write-capable kind, shell included, takes the token. The matcher is `fnmatch`,
 so `*` crosses `/`. A mutation with no gate or approval on either side of it
