@@ -127,6 +127,19 @@ def _kill_pid_tree(pid: int) -> None:
             pass
 
 
+def _default_runs_root(main_repo: Path, flag: str | None) -> Path:
+    """Flag, else the main repo's `[driver] runs_dir`, else `<main>/runs` —
+    the same rule the driver applies, so a lane's runs land where `status`
+    and the cockpit will look (2026-09-19)."""
+    if flag:
+        return Path(flag)
+    try:
+        from lockstep.registry import load_config, resolve_runs_dir
+        return resolve_runs_dir(load_config(main_repo / "lockstep.toml"), None, base=main_repo)
+    except Exception:
+        return main_repo / "runs"
+
+
 def _run_dirs(runs_dir: Path) -> set[str]:
     if not runs_dir.is_dir():
         return set()
@@ -277,7 +290,7 @@ def cmd_start(ns) -> int:
         raise LaneError(f"flow is not JSON: {flow_path}: {e}")
 
     exe = _lockstep_argv(main_repo, ns.lockstep_exe)
-    runs_dir = Path(ns.runs_dir).resolve() if ns.runs_dir else main_repo / "runs"
+    runs_dir = _default_runs_root(main_repo, ns.runs_dir).resolve()
     config = main_repo / "lockstep.toml"
     config_args = ["--config", str(config)] if config.is_file() else []
     if not config_args:

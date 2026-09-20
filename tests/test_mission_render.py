@@ -867,3 +867,137 @@ def test_cost_lines_no_cache_line_when_not_reported(tmp_path, cost_cwd):
     run = make_cost_run(tmp_path)
     text = "\n".join(mv.cost_lines(run, mode="history", now=NOW))
     assert "cache:" not in text
+
+
+# ------------------------------------------- S2/S3/S4 views (2026-09-19)
+
+
+def test_condition_counts_use_the_engines_words_and_never_a_severity():
+    state = {"nodes": {
+        "a": {"status": "failed", "error": "write scope violated: this step may only write src"},
+        "b": {"status": "failed", "error": "contract validation failed twice: bad"},
+        "c": {"status": "failed", "error": "contract validation failed: x"},
+        "d": {"status": "blocked", "role": "approval",
+              "error": "approval auto-rejected (non-TTY stdin)"},
+        "g": {"status": "blocked", "role": "gate", "error": "block: no"},  # the ledger's story
+        "e": {"status": "failed", "error": "something the engine did not categorise"},
+        "m": {"status": "failed", "error": "item 0 failed: ...",
+              "items": {"0": {"status": "failed", "error": "provider limit/overload (no envelope)"},
+                        "1": {"status": "done"}}},
+        "ok": {"status": "done"},
+    }}
+    assert mv.condition_counts(state) == [
+        ("scope violation", 1), ("contract failure", 2), ("provider limit", 1),
+        ("awaiting a person", 1), ("other", 1)]
+    assert mv.conditions_line(state) == (
+        "blocking conditions: 1 scope violation, 2 contract failures, 1 provider limit, "
+        "1 awaiting a person, 1 other")
+
+
+def test_conditions_line_is_none_when_nothing_is_stopped():
+    assert mv.conditions_line({"nodes": {"a": {"status": "done"}}}) is None
+    assert mv.conditions_line(None) is None
+    assert mv.condition_counts({"nodes": {"g": {"status": "blocked", "role": "gate"}}}) == []
+
+
+def test_conditions_line_sits_beside_the_ledger_never_inside_it(tmp_path):
+    run = _ledger_run(tmp_path, [{"state": "new"}], round_n=2)
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    state["nodes"]["w"] = {"status": "failed", "error": "write scope violated: x", "role": "work",
+                           "kind": "fake"}
+    (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    rows = mv.mission_rows(run)
+    assert rows[1] == (None, "review findings: 1 new (round 2)")
+    assert rows[2] == (None, "blocking conditions: 1 scope violation")
+    assert rows[3] == (None, "")
+
+
+def test_the_condition_words_match_cockpit_ps1():
+    text = (CONTRIB / "cockpit.ps1").read_text(encoding="utf-8")
+    assert "'blocking conditions: ' + ($parts -join ', ')" in text
+    m = re.search(
+        r"@\(@\('write scope violated', 'scope violation'\),\s*"
+        r"@\('contract validation failed', 'contract failure'\),\s*"
+        r"@\('provider limit/overload', 'provider limit'\),\s*"
+        r"@\('timed out', 'timeout'\),\s*"
+        r"@\('approval auto-rejected', 'awaiting a person'\),\s*"
+        r"@\('cancelled', 'cancelled'\)\)", text)
+    assert m, "cockpit.ps1's condition table no longer matches CONDITION_WORDS"
+    assert mv.CONDITION_WORDS == (
+        ("write scope violated", "scope violation"),
+        ("contract validation failed", "contract failure"),
+        ("provider limit/overload", "provider limit"),
+        ("timed out", "timeout"),
+        ("approval auto-rejected", "awaiting a person"),
+        ("cancelled", "cancelled"))
+
+
+def _findings_run(tmp_path, attempts: list, events: list | None = None):
+    run = tmp_path / "fr"
+    phase = run / "phases" / "rev"
+    phase.mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({"nodes": {"rev": {
+        "status": "done", "attempts": len(attempts), "role": "work", "kind": "fake"}}}),
+        encoding="utf-8")
+    for n, body in enumerate(attempts, 1):
+        name = "result.json" if n == len(attempts) else f"result-attempt{n}.json"
+        (phase / name).write_text(body if isinstance(body, str) else json.dumps(body),
+                                  encoding="utf-8")
+    if events:
+        (run / "events.jsonl").write_text(
+            "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    return run
+
+
+def test_finding_trajectory_counts_by_identity_not_position(tmp_path):
+    f = lambda cat, file, claim, sev: {"category": cat, "file": file, "claim": claim,
+                                       "severity": sev}
+    run = _findings_run(tmp_path, [
+        [f("bug", "a.py", "off by one", "major"), f("bug", "b.py", "leak", "minor"),
+         f("style", "c.py", "long line", "nit")],
+        {"verdict": "block", "reason": "r", "findings": [
+            f("bug", "b.py", "LEAK", "major"),          # same identity, severity changed
+            f("bug", "a.py", "off by  one", "major"),  # whitespace/case-normalized: persisting
+            f("bug", "d.py", "new one", "minor")]},    # new; c.py's nit resolved
+    ], events=[
+        {"kind": "attempt", "node": "rev", "cause": "initial", "ordinal": 1},
+        {"kind": "attempt", "node": "rev", "cause": "heal", "ordinal": 2, "heal_round": 1},
+    ])
+    lines = mv.finding_trajectory(run, "rev")
+    assert lines == ["", "  findings across attempts",
+                     "    attempt 2 (heal round 1) vs attempt 1: 1 new, 1 persisting, "
+                     "1 resolved, 1 severity changed"]
+    # And the drawer carries it.
+    assert lines[-1] in mv.node_detail(run, "rev")
+
+
+def test_finding_trajectory_says_not_comparable_and_never_infers_a_cause(tmp_path):
+    run = _findings_run(tmp_path, ["not json at all", [{"file": "a", "claim": "x"}]])
+    assert mv.finding_trajectory(run, "rev") == [
+        "", "  findings across attempts",
+        "    attempt 2 (cause unknown) vs attempt 1 (cause unknown): not comparable "
+        "(a side is not a findings shape)"]
+    one = _findings_run(tmp_path / "one", [[{"file": "a", "claim": "x"}]])
+    assert mv.finding_trajectory(one, "rev") == []
+
+
+def test_agent_block_reports_tool_activity_per_attempt_and_never_zero(tmp_path, monkeypatch):
+    run = tmp_path / "pa"
+    (run / "phases" / "n").mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({"nodes": {"n": {"status": "done",
+                                                                 "kind": "harness"}}}),
+                                    encoding="utf-8")
+    usage = {"rows": [{"node": "n", "argv": {"binary": "pi"}, "tool_calls": 5,
+                       "tools": {"read": 3, "bash": 2},
+                       "attempts_detail": [
+                           {"scope": None, "tools": {"read": 3, "bash": 2}},
+                           {"scope": None, "tools": None},
+                           {"scope": "2", "tools": {}},
+                       ]}]}
+    lines = mv.node_agent_lines(run, "n", usage=usage)
+    per = [l for l in lines if l.strip().startswith("per attempt")]
+    assert per == ["    per attempt: 1: 5 (read 3, bash 2) | 2: not reported | 3[2]: 0"]
+    single = {"rows": [{"node": "n", "argv": {"binary": "pi"}, "tool_calls": 1,
+                        "tools": {"read": 1}, "attempts_detail": [{"scope": None,
+                                                                    "tools": {"read": 1}}]}]}
+    assert not any("per attempt" in l for l in mv.node_agent_lines(run, "n", usage=single))

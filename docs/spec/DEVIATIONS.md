@@ -1002,3 +1002,70 @@ file records implementation-level departures below that bar.
   lint text implies `writes_rationale` is required — it is advisory (r7
   D1). The r7 text was itself adversarially reviewed against the code
   before adoption (17 findings, all folded in).
+
+- **2026-09-19 — map items are seeded per item** (OPEN-WORK item 7; the
+  2026-08-12 E7 entry's second limit is withdrawn). The limit was real for
+  the reason that entry gave: the per-item hash appends `index:i` AFTER
+  the executor plans, so `SeedExecutor.plan()` cannot see it. The engine
+  now hands the composed hash to `SeedExecutor.serve_item(node, i, hash,
+  work)` from `_run_map`, still BEFORE any spawn — a served item sets
+  `costs_tokens=False` and spends nothing, exactly as a served node does
+  (§9.5 stays honest). Same rules as `plan()`: only a `done`/`skipped`
+  recording under the identical hash, `--force-stale` declines every item
+  of the named map (noted once). Provenance at item granularity:
+  `ItemRecord.seeded_from` (additive, None default), a `kind:"seed"`
+  journal line carrying `item`, the `attempt` line's cause `served`, and
+  `status`'s `seeded:` line naming `m[0], m[1]` beside the nodes — the
+  map's own record never reads as seeded, because a partly served map is
+  neither inherited nor new. A served item skips the per-item scope
+  baseline (it spawns nothing and cannot write). Hash composition
+  unchanged (M3); the item hash is the same one the in-lineage per-item
+  cache keys on (r4 A3). Pinned by tests/test_seed.py (`_map_flow` tests).
+  Restated in AMENDMENTS-r7 F2.
+
+- **2026-09-19 — `[driver] runs_dir` in lockstep.toml** (OPEN-WORK item 5;
+  ROADMAP 2026-08-16 seam 2). One precedence rule, `registry.resolve_runs_dir`:
+  an explicit `--runs-dir` wins, else the key (a RELATIVE value resolves
+  against the config file's own directory, so `"../lockstep-runs"` is a
+  sibling of the repo), else `runs` — the pre-key default, unchanged. `run`,
+  `doctor`, `gc` and `active` ask it (`gc`/`active` read `./lockstep.toml`
+  from the cwd and fall back on a config that does not parse); every cockpit
+  tool asks the same rule through `mission_view.default_runs_root` (or a
+  four-line twin where a module must stand alone: `cost_report`, `lane`),
+  and `cockpit.ps1` asks `mission_view.py --runs-root`, so the pane never
+  re-implements the config rule. A copy that cannot import the package
+  falls back to `<repo>/runs`, which is what every tool assumed before the
+  key existed. A bad value is ignored with a stderr note, never a refusal
+  (the doctor-knob posture). Hash-neutral by construction: run dirs are
+  excluded from every fingerprint and the key never enters a stanza digest
+  (pinned); the whole-file config digest DOES move when the key is added,
+  which re-bills `kind:"flow"` nodes once (the A3 seam, unchanged). The
+  DEFAULT stays `./runs`, deliberately: moving it silently would relocate
+  every reader's runs; the example config recommends the outside-tree shape
+  and says why (re-run isolation, ROADMAP 2026-07-26; the M7 warning class on
+  an un-ignored run dir). Pinned by tests/test_runs_dir.py.
+
+- **2026-09-19 — the S2/S3/S4 views** (OPEN-WORK item 3;
+  upstream-response-mission-scale, the last accepted-and-unbuilt slices).
+  Contrib and tests only; no engine change. (S2) `mission_view.conditions_line`
+  under the headline — `blocking conditions: 1 scope violation, 2 contract
+  failures` — counted from the ENGINE's words (`CONDITION_WORDS`: the error
+  prefixes the engine writes, in render order; a failed map counts its
+  failed items; a blocked GATE is the ledger's story and is not a
+  condition; a failed record matching nothing is `other`, never dropped)
+  and rendered beside the ledger line on the board, the page and the pane
+  (`Get-ConditionsLine`, pinned to the same table). No condition acquires a
+  severity. (S3 view) `finding_trajectory` in the step drawer: consecutive
+  recorded results (`result-attempt<n>.json` … `result.json`) compared by
+  finding IDENTITY — (category, file, digest of the whitespace-and-case
+  normalized claim) — into new / persisting / resolved / severity changed;
+  `not comparable` when a side is not a findings shape; attempts labelled by
+  the journal's `attempt` cause (`corrective`, `heal round N`), `cause
+  unknown` on legacy runs, never inferred; never "better". (S4 view) the
+  agent block's `per attempt` line: observed tool activity per attempt from
+  `cost_report`'s existing `attempts_detail`, `not reported` per attempt for
+  a harness that cannot say — never `0`. The drawer's finding trajectory
+  reads the journal the render already parsed (`events` threaded through
+  `_drawers`/`node_drawer`/`node_detail`; S1.2's one-read rule holds).
+  Vocabulary added to COCKPIT-FOR-DOMAIN-EXPERTS. Pinned in
+  tests/test_mission_render.py.

@@ -57,7 +57,7 @@ param(
   [string]$Role = 'layout',
   [switch]$Boot,
   [switch]$Approve,
-  [string]$RunsRoot = 'runs',
+  [string]$RunsRoot = '',   # empty = [driver] runs_dir in lockstep.toml, else runs
   [string]$Deliverable,
   [double]$Interval = 1.0,
   [double]$SpendInterval = 10.0,
@@ -77,6 +77,26 @@ $script:Python = if (Test-Path (Join-Path $script:RepoRoot '.venv\Scripts\python
 $script:Lockstep = if (Test-Path (Join-Path $script:RepoRoot '.venv\Scripts\lockstep.exe')) {
   Join-Path $script:RepoRoot '.venv\Scripts\lockstep.exe'
 } else { 'lockstep' }
+
+function Get-RunsRoot {
+  <#
+    Where the runs live, as the DRIVER resolves it (2026-09-19): `[driver]
+    runs_dir` in the repo's lockstep.toml, else <repo>/runs. Asked through
+    mission_view.py so the pane never re-implements the config rule; when
+    the reader cannot run, the pre-key default is the answer, which is what
+    every pane assumed before the key existed.
+  #>
+  $viewer = Join-Path $script:RepoRoot 'contrib/mission_view.py'
+  if (Test-Path $viewer) {
+    try {
+      $out = & $script:Python $viewer '--runs-root' $script:RepoRoot 2>$null
+      if ($LASTEXITCODE -eq 0 -and $out) { return [string]($out | Select-Object -First 1) }
+    } catch { }
+  }
+  return (Join-Path $script:RepoRoot 'runs')
+}
+# The script-level -RunsRoot: empty means "as the driver resolves it".
+if (-not $RunsRoot) { $RunsRoot = Get-RunsRoot }
 
 # --- reader primitives (L-B2) --------------------------------------------------
 
@@ -320,7 +340,8 @@ function Get-NewestRunDir {
     most likely to be looking at it for reassurance. Following the newest run
     keeps the trust anchor permanently on screen.
   #>
-  param([string]$Root = 'runs')
+  param([string]$Root = '')
+  if (-not $Root) { $Root = Get-RunsRoot }
   $root = if ([System.IO.Path]::IsPathRooted($Root)) { $Root }
           else { Join-Path $script:RepoRoot $Root }
   if (-not (Test-Path $root)) { return $null }
@@ -550,6 +571,69 @@ function Get-LedgerLine {
   return 'review findings: ' + ($parts -join ', ') + $suffix
 }
 
+function Get-ConditionsLine {
+  <#
+    S2 (2026-09-19): the blocking CONDITIONS, counted from the engine's own
+    words — the error prefixes it writes — never from a reading of them, and
+    beside the ledger's severity counts, never inside them. Mirrors
+    mission_view.condition_counts / conditions_line: same prefix table in the
+    same order (CONDITION_WORDS), same phrases; a test pins the table. One
+    condition per record (first prefix found); a failed record matching
+    nothing is `other`, never dropped; a failed map counts its failed items
+    instead of its own restated error; a blocked GATE is the ledger's story.
+  #>
+  param($State)
+  $order = @(@('write scope violated', 'scope violation'),
+             @('contract validation failed', 'contract failure'),
+             @('provider limit/overload', 'provider limit'),
+             @('timed out', 'timeout'),
+             @('approval auto-rejected', 'awaiting a person'),
+             @('cancelled', 'cancelled'))
+  $counts = @{}
+  $other = 0
+  $tally = {
+    param($err)
+    foreach ($pair in $order) {
+      if ("$err".Contains($pair[0])) {
+        if ($counts.ContainsKey($pair[1])) { $counts[$pair[1]]++ } else { $counts[$pair[1]] = 1 }
+        return
+      }
+    }
+    $script:__condOther++
+  }
+  $script:__condOther = 0
+  foreach ($prop in $State.nodes.PSObject.Properties) {
+    $rec = $prop.Value
+    $failedItems = @()
+    if ($rec.PSObject.Properties['items'] -and $rec.items) {
+      foreach ($ip in $rec.items.PSObject.Properties) {
+        if ($ip.Value.status -eq 'failed') { $failedItems += $ip.Value }
+      }
+    }
+    if ($failedItems.Count -gt 0) {
+      foreach ($it in $failedItems) { & $tally "$($it.error)" }
+      continue
+    }
+    if ($rec.status -eq 'failed' -or $rec.status -eq 'blocked') {
+      if ($rec.role -eq 'gate' -and $rec.status -eq 'blocked') { continue }
+      & $tally "$($rec.error)"
+    }
+  }
+  $other = $script:__condOther
+  $parts = @()
+  foreach ($pair in $order) {
+    $w = $pair[1]
+    if ($counts.ContainsKey($w) -and $counts[$w] -gt 0) {
+      $n = $counts[$w]
+      if ($n -eq 1 -or $w -eq 'awaiting a person' -or $w -eq 'cancelled') { $parts += "$n $w" }
+      else { $parts += "$n ${w}s" }
+    }
+  }
+  if ($other -gt 0) { $parts += "$other other" }
+  if ($parts.Count -eq 0) { return $null }
+  return 'blocking conditions: ' + ($parts -join ', ')
+}
+
 function Get-MissionLines {
   <#
     The DE tier. Every line is a field mapping over state.json plus the run's
@@ -574,6 +658,8 @@ function Get-MissionLines {
   $lines = @((Get-HeadlineLine -State $state -Flow $flow))
   $ledgerLine = Get-LedgerLine -State $state
   if ($ledgerLine) { $lines += $ledgerLine }  # board-level context, under the headline
+  $condLine = Get-ConditionsLine -State $state
+  if ($condLine) { $lines += $condLine }  # S2: beside the ledger's counts, never inside
   $lines += ''
   $collapsedDone = 0
   $collapsedSkip = 0
@@ -1501,7 +1587,8 @@ function Invoke-Boot {
         normal case after a session-limit kill: reattach the view, narrate
         "still working", and do NOT unlock.
   #>
-  param([string]$RunsRoot = 'runs')
+  param([string]$RunsRoot = '')
+  if (-not $RunsRoot) { $RunsRoot = Get-RunsRoot }
   $root = if ([System.IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot }
           else { Join-Path $script:RepoRoot $RunsRoot }
   Write-Host 'cockpit boot - scanning for unfinished work' -ForegroundColor Cyan

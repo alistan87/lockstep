@@ -39,6 +39,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lockstep.estimate import estimate_flow  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mission_view as mv  # noqa: E402
 from lockstep.taskgraph import TaskGraph  # noqa: E402
 
 WIDTH = 72
@@ -151,7 +154,8 @@ def render(tg: TaskGraph, runs_dir: Path, flow_hash: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("flow")
-    ap.add_argument("--runs-dir", default="runs")
+    ap.add_argument("--runs-dir", default=None,
+                    help="default: [driver] runs_dir in ./lockstep.toml, else ./runs")
     ap.add_argument("--out", default=None,
                     help="also write the card here (default: <runs-dir>/plan-card.txt)")
     ns = ap.parse_args(argv)
@@ -172,8 +176,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot read {ns.flow}: {e}", file=sys.stderr)
         return 2
 
-    text = render(tg, Path(ns.runs_dir), flow_hash)
-    out_path = Path(ns.out) if ns.out else Path(ns.runs_dir) / "plan-card.txt"
+    runs_dir = mv.default_runs_root(Path("."), ns.runs_dir)
+    text = render(tg, runs_dir, flow_hash)
+    out_path = Path(ns.out) if ns.out else runs_dir / "plan-card.txt"
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")

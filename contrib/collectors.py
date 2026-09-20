@@ -22,6 +22,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mission_view as mv  # noqa: E402
+
 
 def _git(*args: str) -> tuple[int, str]:
     p = subprocess.run(["git", *args], capture_output=True, encoding="utf-8", errors="replace")
@@ -179,7 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--days", type=int, default=None)
     g.add_argument("--since-last-tag", action="store_true")
     r = sub.add_parser("runs")
-    r.add_argument("--runs-dir", default="runs")
+    r.add_argument("--runs-dir", default=None,
+                   help="default: [driver] runs_dir in ./lockstep.toml, else ./runs")
     sub.add_parser("pytest")
     s = sub.add_parser("sources")
     s.add_argument("dir")
@@ -196,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     if ns.cmd == "git-log":
         out = collect_git_log(ns.days, ns.since_last_tag)
     elif ns.cmd == "runs":
-        out = collect_runs(Path(ns.runs_dir))
+        out = collect_runs(mv.default_runs_root(Path("."), ns.runs_dir))
     elif ns.cmd == "pytest":
         out = collect_pytest()
     elif ns.cmd == "grep":

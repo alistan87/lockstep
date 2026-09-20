@@ -130,10 +130,11 @@ Two implications worth internalising, because both surprise people:
   old run's recorded result. That is the same content-addressing as everything
   above, applied across lineages instead of within one — which is why a re-run
   ancestor that produces an identical result does not re-bill its readers, and
-  why shell nodes (they always re-run), map items (their per-item hash is
-  composed after the executor plans) and failures are never served. `status`
-  names what was inherited and from where; a served node spends no spawn
-  budget, because no spawn happened.
+  why shell nodes (they always re-run) and failures are never served. A map
+  item is served per item: its hash is composed after the executor plans, so
+  the engine hands it to the seed rather than the seed seeing it at plan
+  time. `status` names what was inherited and from where, items included; a
+  served node spends no spawn budget, because no spawn happened.
 - **Caching does not promise the same answer twice.** Models are
   non-deterministic. The promise is narrower and more useful: *if nothing you
   control changed, we will not spend again.*

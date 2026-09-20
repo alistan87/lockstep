@@ -21,13 +21,16 @@ miss is the normal case and falls through to the real executor.
 
 Two deliberate limits:
 
-- **Map items are never seeded.** A map's per-item hash includes `index:i`,
-  which the engine appends AFTER the executor plans, so a plan-time decision
-  cannot see it — and deciding at execute time would spend the spawn budget
-  for a spawn that never happened. Per-item caching within a lineage already
-  exists; this is the cross-lineage gap, and it stays open.
 - **Only `done`/`skipped` recordings are served.** A failure is not a result;
   re-running it is the point of running again.
+- **Shell nodes are never seeded** (SPEC 0.1.7): they always re-run.
+
+Map items (2026-09-19): a map's per-item hash includes `index:i`, which the
+engine appends AFTER the executor plans, so `plan()` cannot see it. The
+engine therefore hands the composed item hash to `serve_item` — still before
+any spawn, so a served item costs no budget — and the seed decides per item.
+Provenance lands on the ItemRecord (`seeded_from`) and the journal line
+carries `item`; the map's own record never says "seeded".
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .protocols import PlannedWork, RawResult, RenderCtx
-from .replay import ReplayIndex, _item_index
+from .replay import ReplayIndex
 from .state import compose_hash
 from .taskgraph import Node
 
@@ -142,9 +145,38 @@ class SeedExecutor:
         work.costs_tokens = False
         return work
 
+    def serve_item(self, node: Node, index: int, item_hash: str,
+                   work: PlannedWork) -> PlannedWork:
+        """The per-item decision (2026-09-19), called by `_run_map` with the
+        hash it composed — the one thing `plan()` above cannot see. Same
+        rules as `plan()`: forced nodes decline (noted once), only a
+        successful recording under the identical hash is served, and the
+        decision is made before any spawn so the item costs no budget."""
+        if not self.cacheable:
+            return work
+        if node.id in self.forced:
+            if node.id not in self._forced_noted:
+                self._forced_noted.add(node.id)
+                self.log(f"seed: {node.id} forced stale (--force-stale) — runs for real")
+                if self.on_forced is not None:
+                    self.on_forced(node.id)
+            return work
+        recording = self.index.get(node.id, index)
+        if (
+            recording is None
+            or recording.status not in ("done", "skipped")
+            or recording.result_text is None
+            or recording.input_hash != item_hash
+        ):
+            return work
+        work.meta = {**work.meta, "_seed": {"node_id": node.id, "item_index": index,
+                                            "recording": recording}}
+        work.costs_tokens = False
+        return work
+
     def execute(self, work: PlannedWork, phase_dir: Path, timeout_s: int) -> RawResult:
         seed = work.meta.get("_seed")
-        if seed is None or _item_index(phase_dir) is not None:
+        if seed is None:
             return self.inner.execute(work, phase_dir, timeout_s)
         recording = seed["recording"]
         if recording.repaired:
@@ -158,7 +190,7 @@ class SeedExecutor:
         target.write_text(recording.result_text, encoding="utf-8")
         self.log(f"seed: {seed['node_id']} served from {self.index.source} (no spawn)")
         if self.on_hit is not None:
-            self.on_hit(seed["node_id"], str(self.index.source))
+            self.on_hit(seed["node_id"], str(self.index.source), seed.get("item_index"))
         return RawResult(exit_code=0, result_text=recording.result_text, source="file", error=None)
 
 

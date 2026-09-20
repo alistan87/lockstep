@@ -108,6 +108,18 @@ persisting findings can stop the run. If the line ever says
 cannot be read, and that is worth fixing before trusting a "nothing is wrong"
 board.
 
+When something has stopped, one more line can appear under the headline,
+like `blocking conditions: 1 scope violation, 2 contract failures`. It counts
+what the machine itself said went wrong, in the machine's own categories,
+and it is deliberately separate from the review-findings line: a **scope
+violation** (a step wrote outside the files it was allowed to touch, and the
+driver put them back), a **contract failure** (a step's answer did not have
+the shape it promised), a **provider limit** (the AI service refused or
+overloaded; wait and resume), a **timeout**, **awaiting a person** (a
+question parked for you), **cancelled**, or **other** (stopped for a reason
+the machine did not categorise — the step's own drawer has the words). None
+of these has a severity, and the page never invents one.
+
 ### The page
 
 There is a fourth thing, and it is optional: **the same board in a browser**, on

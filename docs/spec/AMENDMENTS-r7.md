@@ -230,10 +230,13 @@ is made at plan time, so a served node sets `costs_tokens = False` and
 spends no §9.5 budget. Provenance: `PhaseRecord.seeded_from`, a `kind:
 "seed"` journal line per hit, a `seeded:` line in `status`.
 `--force-stale <node>` declines the seed for that node and its descendants
-and records `forced` — distinguishable from a hash miss. Three limits:
-shell nodes are never seeded (§0.1.7), map items are never seeded (their
-hash is composed after planning), failures are never served. `--seed` and
-`--replay` are refused together.
+and records `forced` — distinguishable from a hash miss. Two limits: shell
+nodes are never seeded (§0.1.7) and failures are never served. A map item
+is served per item (DEVIATIONS 2026-09-19): its hash is composed after the
+executor plans, so the engine hands the composed hash to the seed, which
+decides before any spawn; provenance lands on the item record and the
+journal line carries `item`, and the map's own record never reads as
+seeded. `--seed` and `--replay` are refused together.
 
 ### F3. A run records its root
 

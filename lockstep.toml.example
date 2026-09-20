@@ -15,6 +15,20 @@
 
 default = "claude-code"
 
+# [driver] runs_dir (2026-09-19): where run directories live when no
+# `--runs-dir` is given — every CLI command and every cockpit tool resolves
+# the same way (flag > this key > ./runs). A RELATIVE value is relative to
+# THIS file's directory, so the value below is a sibling of the repo: OUTSIDE
+# the audited tree, which is the recommended shape — a re-spawned node cannot
+# browse prior runs' prompts and diffs, and an un-ignored run dir can never
+# trip the resume-time external-edit warning on its own state.json. The
+# default stays ./runs so nothing moves until you decide. Never hashed (run
+# dirs are excluded from every fingerprint), but this file's whole-file
+# digest folds into kind:"flow" nodes, so adding the key re-bills composed
+# children once.
+# [driver]
+# runs_dir = "../lockstep-runs"
+
 [executors.claude-code]                    # personal machine, Claude subscription
 # --safe-mode (verified against claude 2.1.270 on 2026-09-19, five live
 # controls from this repo root): Claude Code auto-loads CLAUDE.md (cwd +

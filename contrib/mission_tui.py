@@ -383,7 +383,8 @@ def _sleep(seconds: float) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run_dir", nargs="?", default=None)
-    ap.add_argument("--runs-root", default="runs")
+    ap.add_argument("--runs-root", default=None,
+                    help="default: [driver] runs_dir in the repo's lockstep.toml, else <repo>/runs")
     ap.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--interval", type=float, default=1.0)
     ns = ap.parse_args(argv)
@@ -391,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
         print("mission_tui needs a terminal; use contrib/mission_server.py for a page,\n"
               "or contrib/cockpit.ps1 -Role mission for a pane.", file=sys.stderr)
         return 2
-    return run(Path(ns.runs_root), Path(ns.run_dir) if ns.run_dir else None,
+    return run(mv.default_runs_root(Path(ns.repo_root), ns.runs_root),
+               Path(ns.run_dir) if ns.run_dir else None,
                Path(ns.repo_root), ns.interval)
 
 

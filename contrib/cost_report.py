@@ -144,6 +144,17 @@ def dominant_models(weights: dict[str, float]) -> list[str]:
 LINEAGE_DIR = "lineages"
 
 
+def _default_runs_root(base: Path) -> Path:
+    """The driver's own resolution of where runs live (2026-09-19): `[driver]
+    runs_dir` in `<base>/lockstep.toml`, else `<base>/runs`. Kept beside
+    `mission_view.default_runs_root` because this module must stand alone."""
+    try:
+        from lockstep.registry import load_config, resolve_runs_dir
+        return resolve_runs_dir(load_config(Path(base) / "lockstep.toml"), None, base=Path(base))
+    except Exception:
+        return Path(base) / "runs"
+
+
 def lineage_path(runs_root: Path, slug: str) -> Path:
     return Path(runs_root) / LINEAGE_DIR / f"{slug}.runs"
 
@@ -219,7 +230,7 @@ def resolve_runs_from(spec: str, runs_root: Path | None = None) -> tuple[list[st
     so, because silently reporting a partial deliverable total is the one
     outcome worth avoiding here."""
     notes: list[str] = []
-    root = Path(runs_root) if runs_root else Path.cwd() / "runs"
+    root = Path(runs_root) if runs_root else _default_runs_root(Path.cwd())
     candidate = Path(spec)
     if candidate.is_file():
         listed = [ln.strip() for ln in candidate.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -1251,7 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
                 sys.path.insert(0, here)
             import session_spend
             repo_root = Path(__file__).resolve().parents[1]
-            root = Path(ns.runs_root) if ns.runs_root else Path.cwd() / "runs"
+            root = Path(ns.runs_root) if ns.runs_root else _default_runs_root(Path.cwd())
             for line in session_spend.session_lines(repo_root, root, maps):
                 print(line)
         except Exception as e:  # noqa: BLE001 - display-only, always

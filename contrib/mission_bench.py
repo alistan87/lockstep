@@ -569,7 +569,9 @@ def human_sweep(report: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--runs-root", default="runs", help="runs directory to profile")
+    ap.add_argument("--runs-root", default=None,
+                    help="runs directory to profile (default: [driver] runs_dir in "
+                         "<repo>/lockstep.toml, else <repo>/runs)")
     ap.add_argument("--repo-root", default=".", help="repo root (for step labels)")
     ap.add_argument("--json", action="store_true", help="machine-readable report")
     ap.add_argument("--synthetic", action="store_true",
@@ -615,7 +617,7 @@ def main(argv: list[str] | None = None) -> int:
                       f"{ns.events} journal lines, {ns.attempts} attempts, "
                       f"{ns.log_kb}KB logs\n")
         else:
-            runs_root = Path(ns.runs_root)
+            runs_root = mv.default_runs_root(Path(ns.repo_root), ns.runs_root)
             if not runs_root.is_dir():
                 print(f"no such runs directory: {runs_root}", file=sys.stderr)
                 return 2

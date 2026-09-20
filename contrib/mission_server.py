@@ -717,7 +717,7 @@ def event_text(ev: dict, labels: dict[str, str]) -> str:
 
 def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
                 state: dict | None = None, labels: dict[str, str] | None = None,
-                usage: dict | None = None) -> dict:
+                usage: dict | None = None, events: list[dict] | None = None) -> dict:
     """L2. `node_detail`'s body, named in L0's words — the FULL label, without
     the board's 33-character truncation and without the `(step id: …)` suffix.
     The identifier lives at L3.
@@ -728,7 +728,7 @@ def node_drawer(run_dir: Path, node_id: str, repo_root: Path | None = None, *,
     """
     labels = labels if labels is not None else mv.load_labels(run_dir, repo_root)
     lines = mv.node_detail(run_dir, node_id, repo_root, state=state, labels=labels,
-                           usage=usage)
+                           usage=usage, events=events)
     body = [ln for ln in lines
             if not ln.startswith("=") and not ln.strip().startswith("(step id:")]
     # The label line node_detail prints as its heading is now the drawer title.
@@ -1753,7 +1753,7 @@ DRAWER_ABSENT_BODY = (
 
 def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
              state: dict | None = None, labels: dict[str, str] | None = None,
-             usage: dict | None = None) -> str:
+             usage: dict | None = None, events: list[dict] | None = None) -> str:
     """L2, one per step, reached by clicking a row in either view.
 
     The link is a fragment, not a fetch: a `<details>` a browser jumps into
@@ -1790,7 +1790,7 @@ def _drawers(run_dir: Path, node_ids: list[str], repo_root: Path | None, *,
                        "</details>")
             continue
         drawer = node_drawer(run_dir, node_id, repo_root, state=state, labels=labels,
-                             usage=usage)
+                             usage=usage, events=events)
         body = "\n".join(drawer["lines"])
         out.append(f'<details id="step-{e(node_id)}">'
                    f'<summary>{e(drawer["label"])}</summary>'
@@ -2168,6 +2168,7 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
     running = any(r.get("status") == "running" for r in (state.get("nodes") or {}).values())
     live = running and not vanished
     ledger = mv.ledger_summary(run_dir, repo_root=repo_root, state=state)
+    conditions = mv.conditions_line(state)
 
     parts = [
         '<div class="top"><span class="brand">MISSION</span>'
@@ -2191,6 +2192,9 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         # rendered right under the headline for the same reason mission_rows
         # puts it there. Empty string when absent; joins cleanly below.
         f'<p class="hero-sub">{e(ledger)}</p>' if ledger else "",
+        # S2: the blocking conditions, counted from the engine's own words,
+        # beside the ledger's severity counts and never inside them.
+        f'<p class="hero-sub">{e(conditions)}</p>' if conditions else "",
         '<p class="hero-sub">This page only reads files. Decisions are not made here — '
         'when something needs you, it happens in the terminal.</p>',
 
@@ -2225,7 +2229,10 @@ def render_wrap(run_dir: Path | None, repo_root: Path, runs_root: Path,
         + "</pre></div>",
 
         _feed_card(run_dir, events, labels, _focus_node(state), repo_root),
-        _drawers(run_dir, node_ids, repo_root, state=state, labels=labels, usage=run),
+        # `events` is the journal this render already parsed (S1.2): the
+        # finding trajectory in each drawer reads it, never the file again.
+        _drawers(run_dir, node_ids, repo_root, state=state, labels=labels, usage=run,
+                 events=events),
 
         '<p class="foot">This page only reads files. It never changes the run.</p>',
     ]
@@ -2406,7 +2413,8 @@ def make_handler(runs_root: Path, pinned: Path | None, repo_root: Path):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run_dir", nargs="?", default=None)
-    ap.add_argument("--runs-root", default="runs")
+    ap.add_argument("--runs-root", default=None,
+                    help="default: [driver] runs_dir in the repo's lockstep.toml, else <repo>/runs")
     ap.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--host", default="127.0.0.1",
@@ -2422,7 +2430,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  That includes rejection.txt, which is the human's own words.", file=sys.stderr)
         print("  runs/ is gitignored precisely because it is sensitive.", file=sys.stderr)
 
-    handler = make_handler(Path(ns.runs_root),
+    handler = make_handler(mv.default_runs_root(Path(ns.repo_root), ns.runs_root),
                            Path(ns.run_dir) if ns.run_dir else None,
                            Path(ns.repo_root))
     server = ThreadingHTTPServer((ns.host, ns.port), handler)

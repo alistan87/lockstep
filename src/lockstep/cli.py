@@ -31,7 +31,8 @@ from .executors.harness import HarnessError
 from .executors.proc import PathEscapeError
 from .interpolate import InterpolationError
 from .policy import AllowAllPolicy
-from .registry import ConfigError, LockstepConfig, Registry, build_registry, load_config
+from .registry import (ConfigError, LockstepConfig, Registry, build_registry, load_config,
+                       resolve_runs_dir)
 from .render import render_mermaid
 from .roles import Engine, RunRefusal
 from .state import (
@@ -391,6 +392,7 @@ def cmd_run(ns) -> int:
         config = load_config(Path(ns.config) if ns.config else repo_root / "lockstep.toml")
     except (FlowError, ConfigError) as e:
         return _fail(str(e), EXIT_VERIFY if isinstance(e, FlowError) else EXIT_CONFIG)
+    ns.runs_dir = str(resolve_runs_dir(config, ns.runs_dir))
     if ns.executor_default:
         tg = tg.model_copy(update={"executor_default": ns.executor_default})
     code, has_errors = _do_verify(tg, config, repo_root)
@@ -628,11 +630,25 @@ def cmd_verify(ns) -> int:
     return code
 
 
+def _runs_root_of(ns) -> Path:
+    """gc/active take the runs root as an optional positional; when omitted,
+    `[driver] runs_dir` in ./lockstep.toml decides, else ./runs. A config
+    that does not parse is not this command's problem: it reads, never
+    spends, and falls back to the default."""
+    if ns.runs_dir:
+        return Path(ns.runs_dir)
+    try:
+        config = load_config(Path("lockstep.toml"))
+    except ConfigError:
+        config = None
+    return resolve_runs_dir(config, None)
+
+
 def cmd_gc(ns) -> int:
     """A5: estimate-aware retention for runs/. Dry-run unless --apply."""
     from .gc import apply_gc, plan_gc
 
-    plan = plan_gc(Path(ns.runs_dir), keep_per_flow=ns.keep_per_flow, keep_days=ns.keep_days)
+    plan = plan_gc(_runs_root_of(ns), keep_per_flow=ns.keep_per_flow, keep_days=ns.keep_days)
     for d, reason in plan.candidates:
         print(f"delete: {d}")
         print(f"  nothing protects it: {reason}")
@@ -658,7 +674,7 @@ def cmd_active(ns) -> int:
     previously meant listing run dirs by hand, reading each `lock`, and
     cross-referencing pids against the OS process table. Read-only; spends
     nothing; always exits 0 (a listing has no verdict to report)."""
-    root = Path(ns.runs_dir)
+    root = _runs_root_of(ns)
     dirs = sorted(root.iterdir()) if root.is_dir() else []
     rows = 0
     live = 0
@@ -947,12 +963,23 @@ def cmd_status(ns) -> int:
     if state.workspace_kind == "null":
         print("workspace: null (external-edit detection off)")
     seeded = sorted(n for n, r in state.nodes.items() if r.seeded_from)
-    if seeded:
+    # Per-item seeding (2026-09-19): a map served item by item is named per
+    # item (`m[0]`), never as a whole — a partly served map is neither
+    # inherited nor new.
+    seeded_items = sorted(
+        (n, int(i)) for n, r in state.nodes.items()
+        for i, ir in r.items.items() if ir.seeded_from
+    )
+    if seeded or seeded_items:
         # E7 provenance where a reader will actually meet it: these results
         # were produced by ANOTHER run, under its tree and its provider. The
         # token-spawn count above is honest precisely because they cost none.
-        source = state.nodes[seeded[0]].seeded_from
-        print(f"seeded: {len(seeded)} node(s) served from {source} — {', '.join(seeded)}")
+        source = (state.nodes[seeded[0]].seeded_from if seeded
+                  else state.nodes[seeded_items[0][0]].items[str(seeded_items[0][1])].seeded_from)
+        names = seeded + [f"{n}[{i}]" for n, i in seeded_items]
+        items_phrase = f" and {len(seeded_items)} map item(s)" if seeded_items else ""
+        print(f"seeded: {len(seeded)} node(s){items_phrase} served from {source} — "
+              f"{', '.join(names)}")
     forced = sorted(
         n for n, r in state.nodes.items()
         if any("forced stale" in reason for reason in (r.invalidated_by or []))
@@ -1061,7 +1088,8 @@ def cmd_doctor(ns) -> int:
         config = load_config(Path(ns.config) if ns.config else repo_root / "lockstep.toml")
     except ConfigError as e:
         return _fail(str(e), EXIT_CONFIG)
-    return run_doctor(config, repo_root=repo_root, runs_dir=Path(ns.runs_dir))
+    return run_doctor(config, repo_root=repo_root,
+                      runs_dir=resolve_runs_dir(config, ns.runs_dir))
 
 
 EXAMPLE_TOML = '''# lockstep executor config (SPEC §8.2). An executor entry is an argv template:
@@ -1198,7 +1226,9 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("flow")
     pr.add_argument("--arg", action="append", default=[], metavar="k=v")
     pr.add_argument("--max-workers", type=int, default=2)
-    pr.add_argument("--runs-dir", default="runs")
+    pr.add_argument("--runs-dir", default=None,
+                    help="where run dirs live (default: [driver] runs_dir in lockstep.toml, "
+                         "else ./runs)")
     pr.add_argument("--repo-root", default=".")
     pr.add_argument("--config", default=None)
     pr.add_argument("--executor-default", default=None)
@@ -1295,8 +1325,9 @@ def main(argv: list[str] | None = None) -> int:
     pd.add_argument("--config", default=None)
     pd.add_argument("--setup", action="store_true",
                     help="setup checks only: free, no model calls, no config needed")
-    pd.add_argument("--runs-dir", default="runs",
-                    help="where the success record lands (read by `run`'s staleness advisory)")
+    pd.add_argument("--runs-dir", default=None,
+                    help="where the success record lands (read by `run`'s staleness advisory; "
+                         "default: [driver] runs_dir in lockstep.toml, else ./runs)")
     pd.set_defaults(fn=cmd_doctor)
 
     pi = sub.add_parser("init", help="write lockstep.toml.example to ./lockstep.toml")
@@ -1314,7 +1345,8 @@ def main(argv: list[str] | None = None) -> int:
     pcan.set_defaults(fn=cmd_cancel)
 
     pgc = sub.add_parser("gc", help="estimate-aware retention for runs/ (dry-run unless --apply)")
-    pgc.add_argument("runs_dir", nargs="?", default="runs")
+    pgc.add_argument("runs_dir", nargs="?", default=None,
+                     help="default: [driver] runs_dir in ./lockstep.toml, else ./runs")
     pgc.add_argument("--keep-per-flow", type=int, default=5,
                      help="newest runs kept per flow definition (the history --estimate mines)")
     pgc.add_argument("--keep-days", type=int, default=14)
@@ -1325,7 +1357,8 @@ def main(argv: list[str] | None = None) -> int:
         "active", help="runs under a runs root that something claims to be driving (--all: every "
                        "unfinished run)"
     )
-    pact.add_argument("runs_dir", nargs="?", default="runs")
+    pact.add_argument("runs_dir", nargs="?", default=None,
+                      help="default: [driver] runs_dir in ./lockstep.toml, else ./runs")
     pact.add_argument("--all", action="store_true",
                       help="also list unfinished runs nobody is driving (stopped at a gate or "
                            "a budget, possibly long ago)")

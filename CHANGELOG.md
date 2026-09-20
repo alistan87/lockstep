@@ -51,6 +51,30 @@ The scope is the map's (`{args.NAME}` only; never `{item…}`).
 repo-hygiene demo declare `[]`. Closes
 ROADMAP 2026-08-12 ("the one unguardable mutator class").
 
+**Map items are seeded per item.** The E7 limit is withdrawn: the engine
+hands each item's composed hash to the seed after planning and before any
+spawn, so an unchanged item is served at zero budget and a changed one
+runs. Provenance is per item (`seeded_from` on the item record, `item` on
+the journal's seed line, `m[0], m[1]` on the `status` line); a partly
+served map never reads as seeded itself.
+
+**`[driver] runs_dir`.** One rule for where runs live — flag, then the
+config key (relative to the config file), then `./runs` — asked by `run`,
+`doctor`, `gc`, `active`, every cockpit tool, and the pane through
+`mission_view.py --runs-root`. Hash-neutral; the default did not move. The
+example config recommends pointing it outside the audited tree and says
+why.
+
+**The last accepted MISSION slices (S2, S3, S4).** A `blocking conditions`
+line under the headline counts what the engine itself said went wrong, in
+its own categories, beside the review-findings line and never inside it.
+The step drawer gains `findings across attempts` — consecutive recorded
+results compared by finding identity into new, persisting, resolved and
+severity changed, attempts labelled by the journal's recorded cause, `not
+comparable` when a side is not a findings shape — and the agent block
+gains a `per attempt` tool-activity line that says `not reported` rather
+than `0`. Vocabulary added to the domain-expert guide.
+
 ## 0.16.0 — 2026-09-12
 
 The MISSION UX work order (`docs/proposals/mission-ux-work-order.md`),

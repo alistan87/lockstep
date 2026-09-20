@@ -41,6 +41,9 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mission_view as mv  # noqa: E402
+
 # The engine's fixed corrective preamble (executors are re-spawned output-only
 # after a contract validation failure). Matching this is how correctives get
 # counted until they are evented.
@@ -373,12 +376,13 @@ def render(cohorts: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("runs_root", nargs="?", default="runs")
+    ap.add_argument("runs_root", nargs="?", default=None,
+                    help="default: [driver] runs_dir in ./lockstep.toml, else ./runs")
     ap.add_argument("--out", default=None, help="write here instead of stdout (stays under runs/)")
     ap.add_argument("--cohort", default=None, help="only this flow name")
     ns = ap.parse_args(argv)
 
-    root = Path(ns.runs_root)
+    root = mv.default_runs_root(Path("."), ns.runs_root)
     if not root.is_dir():
         print(f"error: {root} is not a directory", file=sys.stderr)
         return 2

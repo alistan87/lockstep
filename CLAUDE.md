@@ -160,11 +160,12 @@ a feature over adding a dependency. Full pytest after every change.
 - `NullWorkspace` disables external-edit detection (AMENDMENTS M6).
 - Readonly harness nodes get `FOOTER_READONLY` (stdout result channel) — the
   standard footer would order them to write files their `readonly_argv` forbids.
-- `--seed` never serves a shell node, a map ITEM, or a failure. Shell nodes
-  always re-run (§0.1.7) and a cache that skips what a resume would re-run is a
-  footgun with a nicer name; a map item's hash appends `index:i` AFTER the
-  executor plans, so a plan-time decision cannot see it and an execute-time one
-  would spend budget for a spawn that never happened.
+- `--seed` never serves a shell node or a failure. Shell nodes always re-run
+  (§0.1.7) and a cache that skips what a resume would re-run is a footgun with
+  a nicer name. A map ITEM is served per item since 2026-09-19: its hash
+  appends `index:i` AFTER the executor plans, so `plan()` cannot see it and
+  the engine hands the composed hash to `SeedExecutor.serve_item` instead —
+  still before any spawn, so a served item costs no budget.
 - Corrective re-spawns embed the original prompt + fenced invalid output —
   headless spawns are stateless; "output-only" constrains side effects, not context.
 - `wait_or_kill` does NOT close a node's Windows job handle when the job still

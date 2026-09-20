@@ -652,8 +652,9 @@ What to know before writing one:
   to edit, `run <flow> --seed <old_run_dir>` serves every node whose
   `input_hash` still matches a successful result in the old run and runs the
   rest — so a one-word prompt fix costs that node and its readers, not the
-  graph. It is hash-keyed, so nothing is trusted: shell nodes and map items are
-  never seeded, and `status` names what was inherited.
+  graph. It is hash-keyed, so nothing is trusted: shell nodes are never
+  seeded, map items are served one by one, and `status` names what was
+  inherited.
   **A seed trusts a prior RESULT, not a prior TREE.** It is not a "start over
   cleanly" mechanism: a node whose recorded output described a tree that has
   since moved is served again if its own inputs still hash the same. The one

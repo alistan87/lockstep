@@ -155,27 +155,75 @@ def _record_failing(tmp_path, git_repo, flow):
     return h.run_dir
 
 
-def test_map_items_are_not_seeded(tmp_path, git_repo):
-    """A map's per-item hash includes `index:i`, appended by the engine AFTER
-    the executor plans — a plan-time decision cannot see it, and deciding at
-    execute time would spend budget for a spawn that never happened. The
-    documented limit: every item runs.
-    """
-    flow = {
+def _map_flow(files=("x", "y"), src_task="list"):
+    # The fake keeps `outputs` OUT of its fingerprint (like a model's answer),
+    # so a changed upstream RESULT is expressed by changing its task text.
+    return {
         "name": "seedmap",
         "nodes": [
             {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
-             "spec": {"outputs": [{"files": ["x", "y"], "notes": ""}]}},
+             "spec": {"task": src_task, "outputs": [{"files": list(files), "notes": ""}]}},
             {"id": "m", "role": "map", "kind": "fake", "final": True,
              "depends_on": ["src"], "over": "{steps.src.json.files}", "concurrency": 1,
              "spec": {"outputs": ["done"], "task": "item {item}"}},
         ],
     }
-    source = _record(tmp_path, git_repo, flow=flow)
-    h = _seeded(tmp_path, git_repo, source, flow=flow)
+
+
+def test_map_items_are_seeded_per_item(tmp_path, git_repo):
+    """Reversed 2026-09-19. A map's per-item hash includes `index:i`, appended
+    by the engine AFTER the executor plans — so the engine hands the composed
+    hash to the seed (`serve_item`) instead of the seed guessing at plan
+    time. Still before any spawn: a served item costs no budget."""
+    from lockstep.state import read_events
+    source = _record(tmp_path, git_repo, flow=_map_flow())
+    h = _seeded(tmp_path, git_repo, source, flow=_map_flow())
     assert h.engine.run() == 0
-    assert calls_of(h, "src") == [], "the ordinary node upstream is still served"
-    assert len(calls_of(h, "m")) == 2, "every item runs"
+    assert calls_of(h, "src") == []
+    assert calls_of(h, "m") == [], "both items served, nothing spawned"
+    st = load_state(h.run_dir)
+    assert st.token_spawns == 0
+    rec = st.nodes["m"]
+    assert rec.seeded_from is None, "the map itself is not 'seeded'; its items are"
+    assert all(rec.items[i].seeded_from == str(source) for i in ("0", "1"))
+    assert rec.items["0"].status == "done" and rec.result_path
+    evs = [e for e in read_events(h.run_dir) if e.get("kind") == "seed"]
+    assert {(e.get("node"), e.get("item")) for e in evs} >= {("m", 0), ("m", 1)}
+    attempts = [e for e in read_events(h.run_dir)
+                if e.get("kind") == "attempt" and e.get("node") == "m"]
+    assert attempts and all(e.get("cause") == "served" for e in attempts)
+
+
+def test_a_changed_item_runs_and_its_siblings_are_served(tmp_path, git_repo):
+    """The upstream now lists x and z: item 0 (x) hashes the same and is
+    served; item 1 (z) is new and runs for real."""
+    source = _record(tmp_path, git_repo, flow=_map_flow(("x", "y")))
+    h = _seeded(tmp_path, git_repo, source, flow=_map_flow(("x", "z"), src_task="list v2"))
+    assert h.engine.run() == 0
+    assert len(calls_of(h, "m")) == 1
+    rec = load_state(h.run_dir).nodes["m"]
+    assert rec.items["0"].seeded_from and rec.items["1"].seeded_from is None
+    assert load_state(h.run_dir).token_spawns >= 1
+
+
+def test_force_stale_declines_every_item_of_the_named_map(tmp_path, git_repo):
+    source = _record(tmp_path, git_repo, flow=_map_flow())
+    h = _forced(tmp_path, git_repo, source, ["m"], flow=_map_flow())
+    assert h.engine.run() == 0
+    assert len(calls_of(h, "m")) == 2, "forced: every item runs for real"
+    rec = load_state(h.run_dir).nodes["m"]
+    assert not any(ir.seeded_from for ir in rec.items.values())
+
+
+def test_status_names_served_items(tmp_path, git_repo, capsys):
+    from lockstep.cli import main
+    source = _record(tmp_path, git_repo, flow=_map_flow())
+    h = _seeded(tmp_path, git_repo, source, flow=_map_flow())
+    assert h.engine.run() == 0
+    assert main(["status", str(h.run_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "seeded: 1 node(s) and 2 map item(s)" in out
+    assert "m[0], m[1]" in out
 
 
 def test_a_shell_node_is_never_seeded(tmp_path, git_repo):

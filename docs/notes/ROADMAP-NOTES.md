@@ -152,7 +152,9 @@ see DEVIATIONS 2026-08-11; these are the deliberately deferred seams):
   caching story now has a cross-lineage case, and the three limits (shell
   nodes, map items, failures) are stated in DEVIATIONS but not in the spec.
   The open sub-item is per-ITEM seeding for maps, which needs the engine to
-  hand the executor its item index at plan time.
+  hand the executor its item index at plan time. **SHIPPED 2026-09-19**
+  (DEVIATIONS 2026-09-19): the engine hands the composed item hash to
+  `SeedExecutor.serve_item` after planning, before any spawn.
 - **E8-full — narrow heal rollback to declared scopes.** §9.4.4 restores every
   path changed since the gate's baseline; with `spec.writes` now on every
   committed flow (V1), rollback could restore changed ∩ (targets' declared
@@ -326,7 +328,10 @@ lint admissible.
   repeats `--runs-dir <main>\runs`; a `[driver] runs_dir` in lockstep.toml
   would remove the repetition, but the flag-vs-config precedence and the
   hash-neutrality of the choice (run dirs are excluded from hashing today)
-  need one deliberate decision, not a drive-by. (3) **`gc` and
+  need one deliberate decision, not a drive-by. **RESOLVED 2026-09-19**
+  (DEVIATIONS 2026-09-19): flag > `[driver] runs_dir` (relative to the
+  config file) > `./runs`; hash-neutral; every cockpit tool asks the same
+  rule; the default did not move. (3) **`gc` and
   `explain --graph` are ignorant of vanished worktrees** — a harvested
   lane's runs record a `repo_root` that no longer exists. Batch 1 makes that
   harmless for attach (fall-through) and loud for resume (exit 7), but `gc`

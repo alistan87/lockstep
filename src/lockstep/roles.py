@@ -1102,17 +1102,25 @@ class Engine:
             {"kind": "seed", "node": node_id, "decision": "forced"},
         )
 
-    def note_seeded(self, node_id: str, source: str) -> None:
+    def note_seeded(self, node_id: str, source: str,
+                    item_index: int | None = None) -> None:
         """E7 provenance. Called by the seed wrapper when it serves a result:
         the record says where it came from and the journal says when, so a
-        reader can tell inherited work from work this run did."""
+        reader can tell inherited work from work this run did. For a map
+        ITEM (2026-09-19) the mark lands on the ItemRecord and the journal
+        line carries `item`; the map's own record never says "seeded", since
+        a map whose items were partly served is neither inherited nor new."""
         rec = self._rec(node_id)
-        rec.seeded_from = source
+        ev: dict = {"kind": "seed", "node": node_id, "source": source}
+        if item_index is None:
+            rec.seeded_from = source
+        else:
+            irec = rec.items.get(str(item_index))
+            if irec is not None:
+                irec.seeded_from = source
+            ev["item"] = item_index
         self.store.record(rec)
-        append_event(
-            self.store.run_dir,
-            {"kind": "seed", "node": node_id, "source": source},
-        )
+        append_event(self.store.run_dir, ev)
 
     def _timed_ws(self, label: str, op: str, fn):
         """Run a workspace operation and journal how long it took (P1-perf).
@@ -2317,6 +2325,14 @@ class Engine:
                 text = Path(irec.result_path).read_text(encoding="utf-8")
                 slots[i] = json.loads(text) if node.output == "json" else text
                 return
+            # E7 per item (2026-09-19): the per-item hash is composed HERE,
+            # after the executor plans, which is why the seed's plan() could
+            # never see it. The engine hands the composed hash to the seed
+            # explicitly and the seed decides — still before any spawn, so a
+            # served item costs no budget (`costs_tokens=False`).
+            serve_item = getattr(executor, "serve_item", None)
+            if serve_item is not None:
+                work = serve_item(node, i, item_hash, work)
             irec.status = "running"
             irec.input_hash = item_hash
             irec.hash_parts = label_parts(
@@ -2338,7 +2354,9 @@ class Engine:
             staged_before: set[str] = set()
             try:  # a tree-mutating map is inherently serial (SPEC §9.3)
                 self._maybe_snapshot(node)
-                if map_has_scope and "tree" in tokens:
+                if map_has_scope and "tree" in tokens and not self._served(work):
+                    # A served item spawns nothing and cannot write; the
+                    # baseline would only cost a tree walk.
                     scope_ref = self._scope_baseline(node, label)
                     if scope_ref is not None:
                         staged_before = self.workspace.staged_paths()

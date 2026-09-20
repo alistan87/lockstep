@@ -133,6 +133,10 @@ class ItemRecord(BaseModel):
     touched_path: str | None = None
     tree_before: str | None = None
     tree_after: str | None = None
+    # E7 per item (2026-09-19): the seed run this item's result was served
+    # from, None when this run spawned it. Same meaning as
+    # PhaseRecord.seeded_from, at item granularity.
+    seeded_from: str | None = None
 
 
 class PhaseRecord(BaseModel):

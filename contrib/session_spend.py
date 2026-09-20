@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cost_report  # noqa: E402
+import mission_view as mv  # noqa: E402
 
 
 # --- locating the orchestrator transcript --------------------------------------
@@ -351,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fields", default=None, help="cost-fields.toml path")
     ns = ap.parse_args(argv)
     repo = Path(ns.repo_root)
-    runs = Path(ns.runs_root) if ns.runs_root else repo / "runs"
+    runs = mv.default_runs_root(repo, ns.runs_root)
     maps = cost_report.load_field_maps(ns.fields)
     for line in session_lines(repo, runs, maps):
         print(line)

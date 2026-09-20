@@ -88,10 +88,37 @@ class LockstepConfig(BaseModel):
     # [doctor] max_age_days: how old the last successful doctor probe may be
     # before `run` prints its one advisory line (A4). Advisory only.
     doctor_max_age_days: int = 7
+    # [driver] runs_dir (2026-09-19): where run directories live when no
+    # `--runs-dir` is given. A RELATIVE value resolves against the config
+    # file's own directory, so `"../lockstep-runs"` in a repo's lockstep.toml
+    # means a sibling of the repo — outside the audited tree, which is the
+    # recommended shape (ROADMAP 2026-07-26, re-run isolation). Never hashed:
+    # run dirs are excluded from every fingerprint. The flag still wins.
+    runs_dir: str | None = None
 
 
 class ConfigError(Exception):
     """lockstep.toml unreadable or invalid (exit 7)."""
+
+
+def resolve_runs_dir(config: LockstepConfig | None, flag: str | None,
+                     base: Path | None = None) -> Path:
+    """The ONE precedence rule for where runs live: an explicit `--runs-dir`
+    wins; else `[driver] runs_dir` from the config, relative to the config
+    file's directory (or `base` when the config carries no path); else
+    `runs` under `base` (the cwd when no base is given) — exactly the
+    pre-2026-09-19 default. Every CLI command and every cockpit tool that
+    needs a runs root asks this, so the fleet stops repeating the flag and
+    the tools agree with the driver."""
+    if flag:
+        return Path(flag)
+    if config is not None and config.runs_dir:
+        p = Path(config.runs_dir)
+        if p.is_absolute():
+            return p
+        anchor = Path(config.path).parent if config.path else (base or Path("."))
+        return anchor / p
+    return (base / "runs") if base else Path("runs")
 
 
 def load_config(path: Path | None) -> LockstepConfig:
@@ -112,12 +139,23 @@ def load_config(path: Path | None) -> LockstepConfig:
             file=sys.stderr,
         )
         max_age = 7
+    runs_dir = (data.get("driver") or {}).get("runs_dir")
+    if runs_dir is not None and (not isinstance(runs_dir, str) or not runs_dir.strip()):
+        # Same posture as the doctor knob: a typo in a convenience setting
+        # must not hard-block every run through config validation.
+        print(
+            f"lockstep: ignoring [driver] runs_dir = {runs_dir!r} (not a non-empty "
+            "string); using the default",
+            file=sys.stderr,
+        )
+        runs_dir = None
     try:
         cfg = LockstepConfig.model_validate(
             {
                 "default": data.get("default"),
                 "executors": data.get("executors", {}),
                 "doctor_max_age_days": max_age,
+                "runs_dir": runs_dir,
             }
         )
     except ValidationError as e:
