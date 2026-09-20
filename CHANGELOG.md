@@ -6,7 +6,12 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
-## Unreleased
+## 0.17.1 — 2026-09-20
+
+A patch release for one defect found by cutting 0.17.0 itself: the flow that
+cuts releases could not report a successful one. Nothing else changed, and no
+frozen surface is touched — if you do not cut releases with `release-cut`,
+0.17.0 and 0.17.1 behave identically.
 
 **The release-cut tag node says what it did.** Cutting 0.17.0 left that node
 `failed` with the tag correctly created: bare `git tag` is silent on success,

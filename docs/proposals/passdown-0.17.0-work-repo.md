@@ -13,6 +13,17 @@ untouched. Two things re-bill once, both by design and both under your control,
 and one printed line changed shape. That is the whole risk surface; the rest is
 capability you opt into.
 
+**If the bundle you were handed says 0.17.1**, this file still applies in
+full: 0.17.1 is a patch for one defect found by cutting 0.17.0 — the
+`release-cut` flow could not report a successful tag, because bare `git tag`
+is silent on success and the engine fails a resultless attempt whatever its
+exit code. The node goes through `contrib/git_tag.py` now, which prints, is
+idempotent on the same commit, and makes an **annotated** tag by default
+(`--arg message=...` for a real annotation). Nothing else changed and no
+frozen surface moved; if the mirror does not cut its own releases, 0.17.0 and
+0.17.1 behave identically. `contrib/git_tag.py` and `tests/test_git_tag.py`
+are the only new files beyond the §1 list.
+
 This covers **0.16.0 → 0.17.0 only** (`1fd43e3..91e6510`, 51 files). If the
 mirror is on an older baseline, read the intervening CHANGELOG entries first —
 the passdown practice lapsed between 0.11.0 and this file, so there is no chain
