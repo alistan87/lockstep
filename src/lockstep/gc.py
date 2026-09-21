@@ -19,6 +19,13 @@ Dry-run by default: the plan prints, per candidate, every rule that FAILED to
 protect it — a deletion the operator cannot explain is a deletion that should
 not happen. Only --apply deletes. Directories without a state.json are never
 touched: they are not runs, whatever they are.
+
+A run whose recorded `repo_root` no longer exists (a harvested fleet worktree,
+typically) is NAMED, not reweighted: `root_gone` lists it beside the plan so
+the operator can tell "kept, and nothing can attach to or resume it" from
+"kept". The rules stay as they are — its lineage head is still the history
+`--estimate` mines, and a retention rule that fires on a path check would
+delete on an unmounted drive (OPEN-WORK item 8, 2026-09-20).
 """
 
 from __future__ import annotations
@@ -26,10 +33,10 @@ from __future__ import annotations
 import datetime as _dt
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .state import RunState
+from .state import RunState, root_present
 
 
 @dataclass
@@ -37,6 +44,9 @@ class GcPlan:
     candidates: list[tuple[Path, str]]  # (run dir, why nothing protected it)
     kept: int
     skipped: int  # dirs without state.json — not runs, never touched
+    # (run dir, recorded repo_root) for every run — kept or candidate — whose
+    # recorded root is not on disk. Empty (legacy) roots are unknown, never gone.
+    root_gone: list[tuple[Path, str]] = field(default_factory=list)
 
 
 def _age_days(started_at: str, now: _dt.datetime) -> float | None:
@@ -58,6 +68,8 @@ def plan_gc(
     runs_dir = Path(runs_dir)
     now = now or _dt.datetime.now(_dt.UTC)
     candidates: list[tuple[Path, str]] = []
+    root_gone: list[tuple[Path, str]] = []
+    probed: dict[str, bool | None] = {}  # one filesystem probe per distinct root
     kept = skipped = 0
     # Lineage key = (flow_hash, args), matching find_attachable_run exactly.
     by_flow: dict[tuple, list[tuple[str, Path, RunState]]] = {}
@@ -77,6 +89,11 @@ def plan_gc(
             continue
         lineage = (state.flow_hash, tuple(sorted(state.args.items())))
         by_flow.setdefault(lineage, []).append((state.started_at, d, state))
+        if state.repo_root:
+            if state.repo_root not in probed:
+                probed[state.repo_root] = root_present(state.repo_root)
+            if probed[state.repo_root] is False:  # None (unknown) says nothing
+                root_gone.append((d, state.repo_root))
     for _lineage, runs in by_flow.items():
         runs.sort(reverse=True)  # newest first
         for rank, (started_at, d, state) in enumerate(runs):
@@ -127,7 +144,7 @@ def plan_gc(
                 kept += 1
             else:
                 candidates.append((d, "; ".join(unprotected)))
-    return GcPlan(candidates=candidates, kept=kept, skipped=skipped)
+    return GcPlan(candidates=candidates, kept=kept, skipped=skipped, root_gone=root_gone)
 
 
 def apply_gc(plan: GcPlan, log=print) -> int:

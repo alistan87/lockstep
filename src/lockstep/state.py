@@ -274,6 +274,22 @@ class RunState(BaseModel):
     terminal: TerminalRecord | None = None
 
 
+def root_present(root: str) -> bool | None:
+    """Is a run's recorded `repo_root` on disk? True, False, or None for
+    unknown — the probe raised (an ACL-denied or unreachable share; CPython's
+    `Path.exists` re-raises every OSError it does not recognise as "missing")
+    or the root was never recorded. Unknown says nothing, like `_same_root`
+    treats an empty root. Callers that probe many runs should memoize per
+    root string: a fleet's runs share a handful of roots, and each probe of
+    an offline share blocks on SMB (OPEN-WORK item 8; review 2026-09-20)."""
+    if not root:
+        return None
+    try:
+        return Path(root).exists()
+    except OSError:
+        return None
+
+
 # --- events.jsonl --------------------------------------------------------------
 
 _events_lock = threading.Lock()

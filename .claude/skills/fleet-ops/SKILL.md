@@ -116,7 +116,11 @@ merges nothing:
    the fork point, so other lanes' already-merged work does not appear as
    spurious reversals).
 
-`lane.py abandon` is the discard path and says what it deletes.
+`lane.py abandon` is the discard path and says what it deletes. After a
+harvest the lane's runs record a root that no longer exists: since 0.18.0
+`gc` and `explain --graph` print `root gone:` for them rather than reading
+them as ordinary history or as edits; `gc` keeps them by its normal rules,
+and a plain `lockstep run` from main starts a new lineage with a note.
 
 ## Never
 

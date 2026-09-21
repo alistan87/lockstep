@@ -24,6 +24,17 @@ frozen surface moved; if the mirror does not cut its own releases, 0.17.0 and
 0.17.1 behave identically. `contrib/git_tag.py` and `tests/test_git_tag.py`
 are the only new files beyond the §1 list.
 
+**If the bundle says 0.18.0**, add two additive things and no risk: (1) the
+engine journals `kind: "timing", op: "dispatch-wait"` per dispatched node
+(the wait behind its wave barrier, with the dependency or the heal-round
+re-pend that made it ready named in `after`), and `status` sums those into
+one `dispatch wait:` line — advisory, no reader branches on it, nothing
+re-bills; (2) `gc` and `explain --graph` name a run whose recorded
+`repo_root` no longer exists (`root gone:`) — the mirror's harvested lanes
+will start reading that way, and `gc` keeps them exactly as before. New file:
+`tests/test_dispatch_wait.py`; `state.root_present` is the one new helper.
+CHANGELOG 0.18.0 and DEVIATIONS 2026-09-20 are the record.
+
 This covers **0.16.0 → 0.17.0 only** (`1fd43e3..91e6510`, 51 files). If the
 mirror is on an older baseline, read the intervening CHANGELOG entries first —
 the passdown practice lapsed between 0.11.0 and this file, so there is no chain

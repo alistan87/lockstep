@@ -168,3 +168,61 @@ def test_ordering_only_dependency_on_a_shell_stays_plain_fresh(tmp_path, git_rep
     text = "\n".join(lines)
     assert "fresh after" in text
     assert "conditionally fresh" not in text
+
+
+# ------------------------------------------------- OPEN-WORK item 8: root gone
+
+def _with_root(h, root: Path):
+    from lockstep.state import load_state, write_state
+    st = load_state(h.run_dir)
+    st.repo_root = str(root)
+    write_state(h.run_dir, st)
+
+
+def test_a_vanished_recorded_root_is_said_before_any_node_is_judged(tmp_path, git_repo):
+    """A harvested lane's run records a `repo_root` that no longer exists. The
+    dry run still plans against the CURRENT tree (that is what `--graph` is
+    for), but says up front that the record came from a tree that is gone, so
+    "every node moved" reads as the tree difference it is, not as edits."""
+    h = _ran(tmp_path, git_repo)
+    gone = tmp_path / "worktrees" / "lane-7"
+    _with_root(h, gone)
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    note = next(ln for ln in lines if "root gone" in ln)
+    assert str(gone) in note and str(git_repo) in note
+    # Said BEFORE the first per-node verdict, where a reader decides how to read them.
+    first_verdict = next(i for i, ln in enumerate(lines)
+                         if ln.startswith(("fresh ", "stale ", "re-runs ", "conditionally ")))
+    assert lines.index(note) < first_verdict
+
+
+def test_a_different_but_present_root_is_named_as_another_tree(tmp_path, git_repo):
+    h = _ran(tmp_path, git_repo)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    _with_root(h, other)
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    note = next(ln for ln in lines if "another tree" in ln)
+    assert str(other) in note and str(git_repo) in note
+    assert not any("root gone" in ln for ln in lines)
+
+
+def test_the_same_root_says_nothing_about_roots(tmp_path, git_repo):
+    h = _ran(tmp_path, git_repo)
+    _with_root(h, git_repo)
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    assert not any("root gone" in ln or "another tree" in ln for ln in lines)
+
+
+def test_a_legacy_run_with_no_recorded_root_says_nothing_about_roots(tmp_path, git_repo):
+    """Empty is unknown, never gone — the same reading `_same_root` gives a
+    run recorded before the field existed."""
+    h = _ran(tmp_path, git_repo)  # conftest records no repo_root
+    from lockstep.state import load_state
+    assert load_state(h.run_dir).repo_root == ""
+    lines, out = _capture()
+    assert explain_graph(h.run_dir, repo_root=git_repo, config=make_config(), out=out) == EXIT_OK
+    assert not any("root gone" in ln or "another tree" in ln for ln in lines)

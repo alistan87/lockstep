@@ -1088,3 +1088,52 @@ file records implementation-level departures below that bar.
   there); the TUI opens one drawer per keypress and reads it then.
   Vocabulary for all three lines added to COCKPIT-FOR-DOMAIN-EXPERTS. Pinned in
   tests/test_mission_render.py.
+
+- **2026-09-20 — `gc` and `explain --graph` name a vanished recorded root**
+  (OPEN-WORK item 8; the third seam of ROADMAP 2026-08-16). Neither
+  reweights nor refuses. `plan_gc` returns `root_gone` — (run dir, recorded
+  root) for every run whose `repo_root` is set and not on disk — and the dry
+  run prints it per candidate, and for kept runs as a summary count followed
+  by one line each; the
+  retention rules are unchanged, because a vanished-root lineage head is
+  still the history `--estimate` mines and a rule that fired on a path
+  check would delete on an unmounted drive. `explain --graph` prints a
+  `root gone:` line ahead of the per-node verdicts when the recorded root
+  is missing, and a `note:` when it exists but is another tree than
+  `--repo-root`, so "every node moved" reads as the tree difference it is;
+  it still plans against the current tree, which is what the dry run is
+  for. Empty (legacy) roots are unknown and say nothing, like `_same_root`;
+  so is a root the probe cannot answer for (`state.root_present` returns
+  None on any OSError — CPython's `Path.exists` re-raises what it does not
+  recognise as "missing", and an ACL-denied or unreachable share must not
+  crash `gc`); `gc` probes each distinct root once, since an offline share
+  blocks per probe. Pinned in tests/test_gc.py and tests/test_explain_graph.py.
+
+- **2026-09-20 — `op: "dispatch-wait"` timing lines: the layer-boundary
+  instrument** (OPEN-WORK item 14's named first step; throughput proposal
+  §6 and §10). The event-driven dispatch trigger names `kind:"timing"`
+  evidence of "a material layer-boundary gap", but those lines recorded
+  tree ops only (`scope-*`, `heal-*`, `reads-hash`), so the gap could not
+  be seen through the instrument that names it. The engine now journals,
+  per dispatched node with dependencies, the milliseconds between its LAST
+  dependency settling in this process and its dispatch, with that
+  dependency named (`after`). A node this process re-pended — a heal
+  round's target, descendant or gate, or a cache invalidation — is measured
+  from the re-pend and `after` says so (`heal round 1 of gate review`):
+  measured from its dependencies, the second dispatch would have reported
+  the whole first attempt plus the heal round as a barrier wait, which is
+  the "material gap" the trigger reads, manufactured by the cascade
+  (pre-commit review finding 1, reproduced). A dependency a resume
+  revalidates in place is stamped at the revalidation, in this process.
+  Unmeasured — no line — only when a dependency has no settle time in this
+  process at all (a wait computed from another process's `ended_at` string
+  would be evidence the trigger reads, and a guess is worse than none) and
+  for root nodes, which have nothing to be ready after. `status` sums the lines — over DISPATCHES, so a node re-dispatched
+  by a heal round or a later drive counts each wait, and both the node and
+  the dispatch counts are printed — into one `dispatch wait:` line naming
+  the worst, printed only when a line exists (`0 ms` would claim a
+  measurement never taken). Advisory like every timing line: no `status`,
+  no reader branches on it, chained into the journal like the rest (§10.3).
+  Not a §9.1 change — dispatch is still in layers; this measures what the
+  layer costs. Pinned in tests/test_dispatch_wait.py. The trigger itself is
+  unchanged and unfired.

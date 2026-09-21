@@ -272,6 +272,24 @@ class Engine:
         self._outcomes_guard = threading.Lock()
         self.flags = {"budget": False, "gate_block": False, "approval_rejected": False}
         self._start_monotonic = 0.0
+        # The layer-boundary instrument: node id -> perf_counter() when THIS
+        # process settled it (`_set_status` to a terminal status). Read by
+        # `_journal_dispatch_wait`. Deliberately not persisted and never
+        # reconstructed from `ended_at`: a dependency settled by an earlier
+        # drive has no entry, and its dependents are then unmeasured rather
+        # than measured against a wall-clock string from another process.
+        # A dependency revalidated IN PLACE by this drive's `_settle` is
+        # stamped at the revalidation, which is when its dependents became
+        # dispatchable here.
+        self._settled_at: dict[str, float] = {}
+        # node id -> (perf_counter(), why) for a node THIS process re-pended
+        # (a heal round, a cache invalidation). A re-pend is a readiness
+        # event: the node's dependencies settled before its previous attempt,
+        # so measuring the next dispatch from them would fold that whole
+        # attempt and the heal round into a "barrier wait" — a manufactured
+        # trigger for the very deferral the instrument informs (adversarial
+        # review 2026-09-20, finding 1). Consumed by `_journal_dispatch_wait`.
+        self._ready_at: dict[str, tuple[float, str]] = {}
 
         # Heal plumbing: gate -> proactive baseline snapshot; target -> its gate.
         # §6.10 guarantees targets never overlap across gates.
@@ -317,6 +335,7 @@ class Engine:
             rec.started_at = rec.started_at or utcnow()
         if status in ("done", "failed", "skipped", "blocked"):
             rec.ended_at = utcnow()
+            self._settled_at[node_id] = time.perf_counter()
         self.store.record(rec)
         append_event(self.store.run_dir, {"node": node_id, "status": status, "error": error})
         if status in ("done", "failed", "skipped", "blocked"):
@@ -616,6 +635,7 @@ class Engine:
                         # acts on. Said at the decision site, like every other
                         # revalidation outcome.
                         self.needs_check.discard(node.id)
+                        self._settled_at[node.id] = time.perf_counter()
                         rec.invalidated_by = None
                         self.store.record(rec)
                         self.log(
@@ -666,8 +686,13 @@ class Engine:
                                     f"replan failed: {type(e).__name__}: {e}"
                                 ]
                     self.needs_check.discard(node.id)
+                    if not invalidate:
+                        # Revalidated in place, in THIS process: the moment its
+                        # dependents became dispatchable here.
+                        self._settled_at[node.id] = time.perf_counter()
                     if invalidate:
                         rec.status = "pending"
+                        self._mark_repended(node.id, "re-run: cached result no longer matches")
                         self.store.record(rec)
                         if rec.invalidated_by:
                             # SAY IT, at the moment of the decision. The reason
@@ -764,7 +789,9 @@ class Engine:
                 if not wave:
                     break
                 futures = []
+                dispatched_at = time.perf_counter()
                 for node in wave:
+                    self._journal_dispatch_wait(node, dispatched_at)
                     self._set_status(node.id, "running")
                     if node.kind == "flow":
                         futures.append(flow_pool.submit(self._run_node_safe, node))
@@ -1121,6 +1148,54 @@ class Engine:
             ev["item"] = item_index
         self.store.record(rec)
         append_event(self.store.run_dir, ev)
+
+    def _journal_dispatch_wait(self, node: Node, dispatched_at: float) -> None:
+        """The layer-boundary instrument (OPEN-WORK item 14's prerequisite).
+
+        `futures_wait` in `run` is a full barrier: a node whose dependencies
+        all settled early waits behind the slowest node of its wave.
+        Event-driven dispatch (throughput proposal §6) is deferred on a
+        trigger that names `kind:"timing"` lines as its evidence, but until
+        now those lines recorded tree ops only, so the gap the trigger asks
+        about was unobservable through the instrument it names. This line is
+        that gap: `op: "dispatch-wait"`, the milliseconds between the node's
+        LAST dependency settling in this process and its dispatch, with that
+        dependency named (`after`) so a reader can follow the critical path.
+
+        A node this process RE-PENDED (a heal round, a cache invalidation) is
+        measured from the re-pend, and `after` says so (`heal round 1 of gate
+        review`): its dependencies settled before the previous attempt, and
+        measuring from them would report that attempt plus the heal round as
+        a barrier wait — the exact "material gap" the trigger reads, made by
+        the cascade (adversarial review 2026-09-20, finding 1). A dependency
+        revalidated in place by this drive is stamped at the revalidation.
+
+        Unmeasured, not zero, when a dependency has no settle time in this
+        process at all (no `_settled_at` entry): the trigger reads these
+        lines as evidence, and a guessed number is worse than none. Root
+        nodes have nothing to be ready after and get no line. Advisory like
+        every timing line (`_timed_ws`): no reader branches on it, it
+        carries no `status`.
+        """
+        repended = self._ready_at.pop(node.id, None)
+        if not node.depends_on:
+            return
+        known = [(self._settled_at[d], d) for d in node.depends_on if d in self._settled_at]
+        if len(known) != len(node.depends_on):
+            return
+        ready_at, after = max(known)
+        if repended is not None and repended[0] > ready_at:
+            ready_at, after = repended
+        append_event(
+            self.store.run_dir,
+            {"kind": "timing", "node": node.id, "op": "dispatch-wait",
+             "ms": round((dispatched_at - ready_at) * 1000), "after": after},
+        )
+
+    def _mark_repended(self, node_id: str, why: str) -> None:
+        """Record that THIS process re-pended `node_id` now, and why. Read
+        once by `_journal_dispatch_wait` at the node's next dispatch."""
+        self._ready_at[node_id] = (time.perf_counter(), why)
 
     def _timed_ws(self, label: str, op: str, fn):
         """Run a workspace operation and journal how long it took (P1-perf).
@@ -2202,6 +2277,7 @@ class Engine:
                 self._dissolve_adoption(nrec, f"heal round of gate {gate.id!r}")
                 nrec.status = "pending"
                 nrec.error = None
+                self._mark_repended(nid, f"heal round {round_n} of gate {gate.id}")
                 # A3.4/A3.5: heal invalidation clears item records — for map
                 # TARGETS (all items re-run, §9.4.6) and equally for invalidated
                 # DESCENDANT maps: after a rollback, a descendant item whose
@@ -2223,6 +2299,7 @@ class Engine:
                 self.needs_check.discard(nid)
         rec.heal_round = round_n
         rec.status = "pending"
+        self._mark_repended(gate.id, f"heal round {round_n} of gate {gate.id}")
         self.store.mutate(
             lambda st, _g=gate.id, _r=round_n: st.heal_pending.__setitem__(_g, _r))
         self.store.record(rec)

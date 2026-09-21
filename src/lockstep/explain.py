@@ -147,9 +147,9 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
     reports as stale: fail toward re-running, never toward a false
     "unchanged" (proposal finding 20).
     """
-    from .cli import _liveness_lines, _registry_for, _workspace_for
+    from .cli import _liveness_lines, _registry_for, _same_root, _workspace_for
     from .roles import Engine
-    from .state import compose_hash
+    from .state import compose_hash, root_present
     from .store import FileStore
     from .taskgraph import load_flow
     from .policy import AllowAllPolicy
@@ -178,6 +178,22 @@ def explain_graph(run_dir: Path, *, repo_root: Path, config, out=print) -> int:
         f"against the current tree; nothing was executed")
     for line in _liveness_lines(Path(run_dir), state):
         out(line)
+    # OPEN-WORK item 8: a harvested lane's run records a root that is gone.
+    # The dry run still plans against THIS tree — that is what --graph is for —
+    # but a reader must know the record came from another tree before reading
+    # "every node moved" as edits. Said here, ahead of the per-node verdicts.
+    # Empty (legacy) is unknown and says nothing, like `_same_root`; so does a
+    # root the probe cannot answer for (`root_present` is None).
+    recorded = state.repo_root
+    present = root_present(recorded)
+    if present is False:
+        out(f"root gone: this run was recorded against {recorded}, which no longer "
+            f"exists (a harvested worktree?); planned against {Path(repo_root)} — a moved "
+            f"part below may be the difference between those trees, not an edit")
+    elif present and not _same_root(recorded, Path(repo_root)):
+        out(f"note: this run was recorded against another tree, {recorded}; planned "
+            f"against {Path(repo_root)} — a moved part below may be the difference "
+            f"between those trees, not an edit")
 
     stale: dict[str, list[str]] = {}   # node -> reasons (directly stale)
     transitive: dict[str, str] = {}    # node -> the upstream that made it so

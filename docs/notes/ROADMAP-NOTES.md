@@ -338,3 +338,8 @@ lint admissible.
   retention could weight such runs differently and `explain --graph` planned
   against the CURRENT tree will report every node of a vanished-root run as
   moved without saying why; both could simply say "root gone".
+  **RESOLVED 2026-09-20** (DEVIATIONS 2026-09-20): both say it. `gc` names
+  the root per candidate, and for kept runs a summary count then one line
+  each, and does
+  NOT reweight — the rules are unchanged; `explain --graph` says `root
+  gone:` (or `note: … another tree`) ahead of the per-node verdicts.

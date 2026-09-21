@@ -649,13 +649,30 @@ def cmd_gc(ns) -> int:
     from .gc import apply_gc, plan_gc
 
     plan = plan_gc(_runs_root_of(ns), keep_per_flow=ns.keep_per_flow, keep_days=ns.keep_days)
+    gone = dict(plan.root_gone)
     for d, reason in plan.candidates:
         print(f"delete: {d}")
         print(f"  nothing protects it: {reason}")
+        if d in gone:
+            print(f"  root gone: recorded against {gone[d]}, which no longer exists "
+                  f"(a harvested worktree?)")
     print(
         f"gc: {len(plan.candidates)} candidate(s), {plan.kept} kept, "
         f"{plan.skipped} non-run dir(s) untouched"
     )
+    candidate_dirs = {d for d, _ in plan.candidates}
+    kept_gone = [(d, root) for d, root in plan.root_gone if d not in candidate_dirs]
+    if kept_gone:
+        # OPEN-WORK item 8: said, not acted on. The rules above keep these for
+        # the same reasons they keep any run (lineage head, --estimate history,
+        # age); what is different is that no `run` can attach to them and no
+        # `resume` can be invoked from their tree, and a reader deciding what
+        # to delete by hand should know that from the plan, not from a probe.
+        print(f"gc: {len(kept_gone)} kept run(s) record a repo root that no longer exists "
+              f"(harvested worktrees?) — kept by the retention rules, and --estimate still "
+              f"mines them; nothing can attach to or resume them from any existing tree")
+        for d, root in kept_gone:
+            print(f"  root gone: {d.name} (recorded against {root})")
     if not plan.candidates:
         return EXIT_OK
     if ns.apply:
@@ -1026,6 +1043,24 @@ def cmd_status(ns) -> int:
         last = overrides[-1]
         print(f"budget: max agent spawns overridden {last.get('from')} -> {last.get('to')} "
               f"at {last.get('ts', '?')} (that drive only)")
+    waits = [e for e in events
+             if e.get("kind") == "timing" and e.get("op") == "dispatch-wait" and e.get("node")]
+    if waits:
+        # The layer-boundary instrument (OPEN-WORK item 14's prerequisite):
+        # how long ready nodes sat behind a wave barrier. Summed here so the
+        # throughput §6 trigger can be read from one line instead of a
+        # journal grep; a run without such lines prints nothing, because
+        # "0 ms" would claim a measurement the engine did not take (every
+        # dependency settled in an earlier drive is unmeasured, not zero).
+        # The sum is over DISPATCHES: a node re-dispatched by a heal round or
+        # a later drive contributes each wait, so both counts are printed.
+        total = sum(int(e.get("ms") or 0) for e in waits)
+        worst = max(waits, key=lambda e: int(e.get("ms") or 0))
+        print(f"dispatch wait: {total} ms over {len({e['node'] for e in waits})} node(s) "
+              f"({len(waits)} dispatches); worst {worst['node']} "
+              f"{int(worst.get('ms') or 0)} ms after {worst.get('after')} — time ready "
+              f"nodes sat behind a wave barrier (the event-driven dispatch trigger, "
+              f"throughput proposal §6)")
     # r6 C1: latest progress per node — advisory display only.
     progress: dict[str, dict] = {}
     for ev in events:

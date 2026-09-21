@@ -863,7 +863,7 @@ def test_workspace_timings_are_journalled_and_stay_advisory(tmp_path, git_repo):
     # it did not change when `node_diff` started recording both — the engine
     # already computed them. What changed is that `scope-diff` now names a
     # `diff-tree` of those two snapshots rather than a third walk of its own.
-    ops = sorted(e["op"] for e in timings)
+    ops = sorted(e["op"] for e in timings if e["op"].startswith("scope-"))
     assert ops == ["scope-after", "scope-baseline", "scope-diff"], ops
     assert len([e for e in timings if e["op"].startswith("scope-") and e["op"] != "scope-diff"]) == 2
     assert all(e["node"] == "w" for e in timings)

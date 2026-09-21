@@ -6,7 +6,11 @@ description: Diagnose a failed or stuck lockstep run directory — read status, 
 # Diagnosing a lockstep run
 
 Start: `.venv\Scripts\lockstep.exe status <run_dir>` — statuses, attempts,
-heal rounds, gate verdicts, token spawns.
+heal rounds, gate verdicts, token spawns. A `dispatch wait:` line, when
+present, is wall clock ready nodes spent behind a wave barrier (the journal's
+`op: "dispatch-wait"` timing lines, summed over dispatches); it is diagnostic
+for slowness, never for failure, and a heal round's re-pend is measured from
+the re-pend, so a large number is not a target's first attempt counted twice.
 
 ## Exit codes (frozen, SPEC §3)
 

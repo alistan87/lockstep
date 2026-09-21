@@ -540,7 +540,14 @@ Every git tree operation the engine performs journals its duration as an
 advisory `kind: "timing"` line in `events.jsonl` — a snapshot is
 `git add -A` into a fresh temp index, so it costs O(tree bytes) on every call
 and a run that slows down over its life can be read rather than guessed at.
-`contrib/snapshot_bench.py` reproduces the numbers on any repo.
+`contrib/snapshot_bench.py` reproduces the numbers on any repo. The same
+journal carries `op: "dispatch-wait"` per dispatched node: how long it sat
+ready behind its wave's barrier, and which dependency made it ready — the
+evidence the deferred event-driven dispatch waits for. `lockstep status`
+sums those into one `dispatch wait:` line. A heal round's re-pend is itself
+the readiness event, so a second attempt is never measured against the
+first; a dependency with no settle time in this process is unmeasured,
+never zero.
 
 Build order and working agreement: SPEC §14. Deviations: `docs/spec/DEVIATIONS.md`.
 License: MIT.

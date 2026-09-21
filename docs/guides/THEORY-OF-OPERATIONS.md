@@ -460,7 +460,9 @@ corrupt each other's snapshots by design, which is why a fleet gives every
 writing run its own worktree; each run records the resolved root it was
 created against, a resume against any other tree is a refusal (exit 7), and
 a `run` whose newest lineage lives in a vanished worktree falls through to a
-new lineage instead of bricking. Everything else a fleet needs — worktree
+new lineage instead of bricking (and `gc` and `explain --graph` name such a
+run's vanished root rather than reading it as ordinary history or as
+edits). Everything else a fleet needs — worktree
 lifecycle, resource lanes, spawn ceilings, the decision relay — lives above
 the engine, in `docs/guides/FLEET-OPERATIONS.md`.
 

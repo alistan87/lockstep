@@ -90,6 +90,20 @@ two re-billed harness nodes on a seeded run. The shipped gate bodies in
 `src/lockstep/gates/` are the pattern: tested programs with deterministic
 pass-path output.
 
+## "explain --graph says every node moved, and gc keeps runs I cannot resume"
+
+The run was recorded against a tree that no longer exists — a fleet lane's
+worktree, harvested and deleted. Since 0.18.0 both tools say so instead of
+leaving you to infer it: `explain --graph` prints `root gone:` (or `note: …
+another tree`) ahead of its per-node verdicts, because it still plans
+against the CURRENT tree and a moved part may be the difference between the
+two trees rather than an edit; `gc` prints `root gone:` per candidate and,
+for kept runs, a count plus one line each. `gc` does not delete them for
+that — the lineage head is still the history `--estimate` mines — so if you
+want them gone, that is a by-hand decision the plan now gives you the facts
+for. Nothing can attach to or resume such a run from an existing tree; a
+plain `lockstep run` starts a new lineage with a printed note.
+
 ## "A run shows all nodes pending and wait says exit 4"
 
 On drivers ≥ 0.10.1 that run says `refused` everywhere (`wait` exits 7 with

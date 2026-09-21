@@ -722,7 +722,9 @@ Mechanics worth knowing before declaring one:
   done node (the 13→32-minute shape, lesson 20). A stat-keyed per-process
   memo makes repeat plans cheap; the first pass of each process reads every
   declared byte, and every resume is a first pass. The journal records each
-  hashing as a `kind: "timing"` line (`op: "reads-hash"`);
+  hashing as a `kind: "timing"` line (`op: "reads-hash"`; the same kind
+  carries the tree ops, `scope-*`/`heal-*`, and since 0.18.0
+  `dispatch-wait`, the barrier wait per dispatched node that `status` sums);
   `python contrib\snapshot_bench.py --reads "src/**" --repo .` measures your
   tree; `lint-broad-reads` warns past 200 files.
 - **Relationship to external-edit detection (M6/M7):** on resume, ANY

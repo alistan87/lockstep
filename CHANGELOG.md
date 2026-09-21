@@ -6,6 +6,27 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## 0.18.0 — 2026-09-20
+
+**The instrument release: two small pieces of `docs/notes/OPEN-WORK.md`,
+built and adversarially reviewed** (two passes, engine and record lenses;
+19 findings, no blockers, one high-severity defect in the first cut caught
+and reproduced before commit). Item 8: `gc` and
+`explain --graph` name a run whose recorded repo root no longer exists (a
+harvested fleet lane) — `gc` prints `root gone:` per candidate, and for kept
+runs a summary count followed by one line each, without changing what it
+keeps; the graph dry
+run says so ahead of its per-node verdicts so "every node moved" reads as
+the tree difference it is. Item 14's named first step: the engine journals
+`op: "dispatch-wait"` per dispatched node — how long it sat ready behind its
+wave's barrier and which dependency made it ready — and `status` sums it
+into one `dispatch wait:` line. That is the evidence the deferred
+event-driven dispatch trigger asks for and could not previously see; the
+deferral itself is unchanged. A heal round's re-pend is itself the
+readiness event (the pre-commit review caught the first cut reporting a
+target's whole first attempt as a barrier wait), and a dependency with no
+settle time in this process is unmeasured, never zero.
+
 ## 0.17.1 — 2026-09-20
 
 **Cut as 0.17.0, shipped as 0.17.1.** Tagging the release found a defect in

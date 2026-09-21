@@ -104,6 +104,13 @@ tree under a live driver would have it running against a vanished root.
   worktree: **falls through to a new lineage** with a printed note — plain
   `lockstep run` from the main checkout keeps working after every fleet.
 - Attach under a live lock: exit 8, nothing written (pinned by test).
+- A harvested lane's runs record a root that no longer exists. `gc` names
+  them (`root gone:` per candidate; a summary count plus one line each for
+  kept runs) without
+  changing what it keeps — the lineage head is still `--estimate` history —
+  and `explain --graph` says `root gone:` ahead of its per-node verdicts,
+  so "every node moved" reads as the tree difference it is. Neither
+  refuses; neither reweights.
 
 ## Ceilings and resource lanes
 

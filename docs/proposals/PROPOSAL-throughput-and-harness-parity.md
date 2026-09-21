@@ -451,7 +451,9 @@ leaves it standing).
   early-ready shape (a node in layer L that does not depend on all of
   layer L−1) on its critical path. The instrument exists today (the
   engine's `kind:"timing"` journal lines), so the trigger is reachable
-  without new code.
+  without new code. **[2026-09-20: it was not — those lines recorded tree
+  ops only. `op: "dispatch-wait"` is the line that shows the gap, and
+  `lockstep status` sums it (DEVIATIONS 2026-09-20).]**
 - **Readonly shell nodes** — §7. Trigger: timing evidence AND an
   A0c(ii)-compliant design.
 - **Scoped-writer concurrency** (disjoint `spec.writes` ⇒ per-scope

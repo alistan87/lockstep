@@ -113,3 +113,49 @@ def test_cli_dry_run_by_default(tmp_path, capsys):
     assert doomed.exists(), "dry run must not delete"
     code = lockstep_main(["gc", str(runs), "--keep-per-flow", "1", "--apply"])
     assert code == 0 and not doomed.exists()
+
+
+def test_a_vanished_repo_root_is_named_not_reweighted(tmp_path):
+    """OPEN-WORK item 8: a harvested lane's runs record a `repo_root` that no
+    longer exists. The retention RULES do not change (a vanished-root lineage
+    head is still the history --estimate mines), but the plan says so per run,
+    so a reader can tell "kept, and nothing can attach to it" from "kept"."""
+    runs = tmp_path / "runs"
+    gone = tmp_path / "worktrees" / "lane-1"   # never created
+    here = tmp_path / "repo"
+    here.mkdir()
+    for i in range(3):
+        d = _mk_run(runs, f"f-{i:02d}", days_old=100 - i)
+        st = RunState.model_validate_json((d / "state.json").read_text(encoding="utf-8"))
+        st.repo_root = str(gone if i != 1 else here)
+        write_state(d, st)
+    legacy = _mk_run(runs, "legacy", days_old=100, flow_hash="other")  # repo_root == ""
+    plan = plan_gc(runs, keep_per_flow=1, keep_days=14, now=NOW)
+    root_gone = {d.name: root for d, root in plan.root_gone}
+    # Named for every run whose recorded root is missing - head and candidate alike.
+    assert set(root_gone) == {"f-00", "f-02"}
+    assert root_gone["f-00"] == str(gone)
+    # Unknown (legacy, empty) is never "gone", and an existing root is not either.
+    assert legacy.name not in root_gone and "f-01" not in root_gone
+    # The rules are untouched: the lineage head f-02 is kept even with its root gone.
+    assert {d.name for d, _ in plan.candidates} == {"f-00", "f-01"}
+
+
+def test_gc_dry_run_prints_the_vanished_root_per_candidate_and_in_summary(tmp_path, capsys):
+    runs = tmp_path / "runs"
+    gone = tmp_path / "wt-gone"
+    for i in range(2):
+        d = _mk_run(runs, f"f-{i:02d}", days_old=100 - i)
+        st = RunState.model_validate_json((d / "state.json").read_text(encoding="utf-8"))
+        st.repo_root = str(gone)
+        write_state(d, st)
+    assert lockstep_main(["gc", str(runs), "--keep-per-flow", "1", "--keep-days", "1"]) == 0
+    out = capsys.readouterr().out
+    # The candidate (f-00) names its vanished root beside the reasons nothing
+    # protected it; the kept head (f-01) is counted in one summary line.
+    assert "delete: " in out
+    # The candidate's own line (its form names the root directly) ...
+    assert f"  root gone: recorded against {gone}, which no longer exists" in out
+    # ... and the kept head, counted in the summary and then named.
+    assert "1 kept run(s) record a repo root that no longer exists" in out
+    assert f"  root gone: f-01 (recorded against {gone})" in out
