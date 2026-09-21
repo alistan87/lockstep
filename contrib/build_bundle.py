@@ -46,6 +46,12 @@ FILES = [
     "README.md",
     "CLAUDE.md",
     "lockstep.toml.example",
+    # Added 2026-09-20: every bundle from 0.10.0 to 0.17.1 shipped without it,
+    # while the passdowns that ride along tell the reader to "read the
+    # intervening CHANGELOG entries first" - an instruction the bundle made
+    # impossible to follow. A release-facing summary is not optional cargo for
+    # a mirror deciding what an upgrade costs it.
+    "CHANGELOG.md",
 ]
 
 # The install guide is copied to the top level under a name nobody can miss.
