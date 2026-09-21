@@ -8,30 +8,10 @@ record is the git history and the proposals under `docs/proposals/`.
 
 ## 0.17.1 — 2026-09-20
 
-A patch release for one defect found by cutting 0.17.0 itself: the flow that
-cuts releases could not report a successful one. Nothing else changed, and no
-frozen surface is touched — if you do not cut releases with `release-cut`,
-0.17.0 and 0.17.1 behave identically.
-
-**The release-cut tag node says what it did.** Cutting 0.17.0 left that node
-`failed` with the tag correctly created: bare `git tag` is silent on success,
-a silent success leaves no result channel, and the engine fails a resultless
-attempt whatever its exit code — so it auto-retried into "tag already exists".
-`contrib/git_tag.py` prints one line naming the commit, tag and kind, and is
-idempotent on the same commit so a retry cannot manufacture the failure; a tag
-pointing elsewhere is still a hard refusal. The engine half — whether exit 0
-with empty stdout should pass for a work node — is OPEN-WORK item 24, recorded
-and not taken, because it touches the §7/§8.3 result-channel contract.
-
-The tag it makes is **annotated** unless you ask for `--lightweight`, since
-v0.9.0 and v0.16.0 are and v0.17.0 only was not because the node said nothing;
-`release-cut` takes an optional `message` arg for a real annotation and falls
-back to the tag name. Its output is ASCII because that stdout is the node's
-result channel: a piped CPython on Windows encodes with the locale codec, so
-an em dash arrived as invalid UTF-8 and was recorded as a replacement
-character.
-
-## 0.17.0 — 2026-09-20
+**Cut as 0.17.0, shipped as 0.17.1.** Tagging the release found a defect in
+the flow that does the tagging, so the 0.17.0 tag was withdrawn and this
+entry carries both. Everything below shipped together; there is no 0.17.0 to
+upgrade from.
 
 **The open-work release.** `docs/notes/OPEN-WORK.md` ranked every
 actionable item recorded across the roadmap notes, the lessons file, the
@@ -132,6 +112,25 @@ severity changed, attempts labelled by the journal's recorded cause, `not
 comparable` when a side is not a findings shape — and the agent block
 gains a `per attempt` tool-activity line that says `not reported` rather
 than `0`. Vocabulary added to the domain-expert guide.
+
+**The release-cut tag node says what it did.** The first cut of this release
+left that node `failed` with the tag correctly created: bare `git tag` is
+silent on success, a silent success leaves no result channel, and the engine
+fails a resultless attempt whatever its exit code — so it auto-retried into
+"tag already exists". `contrib/git_tag.py` prints one line naming the commit,
+tag and kind, and is idempotent on the same commit so a retry cannot
+manufacture the failure; a tag pointing elsewhere is still a hard refusal. The
+engine half — whether exit 0 with empty stdout should pass for a work node —
+is OPEN-WORK item 24, recorded and not taken, because it touches the §7/§8.3
+result-channel contract.
+
+The tag it makes is **annotated** unless you ask for `--lightweight`, since
+v0.9.0 and v0.16.0 are and the withdrawn 0.17.0 tag only was not because the
+node said nothing; `release-cut` takes an optional `message` arg for a real
+annotation and falls back to the tag name. Its output is ASCII because that
+stdout is the node's result channel: a piped CPython on Windows encodes with
+the locale codec, so an em dash arrived as invalid UTF-8 and was recorded as a
+replacement character.
 
 ## 0.16.0 — 2026-09-12
 
