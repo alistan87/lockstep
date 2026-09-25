@@ -216,3 +216,83 @@ def test_a_detached_refusal_is_echoed_here_and_exits_7(tmp_path, git_repo, monke
     assert code == 7, captured.err
     assert "refused" in captured.err
     assert "--allow-dirty-scope" in captured.err
+
+
+# --- the start-check window: a signal, not a guess ----------------------------
+#
+# Portability check 2026-09-24: under full-suite load in a fresh venv the
+# child's dirty-scope preflight (a whole-tree git snapshot) took longer than
+# the fixed 3 s grace window, and the parent reported a clean launch of a run
+# that was refusing (0, not 7). The window now waits for the driver's own
+# `preflight-passed` marker; the timeout is only a safety net.
+
+def _bare_run(tmp_path: Path) -> Path:
+    from lockstep.state import PhaseRecord, RunState, utcnow, write_state
+
+    run_dir = tmp_path / "runs" / "r"
+    run_dir.mkdir(parents=True)
+    write_state(run_dir, RunState(
+        flow_name="x", flow_hash="h", format_version="1.0", args={},
+        nodes={"a": PhaseRecord(node_id="a", role="work", kind="fake")},
+        started_at=utcnow()))
+    return run_dir
+
+
+def test_a_refusal_slower_than_the_old_window_is_still_caught(tmp_path):
+    import threading
+
+    from lockstep.cli import _await_start_checks
+    from lockstep.state import record_terminal
+
+    run_dir = _bare_run(tmp_path)
+    t = threading.Timer(3.5, record_terminal,
+                        args=(run_dir, 7, "dirty_scope", "slow refusal"))
+    t.start()
+    try:
+        outcome, terminal = _await_start_checks(run_dir, driver_pid=4242, timeout=15)
+    finally:
+        t.cancel()
+    assert outcome == "refused"
+    assert terminal.exit_code == 7 and terminal.message == "slow refusal"
+
+
+def test_the_drivers_own_marker_ends_the_wait_promptly(tmp_path):
+    from lockstep.cli import _await_start_checks
+    from lockstep.state import append_event
+
+    run_dir = _bare_run(tmp_path)
+    append_event(run_dir, {"kind": "drive", "op": "preflight-passed", "pid": 4242})
+    t0 = time.monotonic()
+    assert _await_start_checks(run_dir, driver_pid=4242, timeout=15)[0] == "started"
+    assert time.monotonic() - t0 < 2
+
+
+def test_an_earlier_drives_marker_does_not_count(tmp_path):
+    """A resumed run's journal already holds a previous drive's marker."""
+    from lockstep.cli import _await_start_checks
+    from lockstep.state import append_event
+
+    run_dir = _bare_run(tmp_path)
+    append_event(run_dir, {"kind": "drive", "op": "preflight-passed", "pid": 1111})
+    assert _await_start_checks(run_dir, driver_pid=4242, timeout=1)[0] == "unconfirmed"
+
+
+def test_the_engine_journals_the_marker_after_its_refusal_checks(tmp_path):
+    import os
+
+    from lockstep.state import read_events
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from conftest import build
+
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    h = build(tmp_path, FLOW, repo)
+    assert h.engine.run() == EXIT_OK
+    marks = [e for e in read_events(h.run_dir)
+             if e.get("kind") == "drive" and e.get("op") == "preflight-passed"]
+    assert [m["pid"] for m in marks] == [os.getpid()]
+    # Before any node moved: it marks the checks, not the work.
+    lines = (h.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    first_status = next(i for i, l in enumerate(lines) if '"status"' in l)
+    assert next(i for i, l in enumerate(lines) if "preflight-passed" in l) < first_status
