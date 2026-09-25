@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .contracts import ContractError, Verdict, resolve_contract
 from .interpolate import InterpolationError, extract_refs, parse_when
@@ -76,6 +76,12 @@ class Budget(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     max_agent_spawns: int = 40  # counts spawns of token-costing kinds only
     max_run_minutes: int = 120
+    # G3b first slice (OPEN-WORK item 10; DEVIATIONS 2026-09-24): a second
+    # ceiling under the wallet, per node and per map ITEM, over EVERY
+    # token-costing spawn in the lineage — retries, the M4 auto-retry,
+    # correctives, heal rounds and resumes alike. A trip fails that node with
+    # the reason; it is not a run-level stop. None = uncapped (the old shape).
+    max_spawns_per_node: int | None = Field(default=None, ge=1)
 
 
 class TaskGraph(BaseModel):

@@ -1137,3 +1137,48 @@ file records implementation-level departures below that bar.
   Not a §9.1 change — dispatch is still in layers; this measures what the
   layer costs. Pinned in tests/test_dispatch_wait.py. The trigger itself is
   unchanged and unfired.
+
+- **2026-09-24 — `budget.max_spawns_per_node`: a per-node spawn ceiling
+  under the wallet** (OPEN-WORK item 10, G3b, first slice; downstream
+  request 2026-09-24 section A, which is the second starvation report the
+  item's trigger waited for: 14 of 28 wallet spawns gone with at least 30
+  still required, and two oversized map items that timed out twice under an
+  explicit `retry.max: 0`). An optional, additive `budget` key (`ge=1`;
+  absent = uncapped, byte-identical to before). When set it bounds EVERY
+  token-costing spawn of one node — or of one map ITEM — across the
+  lineage: initial, `retry`, the M4 auto-retry, contract and scope
+  correctives, heal rounds, resumes, and a baseline gate's pre-run spawn.
+  **This limits a stated guarantee:** SPEC §9.3 / AMENDMENTS M4 promise one
+  additive automatic retry "even when retry.max == 0"; under a cap that is
+  already spent, that retry does not happen. Absent the key, M4 holds
+  unchanged. The counter is `token_spawns` on `PhaseRecord` / `ItemRecord`
+  (additive, default 0; a record from an older driver counts from zero on
+  this one) and is never reset — not by a heal round's item reset, a hash
+  miss, a resume, or `adopt` re-pending a map's items. Token-free
+  executions (shell, `--seed`/`--replay`-served results) are never counted.
+  The check runs BEFORE the wallet, so a capped node spends nothing, and
+  the counter moves only after the wallet accepts, so a wallet trip never
+  charges a node. A trip is not a run-level stop: it is a
+  `NodeSpawnCapped`, never a `BudgetTripped`, because exit 4 re-pends the
+  node and a capped node would then re-trip on every resume forever. The
+  node (or item) fails with the cap and, when an attempt ran in this drive,
+  that attempt's own reason (`exit code 0 (no result emitted)`, a timeout,
+  the contract error, the scope violation — the quarantine still runs
+  first); a gate with no verdict because of the cap blocks with the cap as
+  its reason. Journaled as `{"kind": "budget", "op": "node-cap", "node",
+  "item"?, "spawns", "cap"}`. `status` prints a `spawn cap:` line naming
+  every capped node and item. **No resume raises it:** the cap is part of
+  the archived flow, and the way out stated in the error and in `status`
+  is to revise the flow and start a new lineage with `--seed`, which keeps
+  the finished work. That is the one exclusion — a new lineage's counters
+  start at zero — and it is stated where the trip is reported. Also new:
+  once a map's width is known, the engine journals `{"kind": "budget",
+  "op": "forecast"}` and logs a warning when the MINIMUM spawns still needed
+  (one per unfinished item, one per mandatory downstream token-costing
+  node; no retries; descendant maps count zero) exceed what is left in the
+  wallet. Advisory, never a refusal; silent under `--seed`/`--replay`, where
+  which items are served is decided per item after planning. Deliberately
+  not in this slice: a whole-map total, a `resume` override for the per-node
+  cap (the wallet has one, `--max-agent-spawns`), and a verify-time
+  prediction (map width is runtime data). Pinned in
+  tests/test_node_spawn_cap.py.

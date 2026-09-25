@@ -998,6 +998,23 @@ def cmd_status(ns) -> int:
         if seeded_items:
             counted.append(f"{len(seeded_items)} map item(s)")
         print(f"seeded: {' and '.join(counted)} served from {source} — {', '.join(names)}")
+    from .roles import SPAWN_CAP_MARK
+
+    # G3b: a capped node looks like any failed node below, and a plain resume
+    # is the natural next move — which spawns nothing and fails it again.
+    # Name them, and the one way out, above the per-node noise.
+    capped = [
+        n for n, r in sorted(state.nodes.items())
+        if not r.items and r.status in ("failed", "blocked") and SPAWN_CAP_MARK in (r.error or "")
+    ] + [
+        f"{n}[{i}]" for n, r in sorted(state.nodes.items())
+        for i, ir in sorted(r.items.items(), key=lambda kv: int(kv[0]))
+        if ir.status == "failed" and SPAWN_CAP_MARK in (ir.error or "")
+    ]
+    if capped:
+        print(f"spawn cap: {', '.join(capped)} reached {SPAWN_CAP_MARK} — a resume will "
+              f"not spawn them again; revise the flow and start a new lineage "
+              f"(`lockstep run <flow> --seed {run_dir}` keeps the finished work)")
     forced = sorted(
         n for n, r in state.nodes.items()
         if any("forced stale" in reason for reason in (r.invalidated_by or []))

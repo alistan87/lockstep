@@ -59,6 +59,20 @@ class BudgetTripped(Exception):
     pass
 
 
+# The phrase every spawn-cap message carries; readers (`_finish`, `status`)
+# recognise a cap trip by it rather than by a parallel flag.
+SPAWN_CAP_MARK = "budget.max_spawns_per_node"
+
+
+class NodeSpawnCapped(Exception):
+    """G3b (OPEN-WORK item 10): ONE node or map item has spent its
+    `budget.max_spawns_per_node`. Deliberately NOT a BudgetTripped: the
+    wallet trip is a run-level stop (exit 4, the node goes back to pending),
+    and treating a per-node trip that way would re-pend the same node on
+    every resume forever. This fails the node, spends nothing, and leaves the
+    wallet to everything else — the whole point of a second ceiling."""
+
+
 class RunResources:
     """Everything that is RUN-scoped rather than engine-scoped
     (PROPOSAL-flow-composition §2). A single engine builds one for itself and
@@ -362,18 +376,40 @@ class Engine:
     def _wall_exceeded(self) -> bool:
         return (time.monotonic() - self._start_monotonic) > self.tg.budget.max_run_minutes * 60
 
-    def _spend_spawn(self, work: PlannedWork) -> None:
+    def _spend_spawn(self, work: PlannedWork, owner: tuple | None = None) -> None:
         """Budget accounting (SPEC §9.5): counts every spawn whose work costs
         tokens — corrective re-spawns and heal rounds included. A composed
         child engine routes here to the ROOT's wallet (one budget for the
         whole tree of engines), flagging its own loop on a trip so it stops
-        dispatching instead of re-pending the same nodes forever."""
+        dispatching instead of re-pending the same nodes forever.
+
+        `owner` = (node id, item index or None, the record whose
+        `token_spawns` it charges). The per-node cap (G3b) is checked FIRST
+        and against THIS engine's flow, so a capped node never touches the
+        wallet; the node's counter moves only after the wallet accepted the
+        spawn, so a wallet trip never charges a node for a spawn it did not
+        get."""
         if not work.costs_tokens:
             return
+        cap = self.tg.budget.max_spawns_per_node
+        if owner is not None and cap is not None and owner[2].token_spawns >= cap:
+            node_id, item, counter = owner
+            ev = {"kind": "budget", "op": "node-cap", "node": node_id,
+                  "spawns": counter.token_spawns, "cap": cap}
+            if item is not None:
+                ev["item"] = item
+            append_event(self.store.run_dir, ev)
+            raise NodeSpawnCapped(self._cap_message(node_id, item, counter.token_spawns, cap))
+        self._spend_wallet(work)
+        if owner is not None:
+            owner[2].token_spawns += 1
+            self.store.record(self._rec(owner[0]))
+
+    def _spend_wallet(self, work: PlannedWork) -> None:
         root = self.resources.root_engine
         if root is not None and root is not self:
             try:
-                root._spend_spawn(work)
+                root._spend_wallet(work)
             except BudgetTripped:
                 self.flags["budget"] = True
                 raise
@@ -386,6 +422,36 @@ class Engine:
                 self.flags["budget"] = True
                 raise BudgetTripped()
             self.store.mutate(lambda st: setattr(st, "token_spawns", st.token_spawns + 1))
+
+    def _cap_message(self, node_id: str, item: int | None, spawns: int, cap: int) -> str:
+        """The trip's evidence, and the way out. The cap belongs to the
+        lineage's archived flow, so no resume raises it: the human revises
+        the flow and starts a new lineage, and `--seed` keeps the work that
+        already finished (the counter is per lineage — a seeded lineage
+        starts at zero, which is the one exclusion, stated here)."""
+        label = f"{node_id}[{item}]" if item is not None else node_id
+        return (
+            f"spawn cap reached: {label} has spent {spawns} of "
+            f"{SPAWN_CAP_MARK} = {cap} in this lineage, so it gets no further "
+            f"spawn (retries, the auto-retry, correctives, heal rounds and "
+            f"resumes all count). To go on, revise the flow (split the node, or "
+            f"raise the cap) and start a new lineage: "
+            f"`lockstep run <flow> --seed {self.store.run_dir}` keeps the finished work"
+        )
+
+    @staticmethod
+    def _capped_raw(last: RawResult | None, cap: NodeSpawnCapped) -> RawResult:
+        """The result a capped retry loop returns. With a previous attempt in
+        hand it is THAT attempt (its exit code, timeout and logs are the
+        evidence) with the cap stated ahead of its own failure, so the reader
+        learns both why it failed and why it was not tried again."""
+        if last is None:
+            return RawResult(exit_code=-1, result_text=None, source="none", error=str(cap))
+        prior = last.error or (
+            f"exit code {last.exit_code}"
+            + (" (no result emitted)" if last.result_text is None else "")
+        )
+        return last.model_copy(update={"error": f"{cap}\nthe last attempt: {prior}"})
 
     def _costs_tokens_hint(self, node: Node) -> bool:
         if node.kind == "harness":
@@ -872,7 +938,7 @@ class Engine:
             try:
                 ctx = self._render_ctx(node, base_dir)
                 work = executor.plan(node, ctx)
-                self._spend_spawn(work)
+                self._spend_spawn(work, owner=(node.id, None, self._rec(node.id)))
                 # A real, billed attempt - and the only one the journal used
                 # to miss. Its silent `attempts += 1` then made the gate's
                 # FIRST ordinary attempt read `resume` in a fresh run (E4
@@ -976,6 +1042,10 @@ class Engine:
             rec.status = "pending"
             rec.error = None  # e.g. a mid-corrective trip must not leave stale error text
             self.store.record(rec)
+        except NodeSpawnCapped as e:
+            # Every spawn site handles its own trip with the attempt's
+            # evidence; this is the net under them, never the main path.
+            self._set_status(node.id, "failed", error=str(e))
         except WorkspaceError as e:
             self._set_status(node.id, "failed", error=str(e))
         except Exception as e:  # a driver bug must not wedge the run silently
@@ -1496,10 +1566,13 @@ class Engine:
             "meta": {**work.meta, "corrective": True},
         })
         try:
-            self._spend_spawn(corrective)
+            self._spend_spawn(corrective, owner=(node.id, item[0] if item else None, target))
         except BudgetTripped:
             target.error = f"{first_error}\n(budget tripped before the scope-corrective re-spawn)"
             raise
+        except NodeSpawnCapped as cap:
+            return (RawResult(exit_code=-1, result_text=None, source="none", error=str(cap)),
+                    f"{first_error}\n{cap}")
         ev = {"node": node.id, "status": "scope-corrective-respawn"}
         if item is not None:
             ev["item"] = item[0]
@@ -1611,13 +1684,21 @@ class Engine:
             cause, heal_round = "resume", None
         else:
             cause, heal_round = "initial", None
+        last: RawResult | None = None
         while True:
             # Spend FIRST: a budget trip raises out of `_spend_spawn`, and
             # journalling before it recorded an attempt that never happened -
             # then the resume journalled the same ordinal again, so one real
             # attempt left two byte-identical events. Exit 4 then resume is a
             # documented normal outcome, not an edge case.
-            self._spend_spawn(work)
+            #
+            # A per-node cap trip RETURNS rather than raises: the caller still
+            # owes the previous attempt its write-scope check, and `_finish`
+            # fails the node with the cap and that attempt's reason together.
+            try:
+                self._spend_spawn(work, owner=(node.id, None, rec))
+            except NodeSpawnCapped as cap:
+                return self._capped_raw(last, cap)
             # Consumed unconditionally once the spawn is paid for. Guarding on
             # `heal_round is not None` skipped the `served` branch (which
             # forces it to None), so a seeded run finished still holding the
@@ -1625,6 +1706,7 @@ class Engine:
             self._take_heal_round(node.id)
             self._journal_attempt(node, work, cause, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
+            last = raw
             rec.attempts += 1
             self.store.record(rec)
             if (phase_dir / "CANCELLED").exists():
@@ -1907,10 +1989,13 @@ class Engine:
             }
         )
         try:
-            self._spend_spawn(corrective)
+            self._spend_spawn(corrective, owner=(node.id, None, rec))
         except BudgetTripped:
             rec.error = f"contract validation failed: {first_error} (budget tripped before re-spawn)"
             raise
+        except NodeSpawnCapped as cap:
+            rec.error = f"contract validation failed: {first_error}\n{cap}"
+            return None
         self._journal_attempt(node, corrective, "corrective")
         raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
         rec.attempts += 1
@@ -1959,6 +2044,8 @@ class Engine:
                         f"add `retry` to the gate, and re-run the command by hand before "
                         f"blaming the change under review"
                     )
+                elif raw.error and SPAWN_CAP_MARK in raw.error:
+                    reason = raw.error  # no verdict because no spawn: say which
                 else:
                     reason = "no valid verdict emitted"
                 self._queue_gate_outcome(node, None, reason)
@@ -1971,7 +2058,9 @@ class Engine:
                 if rec.error == "cancelled":
                     self._set_status(node.id, "failed", error="cancelled")
                 elif node.role == "gate":
-                    self._queue_gate_outcome(node, None, "no valid verdict emitted")
+                    capped = rec.error and SPAWN_CAP_MARK in rec.error
+                    self._queue_gate_outcome(
+                        node, None, rec.error if capped else "no valid verdict emitted")
                 else:
                     self._set_status(node.id, "failed", error=rec.error)
                 return
@@ -2291,7 +2380,8 @@ class Engine:
                     # quarantine overwrite round 0's preserved attempt
                     # (adversarial review 2026-09-19, finding 1).
                     nrec.items = {
-                        k: ItemRecord(attempts=v.attempts) for k, v in nrec.items.items()
+                        k: ItemRecord(attempts=v.attempts, token_spawns=v.token_spawns)
+                        for k, v in nrec.items.items()
                     }
                 self.store.mutate(
                     lambda st, _nid=nid, _r=round_n: st.heal_pending.__setitem__(_nid, _r))
@@ -2340,6 +2430,7 @@ class Engine:
         rec.input_hash = self._map_node_hash(node, array)
         rec.hash_parts = label_parts(self._map_parts(node, array))
         self.store.record(rec)
+        self._forecast_map_spend(node, executor, rec, len(array))
         contract_ref = resolve_contract(node.contract, self.tg.contracts_module) if node.output == "json" and node.contract else None
         slots: list = [None] * len(array)
         errors: dict[int, str] = {}
@@ -2498,7 +2589,13 @@ class Engine:
                                 "meta": {**work.meta, "corrective": True},
                             }
                         )
-                        self._spend_spawn(corrective)
+                        try:
+                            self._spend_spawn(corrective, owner=(node.id, i, irec))
+                        except NodeSpawnCapped as cap:
+                            irec.status = "failed"
+                            irec.error = errors[i] = f"contract validation failed: {e}\n{cap}"
+                            self.store.record(rec)
+                            return
                         self._journal_attempt(node, corrective, "corrective",
                                               item_index=i, ordinal=irec.attempts + 1)
                         raw2 = executor.execute(corrective, phase_dir, node.timeout_s)
@@ -2574,6 +2671,59 @@ class Engine:
         self._take_heal_round(node.id)
         self._set_status(node.id, "done")
 
+    def _forecast_map_spend(self, node: Node, executor, rec, n_items: int) -> None:
+        """G3b acceptance 3: the first moment a map's width is known is here,
+        and so is the first moment the wallet can be checked against it.
+        Warns, never refuses — the forecast is a MINIMUM (one spawn per
+        unfinished item, one per mandatory downstream token-costing node, no
+        retries, descendant maps counted as zero), so a trip is certain when
+        it fires and merely possible when it does not.
+
+        Silent under `--replay` and `--seed`: a served item costs nothing and
+        which items will be served is decided per item, after planning, so any
+        count here would overstate the minimum."""
+        if self.replaying or getattr(executor, "serve_item", None) is not None:
+            return
+        if not self._costs_tokens_hint(node):
+            return
+        items = sum(
+            1 for i in range(n_items)
+            if (r := rec.items.get(str(i))) is None or r.status != "done"
+        )
+        downstream: list[str] = []
+        seen: set[str] = set()
+        frontier = list(self._dependents[node.id])
+        while frontier:
+            nid = frontier.pop()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            frontier.extend(self._dependents[nid])
+            n = self.tg.node(nid)
+            if (n.role not in ("map", "approval") and not n.optional and n.when is None
+                    and self._costs_tokens_hint(n)
+                    and self._rec(nid).status not in SETTLED):
+                downstream.append(nid)
+        required = items + len(downstream)
+        root = self.resources.root_engine or self
+        remaining = root.tg.budget.max_agent_spawns - root.store.state.token_spawns
+        if required <= remaining:
+            return
+        append_event(self.store.run_dir, {
+            "kind": "budget", "op": "forecast", "node": node.id, "items": items,
+            "downstream": sorted(downstream), "required": required, "remaining": remaining,
+        })
+        self.log(
+            f"WARNING: budget forecast for map {node.id!r}: at least {required} more "
+            f"token spawn(s) are needed ({items} unfinished item(s) + "
+            f"{len(downstream)} mandatory downstream node(s)"
+            + (f": {', '.join(sorted(downstream))}" if downstream else "")
+            + f") and the wallet has {remaining} left of budget.max_agent_spawns = "
+            f"{root.tg.budget.max_agent_spawns} — this run will stop at exit 4 before "
+            f"it finishes unless the cap is raised (resume --max-agent-spawns) or the "
+            f"map is cut smaller"
+        )
+
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path,
                       irec: ItemRecord, item_index: int | None = None,
                       heal_round: int | None = None) -> RawResult | None:
@@ -2592,11 +2742,16 @@ class Engine:
             cause = "heal"
         else:
             cause = "resume" if irec.attempts else "initial"
+        last: RawResult | None = None
         while True:
-            self._spend_spawn(work)     # see _execute_with_retries: spend first
+            try:  # see _execute_with_retries: spend first; a cap trip returns
+                self._spend_spawn(work, owner=(node.id, item_index, irec))
+            except NodeSpawnCapped as cap:
+                return self._capped_raw(last, cap)
             self._journal_attempt(node, work, cause, item_index=item_index,
                                   ordinal=irec.attempts + 1, heal_round=heal_round)
             raw = executor.execute(work, phase_dir, node.timeout_s)
+            last = raw
             irec.attempts += 1
             if (phase_dir / "CANCELLED").exists():
                 raw.error = "cancelled"

@@ -645,6 +645,14 @@ What to know before writing one:
   default to `max: 0`.
 - `budget.max_agent_spawns` counts EVERY token-costing spawn including heal
   rounds and corrective re-spawns — always set it; leave headroom.
+- `budget.max_spawns_per_node` (optional) is a second ceiling under it, per
+  node and per map ITEM, over every cause: retries, the one automatic retry on
+  a timeout or empty result (which `retry.max: 0` does NOT turn off),
+  correctives, heal rounds and resumes, counted across the lineage. A trip
+  fails that node or item with the reason and leaves the wallet to the rest of
+  the graph. No resume raises it — revise the flow (split the node) and
+  `run <flow> --seed <run_dir>`. Use it on wide maps and broad nodes, where one
+  runaway otherwise starves mandatory downstream work.
   `budget.max_run_minutes` may be exceeded by one in-flight `timeout_s`.
 - **Editing a flow file changes `flow_hash` and starts a new lineage** — every
   completed node re-runs (and re-bills). Finalize budgets/retries BEFORE the

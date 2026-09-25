@@ -447,7 +447,11 @@ re-spawns (contract AND scope) and heal rounds — interrupted lineages keep
 their counter, so leave headroom, but size for the honest expected cost rather
 than the worst case: a run that stops at the cap (exit 4) is raised for one
 drive with `resume --max-agent-spawns N`, journaled, no flow edit and no new
-lineage. The flow's ceiling stays the consent artifact. Executors are stanzas
+lineage. The flow's ceiling stays the consent artifact. The optional
+`budget.max_spawns_per_node` caps ONE node or map item across the lineage —
+every cause, including the automatic timeout/empty-result retry that
+`retry.max: 0` does not disable — and fails just that node when spent; no
+resume raises it (revise the flow, `run --seed`). Executors are stanzas
 in `lockstep.toml` (see
 `lockstep.toml.example`); pick per node via `spec.executor`, per flow via
 `executor_default`, else the config `default`. Multi-model review = one stanza
