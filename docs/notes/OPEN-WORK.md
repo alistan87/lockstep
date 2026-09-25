@@ -17,6 +17,12 @@ status: current
 > read from a real run. Item 14 itself stays deferred; its trigger is now
 > observable, which it was not.
 >
+> **Item 10's first slice was built 2026-09-24** (DEVIATIONS 2026-09-24): a
+> downstream consumer's starvation report fired its trigger, and
+> `budget.max_spawns_per_node` now caps each node and map item across the
+> lineage, every cause counted. The rest of that report (item 24's capture
+> question, item 13's conflict gate) stays where it was ranked.
+>
 > **Item 24 was added 2026-09-20, after 0.17.0 was tagged** — found by cutting it.
 > The ledger was 23 items at the release, which is what the CHANGELOG says; it is
 > 24 now. New items append rather than renumber, so a row's number stays citable.

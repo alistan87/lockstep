@@ -28,7 +28,11 @@ Procedure:
    done work; it replays the flow copy archived IN the run dir, not an edited
    flow file), `resume <run_dir> --force-unlock` (cross-host lock),
    `run <flow>` (flow was edited — a new lineage; add `--fresh` only to force
-   a new lineage for an UNCHANGED flow, e.g. lineage budget exhausted), or
+   a new lineage for an UNCHANGED flow, e.g. lineage budget exhausted),
+   `run <flow> --seed <run_dir>` after a flow edit (a node or map item whose
+   error says `spawn cap reached` — `resume` re-fails it without spawning, so
+   never recommend resume for it; name the split or cap change the flow
+   needs, and diagnose the attempt quoted after `the last attempt:`), or
    wait-then-resume (429 session limit / 529 overload; quote the evidence
    from the envelope). `--fresh` is a `run` flag; it does not exist on
    `resume`.
