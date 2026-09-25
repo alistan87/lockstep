@@ -162,6 +162,56 @@ class TestCauses:
         st = load_state(h.run_dir)
         assert st.nodes["w"].status == "failed"
         assert "max_spawns_per_node" in st.nodes["w"].error
+        # The refused heal attempt consumes its signal like a spawned one:
+        # a one-shot left in state would label whatever ran next.
+        assert "w" not in st.heal_pending
+
+    def test_a_timed_out_gate_under_a_spent_cap_names_the_cap(
+            self, tmp_path, git_repo, monkeypatch):
+        """Review F2: the gate timeout branch advised "add `retry`" — advice a
+        spent cap makes useless — and dropped the cap from the reason, so
+        `status` had no `spawn cap:` line for it."""
+        from lockstep.executors.fake import FakeExecutor
+        from lockstep.protocols import RawResult
+
+        from lockstep.executors.fake import FakeCall
+
+        def timing_out(self, work, phase_dir, timeout_s):
+            self.calls.append(FakeCall(node_id=work.meta["node_id"], prompt="",
+                                       readonly=False, corrective=False))
+            return RawResult(exit_code=-1, result_text=None, source="none",
+                             timed_out=True, error="timeout")
+
+        monkeypatch.setattr(FakeExecutor, "execute", timing_out)
+        h = build(tmp_path, flow(
+            {"id": "g", "role": "gate", "kind": "fake", "output": "json",
+             "contract": "Verdict", "final": True, "retry": {"max": 0},
+             "spec": {"task": "check"}},
+            cap=1,
+        ), git_repo)
+        h.engine.run()
+        assert len(calls_of(h, "g")) == 1
+        err = load_state(h.run_dir).nodes["g"].error
+        assert "spawn cap reached: g has spent" in err
+        assert "add `retry`" not in err
+
+    def test_a_capped_baseline_gate_says_so_and_records_nothing(self, tmp_path, git_repo):
+        """A baseline spawn refused by the cap is not a broken gate body: it
+        must not fall into the fail-open path that records an EMPTY baseline
+        and blames the body."""
+        h = build(tmp_path, flow(
+            {"id": "g", "role": "gate", "kind": "fake", "output": "json",
+             "contract": "Verdict", "final": True,
+             "spec": {"task": "check", "baseline": True, "outputs": [VALID]}},
+            cap=1,
+        ), git_repo)
+        h.state.nodes["g"].token_spawns = 1  # spent by an earlier drive
+        h.engine.run()
+        assert calls_of(h, "g") == []
+        st = load_state(h.run_dir)
+        assert "g" not in st.baseline_findings
+        assert not any("body failed" in line for line in h.logs)
+        assert any("max_spawns_per_node" in line and "baseline" in line for line in h.logs)
 
     def test_a_spawn_that_costs_nothing_is_never_counted(self, tmp_path, git_repo):
         """Shell nodes and served results set costs_tokens=False; the cap is a
@@ -226,6 +276,27 @@ class TestMapItems:
         trips = [e for e in events(h.run_dir, "budget") if e.get("op") == "node-cap"]
         assert sorted(e["item"] for e in trips) == [0, 1]
 
+    def test_an_item_contract_corrective_is_capped(self, tmp_path, git_repo):
+        f = self._map_flow({"task": "handle {item}", "outputs": ['{"nope": 1}', VALID]})
+        f["nodes"][1].update({"output": "json", "contract": "Verdict"})
+        h = build(tmp_path, f, git_repo)
+        assert h.engine.run() == EXIT_NODE_FAILED
+        assert [c.corrective for c in calls_of(h, "m")] == [False, False]
+        err = load_state(h.run_dir).nodes["m"].items["0"].error
+        assert "contract validation failed" in err
+        assert "spawn cap reached: m[0] has spent" in err
+
+    def test_an_item_scope_corrective_is_capped(self, tmp_path, git_repo):
+        h = build(tmp_path, self._map_flow(
+            {"task": "handle {item}", "outputs": ["ok"], "writes": ["in/**"],
+             "write_files": {"out/x.txt": "stray"}}), git_repo)
+        assert h.engine.run() == EXIT_NODE_FAILED
+        assert len(calls_of(h, "m")) == 2  # one per item, no corrective
+        err = load_state(h.run_dir).nodes["m"].items["0"].error
+        assert "write scope violated" in err
+        assert "spawn cap reached: m[0] has spent" in err
+        assert not (git_repo / "out" / "x.txt").exists()
+
     def test_a_healed_map_keeps_its_item_counts(self, tmp_path, git_repo):
         gate = {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["m"],
                 "output": "json", "contract": "Verdict", "final": True,
@@ -279,3 +350,26 @@ class TestStatus:
         out = capsys.readouterr().out
         line = next(l for l in out.splitlines() if l.startswith("spawn cap:"))
         assert "w" in line and "new lineage" in line
+
+    def test_status_does_not_name_the_dependents_of_a_capped_gate(
+            self, tmp_path, git_repo, capsys):
+        """A terminal gate block copies the gate's reason onto every
+        dependent (`gate g blocked: <reason>`). Those nodes spent nothing;
+        naming them "capped" would send the reader to split the wrong node."""
+        from lockstep.cli import main
+
+        h = build(tmp_path, flow(
+            {"id": "g", "role": "gate", "kind": "fake", "output": "json",
+             "contract": "Verdict", "spec": {"task": "check", "empty_result": True}},
+            {"id": "after", "role": "work", "kind": "fake", "depends_on": ["g"],
+             "final": True, "spec": {"task": "t", "outputs": ["ok"]}},
+            cap=1,
+        ), git_repo)
+        h.engine.run()
+        st = load_state(h.run_dir)
+        assert "max_spawns_per_node" in (st.nodes["after"].error or "")  # the premise
+        capsys.readouterr()
+        main(["status", str(h.run_dir)])
+        line = next(l for l in capsys.readouterr().out.splitlines()
+                    if l.startswith("spawn cap:"))
+        assert line.startswith("spawn cap: g reached")

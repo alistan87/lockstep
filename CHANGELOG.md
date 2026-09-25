@@ -18,7 +18,9 @@ nothing, and leaves the wallet to the rest of the graph; `status` prints a
 `spawn cap:` line and the way out (revise the flow, `run --seed`). Once a
 map's width is known the engine also warns (and journals `op: "forecast"`)
 when the minimum spawns still required exceed what the wallet has left.
-Absent the key, nothing changes.
+`verify --lint` warns (`lint-spawn-cap-below-heal`) when a cap cannot
+cover a gate's heal rounds or baseline spawn. Absent the key, nothing
+changes.
 
 ## 0.18.0 — 2026-09-20
 

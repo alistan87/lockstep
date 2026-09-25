@@ -145,6 +145,7 @@ reading as clean.
 | `lint-work-after-approval` | a harness/fake node is reachable strictly downstream of an approval | evidence-approval's rule: post-approval work runs in the human's own resume — seconds-long shell only (fine for a deliberately attended flow like sdlc-e2e) |
 | `lint-map-over-manifest` | a map fans out over a `PathManifest` node | file-audit's `path\|fingerprint` convention: item strings are the cache keys; bare paths never invalidate on content edits |
 | `lint-map-without-budget` | a flow has a map node but no explicit `budget` | fan-out width is decided by runtime data; the spawn budget is the only ceiling |
+| `lint-spawn-cap-below-heal` | `budget.max_spawns_per_node` is below a gate's or heal target's first attempt + `heal.max_rounds` (+ a token-costing baseline spawn for the gate) | the last heal rounds could never run — the cap fails the node by construction |
 | `lint-argv-prompt` *(config)* | a reachable stanza uses `prompt_via = "argv"` | the 59,028-char corrective prompt vs Windows' 32,767 cap; `ArgvTooLong` fails cleanly, stdin removes the ceiling |
 | `lint-schema-argv` *(config)* | a contract-bearing json node rides a stanza with inline `{schema}` in `schema_argv` AND `prompt_via = "argv"` | schema + prompt + a corrective share one ~32k command line; `{schema_file}` or stdin removes the pressure |
 | `lint-serialized-map` | a map with `concurrency > 1` whose items are not readonly | items hold the `tree` token and serialize anyway; the fan-out buys nothing and reads as a hang |

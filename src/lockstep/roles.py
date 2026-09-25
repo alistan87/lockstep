@@ -965,6 +965,13 @@ class Engine:
                     f"could be recorded — resume with headroom to record it"
                 )
                 return
+            except NodeSpawnCapped as cap:
+                # Not a broken body, so not the fail-open path below: record
+                # NO baseline. The gate's own attempt meets the same cap and
+                # fails with it, which is the evidence that belongs in front
+                # of the reader.
+                self.log(f"baseline gate {node.id!r}: no baseline recorded — {cap}")
+                continue
             except Exception as e:
                 # Fail-open to an EMPTY baseline, loudly: a broken baseline
                 # body must not bless future findings, and pre-existing
@@ -1698,6 +1705,9 @@ class Engine:
             try:
                 self._spend_spawn(work, owner=(node.id, None, rec))
             except NodeSpawnCapped as cap:
+                # The heal round this attempt answered is spent either way;
+                # a one-shot signal left behind would label whatever runs next.
+                self._take_heal_round(node.id)
                 return self._capped_raw(last, cap)
             # Consumed unconditionally once the spawn is paid for. Guarding on
             # `heal_round is not None` skipped the `served` branch (which
@@ -2021,7 +2031,10 @@ class Engine:
         rec = self._rec(node.id)
         if raw.timed_out or raw.exit_code != 0 or raw.result_text is None:
             reason = raw.error or f"exit code {raw.exit_code}" + (" (no result emitted)" if raw.result_text is None else "")
-            if raw.error and "provider limit/overload" in raw.error:
+            # A spent cap outranks every per-cause hint below: "resume" and
+            # "add `retry`" are both advice the cap has already made useless.
+            capped = bool(raw.error) and SPAWN_CAP_MARK in raw.error
+            if not capped and raw.error and "provider limit/overload" in raw.error:
                 # r5 B3: diagnosis only — tell the operator what to do.
                 self.log(
                     f"[{node.id}] {raw.error}\n"
@@ -2037,15 +2050,15 @@ class Engine:
                 # E6: NAME a timeout — "no valid verdict emitted" sent operators
                 # hunting a schema bug in a command that simply ran out of
                 # window, and heal's silence looked like a driver defect.
-                if raw.timed_out:
+                if capped:
+                    reason = raw.error  # no verdict because no spawn: say which
+                elif raw.timed_out:
                     reason = (
                         f"gate command timed out after {node.timeout_s}s — a timeout is "
                         f"not a verdict, so heal cannot fire (§9.4.3); raise timeout_s or "
                         f"add `retry` to the gate, and re-run the command by hand before "
                         f"blaming the change under review"
                     )
-                elif raw.error and SPAWN_CAP_MARK in raw.error:
-                    reason = raw.error  # no verdict because no spawn: say which
                 else:
                     reason = "no valid verdict emitted"
                 self._queue_gate_outcome(node, None, reason)
@@ -2688,7 +2701,7 @@ class Engine:
             return
         items = sum(
             1 for i in range(n_items)
-            if (r := rec.items.get(str(i))) is None or r.status != "done"
+            if (r := rec.items.get(str(i))) is None or r.status not in ("done", "skipped")
         )
         downstream: list[str] = []
         seen: set[str] = set()
@@ -2719,9 +2732,9 @@ class Engine:
             f"{len(downstream)} mandatory downstream node(s)"
             + (f": {', '.join(sorted(downstream))}" if downstream else "")
             + f") and the wallet has {remaining} left of budget.max_agent_spawns = "
-            f"{root.tg.budget.max_agent_spawns} — this run will stop at exit 4 before "
-            f"it finishes unless the cap is raised (resume --max-agent-spawns) or the "
-            f"map is cut smaller"
+            f"{root.tg.budget.max_agent_spawns} — unless some of that work ends up "
+            f"skipped or blocked, this run stops at exit 4 before it finishes; raise "
+            f"the cap (resume --max-agent-spawns) or cut the map smaller"
         )
 
     def _item_execute(self, node: Node, executor, work: PlannedWork, phase_dir: Path,

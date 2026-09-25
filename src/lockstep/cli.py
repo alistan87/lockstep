@@ -1003,13 +1003,19 @@ def cmd_status(ns) -> int:
     # G3b: a capped node looks like any failed node below, and a plain resume
     # is the natural next move — which spawns nothing and fails it again.
     # Name them, and the one way out, above the per-node noise.
+    # Matched on the node's OWN label in the cap message, never on the mark
+    # alone: a terminal gate block copies the gate's reason onto every
+    # dependent, and those spent nothing.
+    def _capped(label: str, error: str | None) -> bool:
+        return f"spawn cap reached: {label} has spent" in (error or "")
+
     capped = [
         n for n, r in sorted(state.nodes.items())
-        if not r.items and r.status in ("failed", "blocked") and SPAWN_CAP_MARK in (r.error or "")
+        if r.status in ("failed", "blocked") and _capped(n, r.error)
     ] + [
         f"{n}[{i}]" for n, r in sorted(state.nodes.items())
         for i, ir in sorted(r.items.items(), key=lambda kv: int(kv[0]))
-        if ir.status == "failed" and SPAWN_CAP_MARK in (ir.error or "")
+        if ir.status == "failed" and _capped(f"{n}[{i}]", ir.error)
     ]
     if capped:
         print(f"spawn cap: {', '.join(capped)} reached {SPAWN_CAP_MARK} — a resume will "

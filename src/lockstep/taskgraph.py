@@ -1033,6 +1033,39 @@ def lint_flow(
             "runtime data, so set budget.max_agent_spawns explicitly",
         )
 
+    # G3b review F6 — a per-node cap too small for the flow's own heal rounds
+    # or a baseline spawn fails by construction: a target spawns once per
+    # round on top of its first attempt, and so does its gate, which also
+    # spends one spawn on a token-costing baseline. Counted with no retries,
+    # so a flagged cap is short even when every attempt succeeds.
+    cap = tg.budget.max_spawns_per_node
+    if cap is not None:
+        def _spends(n: Node) -> bool:
+            return n.kind in _TOKEN_KINDS and (
+                n.kind != "fake" or bool(n.spec.get("costs_tokens", True)))
+
+        need: dict[str, tuple[int, str]] = {}
+        for g in tg.nodes:
+            if g.role != "gate" or not _spends(g):
+                continue
+            rounds = g.heal.max_rounds
+            base = 1 if g.spec.get("baseline") else 0
+            if rounds or base:
+                need[g.id] = (1 + rounds + base,
+                              f"{rounds} heal round(s)" + (" + a baseline spawn" if base else ""))
+            for t in g.heal.targets if rounds else []:
+                if t in idset and _spends(tg.node(t)):
+                    need[t] = (max(need.get(t, (0, ""))[0], 1 + rounds),
+                               f"{rounds} heal round(s) of gate {g.id!r}")
+        for nid, (n_need, why) in sorted(need.items()):
+            if cap < n_need:
+                warn(
+                    "lint-spawn-cap-below-heal",
+                    f"node {nid!r} needs at least {n_need} spawns ({why}, first attempt "
+                    f"included, no retries) but budget.max_spawns_per_node is {cap} — the "
+                    f"last round(s) cannot run; raise the cap or lower heal.max_rounds",
+                )
+
     # W4 (config) — argv prompting caps corrective prompts at the platform
     # command-line limit (observed live at 59,028 chars vs Windows' 32,767);
     # prompt_via = "stdin" removes the ceiling entirely.
