@@ -297,3 +297,39 @@ def test_abandon_refuses_live_driver_without_force(tmp_path, capsys):
     assert lane.main(["abandon", str(worktree), "--main-repo", str(repo)]) == 1
     assert "--force" in capsys.readouterr().err
     assert worktree.is_dir()
+
+
+# --- start lock under Windows delete-pending / AV holds -----------------------
+#
+# Portability check 2026-09-24: `test_two_concurrent_starts_...` failed once
+# in five under full-suite load. On Windows, O_CREAT|O_EXCL on a lock file
+# the other `lane.py` is deleting (delete-pending) — or one this machine's AV
+# is holding — raises PermissionError, not FileExistsError, and the start-lock
+# loop let it escape: the second start crashed instead of waiting its turn.
+
+def test_start_lock_waits_through_a_transient_permission_error(tmp_path, monkeypatch):
+    real_open = os.open
+    calls = {"n": 0}
+
+    def flaky_open(path, flags, *a, **kw):
+        if str(path).endswith(lane.START_LOCK) and calls["n"] < 2:
+            calls["n"] += 1
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(lane.os, "open", flaky_open)
+    monkeypatch.setattr(lane.time, "sleep", lambda s: None)
+    lock = lane._acquire_start_lock(tmp_path / "runs", timeout=30)
+    assert lock.exists() and calls["n"] == 2
+    assert json.loads(lock.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+
+def test_start_lock_reports_a_permission_error_that_never_clears(tmp_path, monkeypatch):
+    """Retried to the deadline, then the lane's own refusal — never a raw
+    traceback the fleet cannot classify."""
+    def denied(path, flags, *a, **kw):
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(lane.os, "open", denied)
+    with pytest.raises(lane.LaneError, match="could not create"):
+        lane._acquire_start_lock(tmp_path / "runs", timeout=0.3)

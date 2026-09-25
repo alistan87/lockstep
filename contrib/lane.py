@@ -257,6 +257,18 @@ def _acquire_start_lock(runs_dir: Path, timeout: float) -> Path:
             os.write(fd, json.dumps({"pid": os.getpid(), "started": _utcstamp()}).encode())
             os.close(fd)
             return lock
+        except PermissionError as e:
+            # Windows: O_EXCL on a lock the previous holder is deleting
+            # (delete-pending), or one this machine's AV is holding, raises
+            # this instead of FileExistsError. It is contention, not a
+            # verdict — escaping here crashed the second of two concurrent
+            # starts (portability check 2026-09-24). Wait, like a held lock.
+            if time.monotonic() >= deadline:
+                raise LaneError(
+                    f"could not create {lock} within {timeout:.0f}s: {e} — another "
+                    f"start may still be releasing it, or something is holding the file"
+                )
+            time.sleep(0.5)
         except FileExistsError:
             try:
                 holder = json.loads(lock.read_text(encoding="utf-8"))

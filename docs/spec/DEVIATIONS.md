@@ -1239,3 +1239,31 @@ file records implementation-level departures below that bar.
   Not changed, recorded: a parent flow's cap does not reach into a child
   flow (see Composition above); child-inherits-min(parent, child) is the
   fix if a composing client needs it.
+
+- **2026-09-24 — `run --detach` waits for the driver's start checks, not a
+  fixed 3 s** (S6's grace window, found by `contrib/portability_check.py`
+  on this machine: one run in five under full-suite load in a fresh venv).
+  A whole-tree snapshot in the child's dirty-scope preflight outlasted the
+  window, and the parent reported a clean launch (exit 0) of a run that was
+  refusing (exit 7). The engine now journals `{"kind": "drive", "op":
+  "preflight-passed", "pid"}` once every run-time refusal that precedes
+  work has had its chance (the heal-rollback precondition, the E9
+  dirty-scope preflight), and the parent waits for THAT line from THIS
+  driver's pid — a resumed run's journal already carries earlier drives'
+  marks — or a refusal, or any node leaving `pending`. The 30 s timeout is
+  a safety net that prints a NOTE naming `lockstep wait` instead of
+  claiming success. A healthy launch returns as soon as the mark lands, as
+  quickly as before; a flow whose baseline gates are slow no longer delays
+  the parent, since the mark precedes them. The new line is a
+  forward-tolerant kind in the chained journal; no reader branches on it
+  except this one, and no hash covers it. Pinned in tests/test_detach.py.
+- **2026-09-24 — `contrib/lane.py` start lock treats `PermissionError` as
+  contention** (same portability run: `test_two_concurrent_starts_...`
+  failed once in five). On Windows, `O_CREAT|O_EXCL` on a lock file the
+  previous holder is deleting (delete-pending) or the AV is holding raises
+  `PermissionError`, not `FileExistsError`, and it escaped the wait loop —
+  the second of two concurrent starts crashed instead of waiting. It now
+  waits to the same deadline and then refuses with a `LaneError` naming the
+  file. The failing run's traceback was not captured, so this is the
+  identified mechanism for that failure, not a proven one; the fix is
+  correct on its own terms either way. Pinned in tests/test_lane.py.

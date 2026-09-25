@@ -22,6 +22,14 @@ when the minimum spawns still required exceed what the wallet has left.
 cover a gate's heal rounds or baseline spawn. Absent the key, nothing
 changes.
 
+**`--detach` no longer guesses how long start checks take.** The parent
+waited a fixed 3 s for a refusal; under load a dirty-scope preflight took
+longer and the parent reported a clean launch of a refusing run. The driver
+now journals `op: "preflight-passed"` and the parent waits for it (30 s
+safety net, which says so rather than claiming success). **`lane.py start`**
+waits through a Windows `PermissionError` on its start lock instead of
+crashing the second of two concurrent starts.
+
 ## 0.18.0 — 2026-09-20
 
 **The instrument release: two small pieces of `docs/notes/OPEN-WORK.md`,

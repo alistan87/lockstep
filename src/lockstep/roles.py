@@ -7,6 +7,7 @@ gate adjudication, retry/heal orchestration, budget accounting (SPEC §8.1).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -812,6 +813,13 @@ class Engine:
                         "git-managed; NullWorkspace cannot roll back"
                     )
         self._preflight_dirty_scope()
+        # Every run-time refusal that fires BEFORE work has now had its chance.
+        # `run --detach` waits for exactly this line (with THIS driver's pid —
+        # a resumed journal holds earlier drives' marks) instead of guessing
+        # how long a preflight takes: a whole-tree snapshot under load
+        # outlasted the fixed window it replaced (DEVIATIONS 2026-09-24).
+        append_event(self.store.run_dir,
+                     {"kind": "drive", "op": "preflight-passed", "pid": os.getpid()})
         self._start_monotonic = time.monotonic()
         # E4: baseline-gate bodies run inside the wall-clock budget window —
         # a pytest baseline is real work, not free bookkeeping.

@@ -343,29 +343,20 @@ def _detach(ns, runs_dir: Path, locate) -> int:
             # be found in the process table. This is the pid `status` and
             # `active` cross-reference, so it is the only one worth printing.
             print(f"  driver pid: {holder.pid}")
-        # S6 grace window: a dirty-scope refusal fires milliseconds after the
-        # child takes the lock — after this parent has already reported a
-        # successful launch. Watch briefly for that one outcome and echo it
-        # HERE, like a launch that never took the lock; return promptly once
-        # real node work begins (any node leaving `pending`), so a healthy
-        # launch is reported exactly as today.
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            try:
-                st = load_state(run_dir)
-            except (OSError, ValueError):
-                st = None
-            if st is not None:
-                if st.terminal is not None and not (run_dir / "lock").exists():
-                    t = st.terminal
-                    print(f"  the detached driver was {t.status} — "
-                          f"{t.reason.replace('_', ' ')}:", file=sys.stderr)
-                    for line in t.message.splitlines():
-                        print(f"    {line}", file=sys.stderr)
-                    return t.exit_code
-                if any(r.status != "pending" for r in st.nodes.values()):
-                    break
-            time.sleep(0.1)
+        # S6: a dirty-scope refusal fires AFTER the child takes the lock —
+        # after this parent has already reported a launch. Echo it HERE, like
+        # a launch that never took the lock.
+        outcome, t = _await_start_checks(run_dir, holder.pid)
+        if outcome == "refused":
+            print(f"  the detached driver was {t.status} — "
+                  f"{t.reason.replace('_', ' ')}:", file=sys.stderr)
+            for line in t.message.splitlines():
+                print(f"    {line}", file=sys.stderr)
+            return t.exit_code
+        if outcome == "unconfirmed":
+            print(f"  NOTE: the driver has not confirmed its start checks within "
+                  f"{_START_CHECK_TIMEOUT_S:.0f}s — a refusal may still arrive; "
+                  f"`lockstep wait {run_dir}` reports it")
         if code is not None:
             print(f"  (it already finished, exit {code} — `lockstep status` has the detail)")
         print(f"  follow:  lockstep status {run_dir}")
@@ -383,6 +374,49 @@ def _detach(ns, runs_dir: Path, locate) -> int:
     print(f"  a process is alive but has not taken a run lock yet — "
           f"check `lockstep active {runs_dir}` and the log above")
     return EXIT_OK
+
+
+_START_CHECK_TIMEOUT_S = 30.0
+
+
+def _await_start_checks(run_dir: Path, driver_pid: int | None, *,
+                        timeout: float = _START_CHECK_TIMEOUT_S,
+                        poll: float = 0.1) -> tuple[str, object]:
+    """Wait until a detached driver has passed or failed its run-time
+    refusal checks. Returns ("refused", TerminalRecord), ("started", None) or
+    ("unconfirmed", None).
+
+    It used to be a fixed 3 s grace window, and a whole-tree snapshot under
+    load outlasted it: the parent reported a clean launch of a run that was
+    refusing (portability check, 2026-09-24). Now the ENGINE says when its
+    checks are done — `{"kind": "drive", "op": "preflight-passed"}` carrying
+    its pid, since a resumed journal holds earlier drives' marks — and the
+    timeout is a safety net that says so instead of claiming success. A node
+    leaving `pending` also ends the wait (work has begun, so the checks
+    passed), and a driver whose pid could not be read accepts any mark."""
+    from .state import read_events
+
+    deadline = time.monotonic() + timeout
+    seen = 0
+    while True:
+        try:
+            st = load_state(run_dir)
+        except (OSError, ValueError):
+            st = None
+        if st is not None:
+            if st.terminal is not None and not (run_dir / "lock").exists():
+                return "refused", st.terminal
+            if any(r.status != "pending" for r in st.nodes.values()):
+                return "started", None
+        events = read_events(run_dir)
+        for ev in events[seen:]:
+            if (ev.get("kind") == "drive" and ev.get("op") == "preflight-passed"
+                    and (driver_pid is None or ev.get("pid") == driver_pid)):
+                return "started", None
+        seen = len(events)
+        if time.monotonic() >= deadline:
+            return "unconfirmed", None
+        time.sleep(poll)
 
 
 def cmd_run(ns) -> int:
