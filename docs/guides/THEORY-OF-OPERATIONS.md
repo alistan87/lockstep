@@ -400,6 +400,14 @@ rounds and corrective re-spawns. That is the honest count, and it is the reason
 the cap is the one lever worth setting: it bounds the damage from a loop nobody
 predicted. Tripping it is exit **4**, with state persisted and resumable.
 
+The wallet is one pool, so one runaway node can drain it before mandatory
+downstream work runs. `budget.max_spawns_per_node` is the second ceiling: per
+node and per map item, every cause counted (the automatic retry included),
+persisted across resumes. Tripping it is NOT exit 4 — that node fails with the
+reason and the rest of the graph keeps the wallet, because a stop-and-resume
+would only re-trip it. The cap belongs to the archived flow; raising it is a
+flow edit and a new lineage (`--seed` keeps the finished work).
+
 Harness nodes default to `retry: {max: 2, backoff_ms: 60000}`, which absorbs
 provider 429/529s. A provider limit named in stderr means *wait, then `resume`* —
 never `--fresh`, which throws away paid work.

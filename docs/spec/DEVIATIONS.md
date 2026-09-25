@@ -1137,3 +1137,105 @@ file records implementation-level departures below that bar.
   Not a §9.1 change — dispatch is still in layers; this measures what the
   layer costs. Pinned in tests/test_dispatch_wait.py. The trigger itself is
   unchanged and unfired.
+
+- **2026-09-24 — `budget.max_spawns_per_node`: a per-node spawn ceiling
+  under the wallet** (OPEN-WORK item 10, G3b, first slice; downstream
+  request 2026-09-24 section A, which is the second starvation report the
+  item's trigger waited for: 14 of 28 wallet spawns gone with at least 30
+  still required, and two oversized map items that timed out twice under an
+  explicit `retry.max: 0`). An optional, additive `budget` key (`ge=1`;
+  absent = uncapped, byte-identical to before). When set it bounds EVERY
+  token-costing spawn of one node — or of one map ITEM — across the
+  lineage: initial, `retry`, the M4 auto-retry, contract and scope
+  correctives, heal rounds, resumes, and a baseline gate's pre-run spawn.
+  **This limits a stated guarantee:** SPEC §9.3 / AMENDMENTS M4 promise one
+  additive automatic retry "even when retry.max == 0"; under a cap that is
+  already spent, that retry does not happen. Absent the key, M4 holds
+  unchanged. The counter is `token_spawns` on `PhaseRecord` / `ItemRecord`
+  (additive, default 0; a record from an older driver counts from zero on
+  this one) and is never reset — not by a heal round's item reset, a hash
+  miss, a resume, or `adopt` re-pending a map's items. Token-free
+  executions (shell, `--seed`-served results) are never counted.
+  `--replay` is NOT token-free to the ledgers: `ReplayExecutor` keeps the
+  inner executor's `costs_tokens`, so a replayed harness node charges its
+  counter exactly as it already charged the wallet — a replay re-walks the
+  recording's spend and cannot trip a cap the recording did not (review F4;
+  corrected in this entry, not in the code — making replay token-free would
+  change wallet accounting and is its own decision).
+  The check runs BEFORE the wallet, so a capped node spends nothing, and
+  the counter moves only after the wallet accepts, so a wallet trip never
+  charges a node. A trip is not a run-level stop: it is a
+  `NodeSpawnCapped`, never a `BudgetTripped`, because exit 4 re-pends the
+  node and a capped node would then re-trip on every resume forever. The
+  node (or item) fails with the cap and, when an attempt ran in this drive,
+  that attempt's own reason (`exit code 0 (no result emitted)`, a timeout,
+  the contract error, the scope violation — the quarantine still runs
+  first); a gate with no verdict because of the cap blocks with the cap as
+  its reason. Journaled as `{"kind": "budget", "op": "node-cap", "node",
+  "item"?, "spawns", "cap"}`. `status` prints a `spawn cap:` line naming
+  every capped node and item. **No resume raises it:** the cap is part of
+  the archived flow, and the way out stated in the error and in `status`
+  is to revise the flow and start a new lineage with `--seed`, which keeps
+  the finished work. That is the one exclusion — a new lineage's counters
+  start at zero — and it is stated where the trip is reported. Also new:
+  once a map's width is known, the engine journals `{"kind": "budget",
+  "op": "forecast"}` and logs a warning when the MINIMUM spawns still needed
+  (one per unfinished item, one per mandatory downstream token-costing
+  node; no retries; descendant maps count zero) exceed what is left in the
+  wallet. Advisory, never a refusal; silent under `--seed`/`--replay`, where
+  which items are served is decided per item after planning. Deliberately
+  not in this slice: a whole-map total, a `resume` override for the per-node
+  cap (the wallet has one, `--max-agent-spawns`), and a verify-time
+  prediction (map width is runtime data). Pinned in
+  tests/test_node_spawn_cap.py.
+
+  *Completed after the spec audit (same day):*
+  **A first-class field inside `format_version` 1.x.** SPEC §15 says new
+  first-class fields bump the minor version; this one does not, the same
+  exception `heal.on_exhausted` took (DEVIATIONS 2026-08-14), for the same
+  reason — `Budget` has no `spec.*` route, and a flow that does not use the
+  key keeps its meaning on every driver. A flow that USES it fails on an
+  older driver at load with a named FlowError (pydantic `extra="forbid"`
+  wrapped by `load_flow`), not a traceback. AMENDMENTS-r7's preamble calls
+  `on_exhausted` "the one first-class" field; with this entry that is two,
+  and this entry is the record of the second.
+  **Every guarantee it shortens, when set and spent:** the M4 auto-retry;
+  §9.3's `retry` sequence (remaining retries and their backoff are
+  forfeited); §9.3's "exactly one" contract corrective and G1b's one scope
+  corrective (withheld — the quarantine still runs first); §9.4.6's
+  "decrement rounds, execute" (a heal round is consumed and its target fails
+  without a spawn).
+  **Exit codes, against §3 and §9.5:** a cap trip is budget-class but never
+  exit 4. A capped work node or map item fails the run with **3**; a capped
+  gate emits no verdict, blocks terminally (§9.4.3, never a heal trigger)
+  and the run exits **2**. The constants are unchanged; which one a
+  budget-class stop produces is the departure.
+  **Composition (`kind:"flow"`):** the cap is read from the flow that
+  DECLARES the node, while the wallet is the root's — so a parent's cap does
+  not bound a child flow's nodes, and a child's does. A child run dir is
+  keyed on the parent flow node's input hash, so an upstream hash miss or
+  heal round starts a fresh child lineage whose counters begin at zero: a
+  second exclusion beside `--seed`, inherited from composition's existing
+  lineage rule. And the parent's fingerprint digests the whole child file,
+  so adding or changing this key (like `max_agent_spawns`) in a child flow
+  re-bills the parent flow node once, by that existing rule; the key enters
+  no other input hash.
+  **`status`** names a node only when the cap message carries ITS OWN label:
+  a terminal gate block copies the gate's reason onto every dependent, and
+  matching on the mark alone listed nodes that spent nothing.
+  *And after the engine review (same day):* a spent cap outranks the
+  per-cause hints in `_finish` — a gate whose last attempt timed out used to
+  get the "add `retry` to the gate" reason (useless under a spent cap) with
+  the cap dropped, and a provider-limit failure logged "wait, then resume",
+  which only re-trips it. A refused heal attempt consumes its `heal_pending`
+  signal like a spawned one; a map's signal is still consumed only when the
+  whole map finishes, as for any failed map. A capped baseline-gate spawn
+  records NO baseline and says so, instead of falling into the fail-open
+  "body failed" path. The forecast no longer counts `skipped` items and says
+  the stop is certain only if nothing downstream ends up skipped or blocked.
+  New advisory lint `lint-spawn-cap-below-heal`: a gate or heal target
+  whose cap cannot cover its first attempt plus `heal.max_rounds` (plus a
+  token-costing baseline spawn, for the gate) fails by construction.
+  Not changed, recorded: a parent flow's cap does not reach into a child
+  flow (see Composition above); child-inherits-min(parent, child) is the
+  fix if a composing client needs it.

@@ -104,7 +104,11 @@ steer the child's own nodes by the child dir under `<run>/children/`.
    editing safe: the rule stands.
 3. **Always set `budget.max_agent_spawns`** in flows you author (heal rounds
    and corrective re-spawns count against it). Spawned nodes bill the same
-   provider quota you run on.
+   provider quota you run on. On a wide map or a broad node, also set
+   `budget.max_spawns_per_node` so one runaway cannot drain the wallet before
+   the mandatory tail runs. A node that hits it fails with `spawn cap
+   reached` and a resume will not revive it — edit the flow and start the
+   next run with `--seed <the old run dir>`.
 4. **`runs/` is sensitive** (prompts, diffs, model output). Never commit it,
    never paste its contents into anything that leaves the machine.
 5. **`--fresh` is a spend decision**, not a debugging reflex. Prefer `resume`;

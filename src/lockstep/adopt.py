@@ -47,6 +47,7 @@ from . import EXIT_CONFIG, EXIT_OK
 from .interpolate import extract_refs, render_scope
 from .state import (
     AdoptionRecord,
+    ItemRecord,
     LockHeld,
     acquire_lock,
     append_event,
@@ -329,7 +330,11 @@ def _adopt_locked(
             if tg.node(cid).role == "map":
                 # Same rule as heal invalidation (§9.4.6 sibling): a per-item
                 # hash that never read the adopted file would match and skip.
-                crec.items = {}
+                # The G3b spawn count survives: the cap is per lineage, and a
+                # human re-pending the cone must not hand every item a fresh one.
+                crec.items = {
+                    k: ItemRecord(token_spawns=v.token_spawns) for k, v in crec.items.items()
+                }
             repended.append(cid)
 
     # D3: refresh the lineage head for the adopted paths ONLY. The adoption

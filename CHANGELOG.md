@@ -6,6 +6,22 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
+## Unreleased
+
+**Per-node spawn ceiling** (OPEN-WORK item 10, first slice; DEVIATIONS
+2026-09-24). New optional `budget.max_spawns_per_node`: a second ceiling
+under `max_agent_spawns`, per node and per map item, counting every
+token-costing spawn in the lineage — including the automatic
+timeout/empty-result retry that `retry.max: 0` never disabled. A trip fails
+that node or item with the cap and the last attempt's own reason, spends
+nothing, and leaves the wallet to the rest of the graph; `status` prints a
+`spawn cap:` line and the way out (revise the flow, `run --seed`). Once a
+map's width is known the engine also warns (and journals `op: "forecast"`)
+when the minimum spawns still required exceed what the wallet has left.
+`verify --lint` warns (`lint-spawn-cap-below-heal`) when a cap cannot
+cover a gate's heal rounds or baseline spawn. Absent the key, nothing
+changes.
+
 ## 0.18.0 — 2026-09-20
 
 **The instrument release: two small pieces of `docs/notes/OPEN-WORK.md`,

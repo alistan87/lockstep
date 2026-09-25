@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .contracts import ContractError, Verdict, resolve_contract
 from .interpolate import InterpolationError, extract_refs, parse_when
@@ -76,6 +76,12 @@ class Budget(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     max_agent_spawns: int = 40  # counts spawns of token-costing kinds only
     max_run_minutes: int = 120
+    # G3b first slice (OPEN-WORK item 10; DEVIATIONS 2026-09-24): a second
+    # ceiling under the wallet, per node and per map ITEM, over EVERY
+    # token-costing spawn in the lineage — retries, the M4 auto-retry,
+    # correctives, heal rounds and resumes alike. A trip fails that node with
+    # the reason; it is not a run-level stop. None = uncapped (the old shape).
+    max_spawns_per_node: int | None = Field(default=None, ge=1)
 
 
 class TaskGraph(BaseModel):
@@ -1026,6 +1032,39 @@ def lint_flow(
             "flow contains a map node but declares no budget; fan-out width is decided by "
             "runtime data, so set budget.max_agent_spawns explicitly",
         )
+
+    # G3b review F6 — a per-node cap too small for the flow's own heal rounds
+    # or a baseline spawn fails by construction: a target spawns once per
+    # round on top of its first attempt, and so does its gate, which also
+    # spends one spawn on a token-costing baseline. Counted with no retries,
+    # so a flagged cap is short even when every attempt succeeds.
+    cap = tg.budget.max_spawns_per_node
+    if cap is not None:
+        def _spends(n: Node) -> bool:
+            return n.kind in _TOKEN_KINDS and (
+                n.kind != "fake" or bool(n.spec.get("costs_tokens", True)))
+
+        need: dict[str, tuple[int, str]] = {}
+        for g in tg.nodes:
+            if g.role != "gate" or not _spends(g):
+                continue
+            rounds = g.heal.max_rounds
+            base = 1 if g.spec.get("baseline") else 0
+            if rounds or base:
+                need[g.id] = (1 + rounds + base,
+                              f"{rounds} heal round(s)" + (" + a baseline spawn" if base else ""))
+            for t in g.heal.targets if rounds else []:
+                if t in idset and _spends(tg.node(t)):
+                    need[t] = (max(need.get(t, (0, ""))[0], 1 + rounds),
+                               f"{rounds} heal round(s) of gate {g.id!r}")
+        for nid, (n_need, why) in sorted(need.items()):
+            if cap < n_need:
+                warn(
+                    "lint-spawn-cap-below-heal",
+                    f"node {nid!r} needs at least {n_need} spawns ({why}, first attempt "
+                    f"included, no retries) but budget.max_spawns_per_node is {cap} — the "
+                    f"last round(s) cannot run; raise the cap or lower heal.max_rounds",
+                )
 
     # W4 (config) — argv prompting caps corrective prompts at the platform
     # command-line limit (observed live at 59,028 chars vs Windows' 32,767);

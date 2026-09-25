@@ -91,6 +91,17 @@ read the detached log before trusting it.
   would legally overwrite. Commit or stash them, narrow the scope, or
   `--allow-dirty-scope` if the overwrite is what you want. Resumes and replays
   are exempt (a resumed tree is expectedly dirty with the run's own work).
+- `spawn cap reached: <node> has spent N of budget.max_spawns_per_node` —
+  that node (or map item `m[i]`) used its per-node ceiling. The run exits 3
+  (2 for a capped gate), NOT 4, and **`resume` will not help**: the counter
+  persists across the lineage, so a resume re-fails it without spawning.
+  `status` prints a `spawn cap:` line naming each one. Recovery is a flow
+  edit — split the node or raise the cap — then
+  `run <flow> --seed <run_dir>` (a new lineage; the finished work is served).
+  The error carries the last real attempt's own reason after `the last
+  attempt:` — diagnose THAT (timeout, empty result, contract), since it is
+  why the node kept retrying. `verify --lint` flags a cap below a gate's heal
+  rounds (`lint-spawn-cap-below-heal`) before any spend.
 - `gate command timed out after Ns` — TERMINAL, and the run stops with budget
   left: a timeout is not a valid verdict, so it cannot heal (§9.4.3). Nothing
   is wrong with the gate's schema, which is what the old message
@@ -193,4 +204,5 @@ picked up nor rejected; the flow_hash refusal fires only if you pass
 `run <flow>` — the new hash starts a new lineage. `run <flow> --fresh`
 forces a new lineage for an UNCHANGED flow (`--fresh` does not exist on
 `resume`). `token_spawns` persists across a lineage — check budget headroom
-before resuming a many-attempt run.
+before resuming a many-attempt run. So does each node's own `token_spawns`
+under `budget.max_spawns_per_node`, and no resume flag raises that one.

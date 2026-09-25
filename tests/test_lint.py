@@ -535,3 +535,36 @@ def test_v1_missing_write_scope_fires_on_an_unscoped_writing_map():
         lint_flow(flow_with({"task": "{item}", "writes": ["src"]})))
     assert "lint-missing-write-scope" not in codes(
         lint_flow(flow_with({"task": "{item}", "readonly": True})))
+
+
+def _heal_flow(cap, *, rounds=2, baseline=False):
+    return tg({
+        "name": "capheal",
+        "budget": {"max_agent_spawns": 20, "max_spawns_per_node": cap},
+        "nodes": [
+            {"id": "w", "kind": "fake", "spec": {"task": "t"}},
+            {"id": "g", "role": "gate", "kind": "fake", "depends_on": ["w"],
+             "output": "json", "contract": "Verdict", "final": True,
+             "heal": {"max_rounds": rounds, "targets": ["w"]},
+             "spec": {"task": "check", "baseline": baseline}},
+        ],
+    })
+
+
+def test_spawn_cap_below_heal_rounds_is_flagged():
+    """Review F6: a cap that cannot cover a gate's heal rounds (target and
+    gate each spawn once per round) or its baseline spawn fails by
+    construction, and nothing said so before the run."""
+    issues = [i for i in lint_flow(_heal_flow(2)) if i.code == "lint-spawn-cap-below-heal"]
+    assert sorted(i.message.split(" needs")[0] for i in issues) == ["node 'g'", "node 'w'"]
+    assert "lint-spawn-cap-below-heal" not in codes(lint_flow(_heal_flow(3)))
+    # A baseline spawn is one more for the gate.
+    flagged = [i for i in lint_flow(_heal_flow(3, baseline=True))
+               if i.code == "lint-spawn-cap-below-heal"]
+    assert len(flagged) == 1 and flagged[0].message.startswith("node 'g' needs at least 4")
+
+
+def test_no_spawn_cap_lint_without_the_key():
+    flow = _heal_flow(3).model_dump()
+    flow["budget"].pop("max_spawns_per_node")
+    assert "lint-spawn-cap-below-heal" not in codes(lint_flow(tg(flow)))

@@ -137,6 +137,8 @@ class ItemRecord(BaseModel):
     # from, None when this run spawned it. Same meaning as
     # PhaseRecord.seeded_from, at item granularity.
     seeded_from: str | None = None
+    # G3b: see PhaseRecord.token_spawns — the per-node cap is per ITEM on a map.
+    token_spawns: int = 0
 
 
 class PhaseRecord(BaseModel):
@@ -196,6 +198,12 @@ class PhaseRecord(BaseModel):
     # silent at every surface that quotes the result, and the human deciding
     # from a quoted result must be able to see the bytes were touched.
     repaired: bool = False
+    # G3b (DEVIATIONS 2026-09-24): token-costing spawns of THIS node across the
+    # lineage — what `budget.max_spawns_per_node` is checked against. Separate
+    # from `attempts`, which also counts token-free executions (shell, served
+    # results). Never reset: not by a heal round, a hash miss or a resume. A
+    # record written before the field existed counts from zero on this driver.
+    token_spawns: int = 0
 
 
 class TerminalRecord(BaseModel):

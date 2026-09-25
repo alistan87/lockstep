@@ -118,6 +118,10 @@ whole-flow re-runs that cost every node again.
 - `budget.max_agent_spawns`: count worst case — nodes × (1 + retries +
   1 corrective) + heal rounds × targets. If the honest ceiling alarms
   you, the flow is telling you where it is too big.
+- `budget.max_spawns_per_node`: on a wide map or a broad node, cap each
+  node/item so one runaway cannot starve the mandatory tail. Remember
+  the automatic timeout/empty-result retry is extra even at `retry.max: 0`;
+  the cap is the only thing that bounds it.
 - `python contrib\plan_card.py <flow>` previews shape + ceiling;
   `lockstep run <flow> --estimate` prices it from prior runs, spending
   nothing.

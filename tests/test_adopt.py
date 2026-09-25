@@ -442,3 +442,22 @@ def test_gc_protects_adoption_reason(tmp_path, git_repo, monkeypatch, capsys):
     (run_dir / "adoption-reason.txt").unlink()
     plan = plan_gc(run_dir.parent, keep_per_flow=0, keep_days=0)
     assert any(d == run_dir for d, _ in plan.candidates)
+
+
+def test_adopt_keeps_a_map_consumers_item_spawn_counts(tmp_path, git_repo, monkeypatch, capsys):
+    """G3b review: adoption resets a map consumer's items, and the per-item
+    spawn counter must survive it — the cap is per lineage, and a human
+    re-pending the cone must not hand every item a fresh ceiling."""
+    src = {"id": "src", "kind": "fake", "output": "json", "contract": "PathManifest",
+           "spec": {"outputs": ['{"files": ["p", "q"], "notes": ""}'], "readonly": True}}
+    fan = {"id": "fan", "role": "map", "kind": "fake", "depends_on": ["writer", "src"],
+           "over": "{steps.src.json.files}", "concurrency": 1,
+           "spec": {"task": "check {item}", "outputs": ["ok"], "readonly": True}}
+    run_dir, _, reason = _run_and_edit(tmp_path, git_repo, monkeypatch,
+                                       flow=_flow(extra_nodes=(src, fan)))
+    before = load_state(run_dir).nodes["fan"].items
+    assert [before[k].token_spawns for k in ("0", "1")] == [1, 1]  # the premise
+    assert main(["adopt", str(run_dir), "writer", "--reason-file", str(reason)]) == 0
+    items = load_state(run_dir).nodes["fan"].items
+    assert all(items[k].status == "pending" for k in ("0", "1"))
+    assert [items[k].token_spawns for k in ("0", "1")] == [1, 1]
