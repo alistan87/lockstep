@@ -104,6 +104,21 @@ want them gone, that is a by-hand decision the plan now gives you the facts
 for. Nothing can attach to or resume such a run from an existing tree; a
 plain `lockstep run` starts a new lineage with a printed note.
 
+## "A few failing nodes spent the budget before the mandatory tail ran"
+
+`budget.max_agent_spawns` is one pool. Since 0.19.0,
+`budget.max_spawns_per_node` puts a second ceiling under it, per node and
+per map item, over every cause — including the one automatic retry on a
+timeout or empty result that `retry.max: 0` never turned off. A node that
+spends its cap fails with the reason (and the last attempt's own failure),
+and the rest of the graph keeps the wallet. A resume will not revive it:
+`status` prints `spawn cap:` and the way out, which is to split the node or
+raise the cap and start the next run with `--seed <run_dir>`. Size it above
+`1 + heal.max_rounds` for any gate or heal target, or
+`lint-spawn-cap-below-heal` says why it cannot work. When a map's width is
+known, the run also warns if the wallet cannot cover even the minimum still
+required.
+
 ## "A run shows all nodes pending and wait says exit 4"
 
 On drivers ≥ 0.10.1 that run says `refused` everywhere (`wait` exits 7 with

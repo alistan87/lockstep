@@ -28,7 +28,7 @@ not change what a correct agent can accomplish on any executor.
 .venv\Scripts\python.exe -m pytest                 # full suite; run after EVERY change
 .venv\Scripts\lockstep.exe verify <flow.tg.json>   # static verification (exit 5 on error)
 .venv\Scripts\lockstep.exe run <flow> --dry-run    # layered execution plan
-.venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6); STALE when the lock's pid is dead; `dispatch wait:` = the throughput proposal's event-driven dispatch instrument
+.venv\Scripts\lockstep.exe status <run_dir>        # incl. latest per-node progress (r6); STALE when the lock's pid is dead; `dispatch wait:` = the throughput proposal's event-driven dispatch instrument; `spawn cap:` = nodes/items at `budget.max_spawns_per_node` (recovery is a flow edit + `run --seed`, never resume)
 .venv\Scripts\lockstep.exe active [runs] [--all]   # runs with a driver (live/stale/foreign); --all adds idle ones
 .venv\Scripts\lockstep.exe run <flow> --detach     # a driver that outlives this process; prints run dir + DRIVER pid
 .venv\Scripts\lockstep.exe steer <run_dir> <node> "msg"   # consumed at next checkpoint; folds into hash

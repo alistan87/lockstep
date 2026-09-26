@@ -6,7 +6,13 @@ The spec and its amendments are the authority on behaviour
 is the release-facing summary. Versions before 0.9.0 predate it — their
 record is the git history and the proposals under `docs/proposals/`.
 
-## Unreleased
+## 0.19.0 — 2026-09-25
+
+**The bounded-retries release: OPEN-WORK item 10's first slice, answering
+a downstream request** (`docs/proposals/upstream-response-bounded-retries.md`),
+plus two races the portability check caught under load. Reviewed by a spec
+audit and an adversarial engine pass before merge; every confirmed finding
+is folded in (DEVIATIONS 2026-09-24).
 
 **Per-node spawn ceiling** (OPEN-WORK item 10, first slice; DEVIATIONS
 2026-09-24). New optional `budget.max_spawns_per_node`: a second ceiling

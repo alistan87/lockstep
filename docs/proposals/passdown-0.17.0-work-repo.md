@@ -233,3 +233,22 @@ Then, on a flow the mirror actually runs:
 .venv\Scripts\lockstep.exe verify <flow> --lint     # new advice on mutating maps (§3.3)
 .venv\Scripts\lockstep.exe run <flow> --estimate    # spends nothing
 ```
+
+**If the bundle says 0.19.0**, three things, all additive unless used:
+(1) `budget.max_spawns_per_node` — optional; absent, behaviour is
+byte-identical. A flow that USES it fails to load on an older driver with a
+named FlowError, so do not add it to a flow the mirror shares with a
+pre-0.19 driver. When set it bounds every token-costing spawn of a node or
+map item across the lineage, including the M4 auto-retry, and a trip fails
+that node (exit 3; a capped gate exits 2) with `spawn cap:` in `status`;
+recovery is a flow edit plus `run --seed`, never resume. New journal kinds:
+`{"kind": "budget", "op": "node-cap"}` and `op: "forecast"`; new lint
+`lint-spawn-cap-below-heal`. (2) Every drive journals
+`{"kind": "drive", "op": "preflight-passed", "pid"}` once its run-time
+refusals have had their chance, and `run --detach` waits for it instead of a
+fixed 3 s — the old window reported a refusing run as launched under load.
+(3) `contrib/lane.py start` survives a Windows `PermissionError` on its
+start lock. The response to the bounded-retries request, section by
+section, is `docs/proposals/upstream-response-bounded-retries.md`; it asks
+for a redacted fixture for section B's capture question. CHANGELOG 0.19.0
+and DEVIATIONS 2026-09-24 are the record.

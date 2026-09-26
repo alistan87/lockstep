@@ -28,6 +28,7 @@ Design documents and accepted work orders. A proposal carries no authority on it
 | [passdown-0.11.0-work-repo.md](passdown-0.11.0-work-repo.md) | `notes` | stable | Passdown: 0.10.0 → 0.11.0 (the OW-07 response release) — work-repo integration |
 | [passdown-0.17.0-work-repo.md](passdown-0.17.0-work-repo.md) | `notes` | current | Passdown: 0.16.0 → 0.17.0 (the open-work release) — work-repo integration |
 | [upstream-response-ow07-feedback.md](upstream-response-ow07-feedback.md) | `plan` | stable | Upstream response: OW-07 consumer feedback — convergent reviews, adoption, and truthful terminal state |
+| [upstream-response-bounded-retries.md](upstream-response-bounded-retries.md) | `plan` | A BUILT in 0.19.0; B waits on a redacted fixture; C's conflict gate deferred (OPEN-WORK 13) | Upstream response: bounded retries, truthful shell results, and safe recovery |
 | [upstream-response-mission-scale.md](upstream-response-mission-scale.md) | `plan` | S1-S4 BUILT through 0.17.0; only the diagnostics-export follow-up stays deferred | Upstream response: MISSION scale, blocker intelligence, and execution provenance |
 | [DESIGN-NOTE-adopt.md](DESIGN-NOTE-adopt.md) | `proposal` | adopted (BUILT 2026-09-08) | Design note: `lockstep adopt` — settling a human-remediated artifact into a run |
 | [mission-ux-work-order.md](mission-ux-work-order.md) | `plan` | BUILT 2026-09-12 | Work order: MISSION UX — the blocker card, one number per fact, and the peek panel |
